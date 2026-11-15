@@ -1,0 +1,479 @@
+// Procedural textures drawn on canvases, so the prototype needs no downloaded art.
+// Each one gets swapped for real photo-based textures once the ranch footage is in.
+import * as THREE from 'three';
+
+let anisotropy = 4;
+export function setAnisotropy(a) { anisotropy = a; }
+
+function canvas(w, h = w) {
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  return [c, c.getContext('2d')];
+}
+
+function tex(c, repeat = [1, 1], color = true) {
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(...repeat);
+  t.anisotropy = anisotropy;
+  if (color) t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+// deterministic random so textures look the same on every machine
+function rand(seed) {
+  let s = seed >>> 0;
+  return () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296);
+}
+
+function speckle(g, w, h, n, colors, rmin, rmax, r) {
+  for (let i = 0; i < n; i++) {
+    g.fillStyle = colors[Math.floor(r() * colors.length)];
+    g.globalAlpha = 0.25 + r() * 0.5;
+    const s = rmin + r() * (rmax - rmin);
+    g.fillRect(r() * w, r() * h, s, s * (0.5 + r()));
+  }
+  g.globalAlpha = 1;
+}
+
+const cache = {};
+const once = (k, f) => cache[k] || (cache[k] = f());
+
+export const grass = () => once('grass', () => {
+  const [c, g] = canvas(512); const r = rand(1);
+  g.fillStyle = '#4a5a2a'; g.fillRect(0, 0, 512, 512);
+  // big patches of dry / lush
+  for (let i = 0; i < 60; i++) {
+    const x = r() * 512, y = r() * 512, rad = 30 + r() * 90;
+    const gr = g.createRadialGradient(x, y, 0, x, y, rad);
+    const col = r() < 0.5 ? '120,110,60' : '50,75,30';
+    gr.addColorStop(0, `rgba(${col},0.45)`); gr.addColorStop(1, `rgba(${col},0)`);
+    g.fillStyle = gr; g.fillRect(0, 0, 512, 512);
+  }
+  speckle(g, 512, 512, 9000, ['#5f7134', '#3b4a20', '#7a7a3e', '#2f3d18', '#8b8450'], 1, 3, r);
+  return tex(c, [60, 60]);
+});
+
+export const dirt = () => once('dirt', () => {
+  const [c, g] = canvas(256); const r = rand(2);
+  g.fillStyle = '#6b5a43'; g.fillRect(0, 0, 256, 256);
+  speckle(g, 256, 256, 4000, ['#7d6a50', '#5a4a36', '#8a785c', '#4a3d2c'], 1, 4, r);
+  return tex(c, [4, 4]);
+});
+
+function boards(w, h, n, base, vertical, r, gap = '#00000088') {
+  const [c, g] = canvas(w, h);
+  g.fillStyle = base; g.fillRect(0, 0, w, h);
+  const size = (vertical ? w : h) / n;
+  for (let i = 0; i < n; i++) {
+    const shade = (r() - 0.5) * 30;
+    g.fillStyle = `rgba(${shade > 0 ? '255,255,255' : '0,0,0'},${Math.abs(shade) / 255 * 2})`;
+    if (vertical) g.fillRect(i * size, 0, size, h); else g.fillRect(0, i * size, w, size);
+    // grain
+    g.strokeStyle = 'rgba(0,0,0,0.12)';
+    for (let k = 0; k < 6; k++) {
+      g.beginPath();
+      const o = i * size + r() * size;
+      if (vertical) { g.moveTo(o, 0); g.bezierCurveTo(o + r() * 6 - 3, h * 0.3, o + r() * 6 - 3, h * 0.7, o, h); }
+      else { g.moveTo(0, o); g.bezierCurveTo(w * 0.3, o + r() * 6 - 3, w * 0.7, o + r() * 6 - 3, w, o); }
+      g.stroke();
+    }
+    g.fillStyle = gap;
+    if (vertical) g.fillRect(i * size, 0, 2, h); else g.fillRect(0, i * size, w, 2);
+  }
+  return [c, g];
+}
+
+export const siding = () => once('siding', () => {
+  const r = rand(3);
+  const [c, g] = boards(256, 256, 10, '#d8d2c2', false, r, '#5a544a');
+  // weathering + peeling paint
+  speckle(g, 256, 256, 1600, ['#a59d8a', '#8a8070', '#efe9dc'], 1, 4, r);
+  for (let i = 0; i < 30; i++) {
+    g.fillStyle = 'rgba(80,60,40,0.25)';
+    g.fillRect(r() * 256, r() * 256, 4 + r() * 18, 2 + r() * 4);
+  }
+  return tex(c, [1, 1]);
+});
+
+export const barnWood = () => once('barnWood', () => {
+  const r = rand(4);
+  const [c, g] = boards(256, 256, 8, '#7a2a1e', true, r, '#2a0d08');
+  speckle(g, 256, 256, 2000, ['#5e1f15', '#8f3a2b', '#4a1a12', '#9a6b55'], 1, 4, r);
+  return tex(c, [1, 1]);
+});
+
+export const floorWood = () => once('floorWood', () => {
+  const r = rand(5);
+  const [c, g] = boards(256, 256, 8, '#6e4a2c', true, r, '#2a1a0e');
+  for (let i = 0; i < 8; i++) { // board ends
+    g.fillStyle = '#2a1a0e';
+    g.fillRect(i * 32, r() * 256, 32, 2);
+  }
+  speckle(g, 256, 256, 1500, ['#5a3a22', '#7e5838', '#4a3020'], 1, 3, r);
+  return tex(c, [6, 4]);
+});
+
+export const plank = () => once('plank', () => {
+  const r = rand(6);
+  const [c, g] = boards(256, 64, 1, '#8a6a48', false, r, '#00000000');
+  speckle(g, 256, 64, 600, ['#6d5236', '#a07e58', '#5a4430'], 1, 3, r);
+  g.fillStyle = '#222'; // nails
+  for (const x of [10, 246]) { g.beginPath(); g.arc(x, 20, 3, 0, 7); g.arc(x, 44, 3, 0, 7); g.fill(); }
+  return tex(c, [1, 1]);
+});
+
+export const wallpaper = () => once('wallpaper', () => {
+  const [c, g] = canvas(256); const r = rand(7);
+  g.fillStyle = '#7d6f55'; g.fillRect(0, 0, 256, 256);
+  g.strokeStyle = 'rgba(60,45,30,0.35)'; g.lineWidth = 2;
+  for (let x = 0; x < 256; x += 32) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x, 256); g.stroke(); }
+  g.fillStyle = 'rgba(120,40,30,0.25)';
+  for (let x = 16; x < 256; x += 32) for (let y = 16; y < 256; y += 40) { g.beginPath(); g.arc(x, y, 5, 0, 7); g.fill(); }
+  // water stains
+  for (let i = 0; i < 8; i++) {
+    const x = r() * 256, y = r() * 256, rad = 20 + r() * 60;
+    const gr = g.createRadialGradient(x, y, 0, x, y, rad);
+    gr.addColorStop(0, 'rgba(40,30,15,0.35)'); gr.addColorStop(1, 'rgba(40,30,15,0)');
+    g.fillStyle = gr; g.fillRect(0, 0, 256, 256);
+  }
+  return tex(c, [1, 1]);
+});
+
+export const shingles = () => once('shingles', () => {
+  const [c, g] = canvas(256); const r = rand(8);
+  g.fillStyle = '#3a3633'; g.fillRect(0, 0, 256, 256);
+  for (let row = 0; row < 16; row++) {
+    const off = (row % 2) * 16;
+    for (let x = -32; x < 256; x += 32) {
+      const s = 40 + r() * 30;
+      g.fillStyle = `rgb(${s},${s * 0.95},${s * 0.9})`;
+      g.fillRect(x + off + 1, row * 16 + 1, 30, 14);
+    }
+  }
+  return tex(c, [6, 3]);
+});
+
+export const metal = () => once('metal', () => {
+  const [c, g] = canvas(256); const r = rand(9);
+  const gr = g.createLinearGradient(0, 0, 32, 0);
+  gr.addColorStop(0, '#8d9296'); gr.addColorStop(0.5, '#c2c6c8'); gr.addColorStop(1, '#8d9296');
+  g.fillStyle = gr;
+  for (let x = 0; x < 256; x += 32) { g.save(); g.translate(x, 0); g.fillRect(0, 0, 32, 256); g.restore(); }
+  // rust streaks
+  for (let i = 0; i < 40; i++) {
+    g.fillStyle = `rgba(${120 + r() * 40},${50 + r() * 20},20,${0.15 + r() * 0.3})`;
+    g.fillRect(r() * 256, r() * 256, 2 + r() * 6, 10 + r() * 60);
+  }
+  return tex(c, [4, 2]);
+});
+
+export const hay = () => once('hay', () => {
+  const [c, g] = canvas(256); const r = rand(10);
+  g.fillStyle = '#b0904a'; g.fillRect(0, 0, 256, 256);
+  g.lineWidth = 1.5;
+  for (let i = 0; i < 1800; i++) {
+    g.strokeStyle = ['#d2b066', '#8a6a30', '#c8a458', '#7a5c28'][Math.floor(r() * 4)];
+    const x = r() * 256, y = r() * 256, a = r() * 0.6 - 0.3;
+    g.beginPath(); g.moveTo(x, y); g.lineTo(x + Math.cos(a) * 20, y + Math.sin(a) * 20); g.stroke();
+  }
+  return tex(c, [2, 1]);
+});
+
+export const bark = () => once('bark', () => {
+  const [c, g] = canvas(128); const r = rand(11);
+  g.fillStyle = '#3d2f22'; g.fillRect(0, 0, 128, 128);
+  for (let i = 0; i < 70; i++) {
+    g.fillStyle = ['#2a2018', '#4e3d2c', '#33271c'][Math.floor(r() * 3)];
+    g.fillRect(r() * 128, 0, 2 + r() * 5, 128);
+  }
+  return tex(c, [1, 2]);
+});
+
+export const foliage = () => once('foliage', () => {
+  const [c, g] = canvas(128); const r = rand(12);
+  g.fillStyle = '#2c3d1c'; g.fillRect(0, 0, 128, 128);
+  speckle(g, 128, 128, 1400, ['#3d5226', '#1f2c13', '#4f6430', '#283a18'], 2, 6, r);
+  return tex(c, [2, 2]);
+});
+
+// Zombie Holstein hide: white with black patches, rot, sores and blood.
+export const cowHide = () => once('cowHide', () => {
+  const [c, g] = canvas(512); const r = rand(13);
+  g.fillStyle = '#c9c4b0'; g.fillRect(0, 0, 512, 512);
+  // black patches (blobby)
+  for (let i = 0; i < 14; i++) {
+    const cx = r() * 512, cy = r() * 512, rad = 30 + r() * 70;
+    g.fillStyle = '#1a1816';
+    g.beginPath();
+    for (let a = 0; a < Math.PI * 2; a += 0.3) {
+      const rr = rad * (0.7 + r() * 0.5);
+      const px = cx + Math.cos(a) * rr, py = cy + Math.sin(a) * rr;
+      a === 0 ? g.moveTo(px, py) : g.lineTo(px, py);
+    }
+    g.closePath(); g.fill();
+  }
+  // sickly green-grey rot over everything
+  for (let i = 0; i < 40; i++) {
+    const x = r() * 512, y = r() * 512, rad = 20 + r() * 80;
+    const gr = g.createRadialGradient(x, y, 0, x, y, rad);
+    gr.addColorStop(0, 'rgba(90,110,50,0.55)'); gr.addColorStop(1, 'rgba(90,110,50,0)');
+    g.fillStyle = gr; g.fillRect(0, 0, 512, 512);
+  }
+  // open wounds
+  for (let i = 0; i < 18; i++) {
+    const x = r() * 512, y = r() * 512, rad = 6 + r() * 22;
+    const gr = g.createRadialGradient(x, y, 0, x, y, rad);
+    gr.addColorStop(0, 'rgba(70,0,0,1)'); gr.addColorStop(0.5, 'rgba(130,15,15,0.9)'); gr.addColorStop(1, 'rgba(90,20,10,0)');
+    g.fillStyle = gr; g.beginPath(); g.ellipse(x, y, rad, rad * 0.6, r() * 3, 0, 7); g.fill();
+  }
+  // dripping blood
+  for (let i = 0; i < 25; i++) {
+    g.fillStyle = `rgba(${100 + r() * 50},5,5,0.7)`;
+    g.fillRect(r() * 512, r() * 512, 2 + r() * 3, 20 + r() * 60);
+  }
+  speckle(g, 512, 512, 3000, ['#00000040', '#ffffff30', '#40501f50'], 1, 3, r);
+  return tex(c, [1, 1]);
+});
+
+export const blood = () => once('blood', () => {
+  const [c, g] = canvas(128); const r = rand(14);
+  g.clearRect(0, 0, 128, 128);
+  for (let i = 0; i < 14; i++) {
+    const x = 64 + (r() - 0.5) * 70, y = 64 + (r() - 0.5) * 70, rad = 6 + r() * 26;
+    g.fillStyle = `rgba(${70 + r() * 40},0,0,${0.7 + r() * 0.3})`;
+    g.beginPath(); g.arc(x, y, rad, 0, 7); g.fill();
+  }
+  const t = tex(c);
+  t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+  return t;
+});
+
+export const flare = () => once('flare', () => {
+  const [c, g] = canvas(128);
+  const gr = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+  gr.addColorStop(0, 'rgba(255,255,230,1)'); gr.addColorStop(0.2, 'rgba(255,200,90,0.9)');
+  gr.addColorStop(0.5, 'rgba(255,120,20,0.35)'); gr.addColorStop(1, 'rgba(255,80,0,0)');
+  g.fillStyle = gr; g.fillRect(0, 0, 128, 128);
+  // star spikes
+  g.globalCompositeOperation = 'lighter';
+  g.fillStyle = 'rgba(255,230,160,0.8)';
+  for (let i = 0; i < 6; i++) {
+    g.save(); g.translate(64, 64); g.rotate((i / 6) * Math.PI * 2 + 0.3);
+    g.beginPath(); g.moveTo(0, -3); g.lineTo(62, 0); g.lineTo(0, 3); g.fill(); g.restore();
+  }
+  const t = tex(c);
+  t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+  return t;
+});
+
+export const smoke = () => once('smoke', () => {
+  const [c, g] = canvas(64);
+  const gr = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  gr.addColorStop(0, 'rgba(255,255,255,0.8)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = gr; g.fillRect(0, 0, 64, 64);
+  const t = tex(c);
+  t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+  return t;
+});
+
+export function nameTag(text, color = '#ffffff') {
+  const [c, g] = canvas(256, 64);
+  g.font = 'bold 34px system-ui, sans-serif';
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.lineWidth = 6; g.strokeStyle = 'rgba(0,0,0,0.85)';
+  g.strokeText(text, 128, 32);
+  g.fillStyle = color; g.fillText(text, 128, 32);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+// ---------------------------------------------------------------------------
+// Hacienda set, matched to the ranch photos: white stucco, terracotta, ochre
+// floor tiles with a black/white encaustic border, clay barrel roof tiles,
+// white Brahman hide.
+
+export const stucco = () => once('stucco', () => {
+  const [c, g] = canvas(256); const r = rand(21);
+  g.fillStyle = '#ece8df'; g.fillRect(0, 0, 256, 256);
+  speckle(g, 256, 256, 5000, ['#ddd8cc', '#f6f3ec', '#d2ccbe', '#e4dfd2'], 1, 3, r);
+  // tropical grime: faint streaks running down
+  for (let i = 0; i < 25; i++) {
+    const x = r() * 256;
+    const gr = g.createLinearGradient(0, 0, 0, 256);
+    gr.addColorStop(0, 'rgba(120,110,90,0)'); gr.addColorStop(1, `rgba(120,110,90,${0.05 + r() * 0.08})`);
+    g.fillStyle = gr; g.fillRect(x, r() * 100, 2 + r() * 8, 256);
+  }
+  return tex(c, [1, 1]);
+});
+
+export const terracotta = () => once('terracotta', () => {
+  const [c, g] = canvas(256); const r = rand(22);
+  g.fillStyle = '#7a4a36'; g.fillRect(0, 0, 256, 256);
+  const n = 4, s = 256 / n;
+  for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
+    const v = r();
+    g.fillStyle = `rgb(${150 + v * 35},${78 + v * 22},${55 + v * 15})`;
+    g.fillRect(x * s + 2, y * s + 2, s - 4, s - 4);
+    // worn sheen
+    const gr = g.createRadialGradient(x * s + s / 2, y * s + s / 2, 2, x * s + s / 2, y * s + s / 2, s * 0.7);
+    gr.addColorStop(0, 'rgba(255,220,190,0.12)'); gr.addColorStop(1, 'rgba(0,0,0,0.08)');
+    g.fillStyle = gr; g.fillRect(x * s + 2, y * s + 2, s - 4, s - 4);
+  }
+  speckle(g, 256, 256, 1500, ['#5a3020', '#b0705a', '#8a5040'], 1, 2, r);
+  return tex(c, [1, 1]);
+});
+
+export const ochreTile = () => once('ochreTile', () => {
+  const [c, g] = canvas(256); const r = rand(23);
+  g.fillStyle = '#9a7a4a'; g.fillRect(0, 0, 256, 256);
+  const n = 4, s = 256 / n;
+  for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
+    const v = r();
+    g.fillStyle = `rgb(${205 + v * 25},${150 + v * 20},${62 + v * 18})`;
+    g.fillRect(x * s + 1.5, y * s + 1.5, s - 3, s - 3);
+  }
+  speckle(g, 256, 256, 900, ['#c08a40', '#e8b870', '#b88040'], 1, 2, r);
+  return tex(c, [1, 1]);
+});
+
+// the black / white / grey geometric border running around the rooms
+export const tileBorder = () => once('tileBorder', () => {
+  const [c, g] = canvas(256, 64);
+  g.fillStyle = '#e9e3d6'; g.fillRect(0, 0, 256, 64);
+  g.fillStyle = '#1e1e22';
+  g.fillRect(0, 0, 256, 6); g.fillRect(0, 58, 256, 6);
+  for (let x = 0; x < 256; x += 32) {
+    g.fillStyle = '#1e1e22';
+    g.beginPath(); g.moveTo(x, 32); g.lineTo(x + 16, 10); g.lineTo(x + 32, 32); g.lineTo(x + 16, 54); g.closePath(); g.fill();
+    g.fillStyle = '#e9e3d6';
+    g.beginPath(); g.moveTo(x + 8, 32); g.lineTo(x + 16, 20); g.lineTo(x + 24, 32); g.lineTo(x + 16, 44); g.closePath(); g.fill();
+    g.fillStyle = '#d0a040';
+    g.fillRect(x + 14, 30, 4, 4);
+    g.fillStyle = '#6a6a70';
+    g.beginPath(); g.moveTo(x, 6); g.lineTo(x + 8, 6); g.lineTo(x, 16); g.fill();
+    g.beginPath(); g.moveTo(x + 32, 58); g.lineTo(x + 24, 58); g.lineTo(x + 32, 48); g.fill();
+  }
+  return tex(c, [1, 1]);
+});
+
+export const clayRoof = () => once('clayRoof', () => {
+  const [c, g] = canvas(256); const r = rand(24);
+  g.fillStyle = '#5a2a1a'; g.fillRect(0, 0, 256, 256);
+  for (let row = 0; row < 8; row++) {
+    for (let x = 0; x < 256; x += 21) {
+      const v = r();
+      const gr = g.createLinearGradient(x, 0, x + 21, 0);
+      const base = `${150 + v * 40},${70 + v * 25},${45 + v * 15}`;
+      gr.addColorStop(0, `rgb(${base})`); gr.addColorStop(0.5, `rgba(235,150,110,1)`); gr.addColorStop(1, `rgb(${base})`);
+      g.fillStyle = gr;
+      g.fillRect(x + 1, row * 32, 19, 30);
+      g.fillStyle = 'rgba(30,10,5,0.45)';
+      g.fillRect(x + 1, row * 32 + 26, 19, 4);
+    }
+  }
+  speckle(g, 256, 256, 1600, ['#3a2a1a80', '#2a3a1a60', '#00000050'], 1, 4, r); // lichen + grime
+  return tex(c, [1, 1]);
+});
+
+// dark-stained ceiling: beams with terracotta between (like the veranda photo)
+export const beamCeiling = () => once('beamCeiling', () => {
+  const [c, g] = canvas(256); const r = rand(25);
+  g.fillStyle = '#b0785a'; g.fillRect(0, 0, 256, 256);
+  for (let y = 0; y < 256; y += 16) { g.fillStyle = `rgba(60,25,10,${0.2 + r() * 0.2})`; g.fillRect(0, y, 256, 2); }
+  return tex(c, [1, 1]);
+});
+
+export const darkWood = () => once('darkWood', () => {
+  const r = rand(26);
+  const [c, g] = boards(256, 256, 4, '#3a2416', true, r, '#1a0e06');
+  speckle(g, 256, 256, 800, ['#2a180e', '#4a301e'], 1, 3, r);
+  return tex(c, [1, 1]);
+});
+
+export const brahmanHide = () => once('brahmanHide', () => {
+  const [c, g] = canvas(512); const r = rand(27);
+  g.fillStyle = '#d6d2c6'; g.fillRect(0, 0, 512, 512);
+  // grey shading patches (Brahmans darken around neck/hump/legs)
+  for (let i = 0; i < 30; i++) {
+    const x = r() * 512, y = r() * 512, rad = 40 + r() * 110;
+    const gr = g.createRadialGradient(x, y, 0, x, y, rad);
+    gr.addColorStop(0, 'rgba(110,108,104,0.35)'); gr.addColorStop(1, 'rgba(110,108,104,0)');
+    g.fillStyle = gr; g.fillRect(0, 0, 512, 512);
+  }
+  // undead rot: mottled grey-green and bruising
+  for (let i = 0; i < 45; i++) {
+    const x = r() * 512, y = r() * 512, rad = 15 + r() * 70;
+    const gr = g.createRadialGradient(x, y, 0, x, y, rad);
+    const col = r() < 0.6 ? '95,115,70' : '90,60,80';
+    gr.addColorStop(0, `rgba(${col},0.5)`); gr.addColorStop(1, `rgba(${col},0)`);
+    g.fillStyle = gr; g.fillRect(0, 0, 512, 512);
+  }
+  // open wounds and gashes
+  for (let i = 0; i < 22; i++) {
+    const x = r() * 512, y = r() * 512, rad = 6 + r() * 24;
+    const gr = g.createRadialGradient(x, y, 0, x, y, rad);
+    gr.addColorStop(0, 'rgba(60,0,0,1)'); gr.addColorStop(0.55, 'rgba(140,15,15,0.95)'); gr.addColorStop(1, 'rgba(110,40,30,0)');
+    g.fillStyle = gr; g.beginPath(); g.ellipse(x, y, rad * 1.6, rad * 0.5, r() * 3, 0, 7); g.fill();
+  }
+  for (let i = 0; i < 30; i++) {
+    g.fillStyle = `rgba(${90 + r() * 60},5,5,0.75)`;
+    g.fillRect(r() * 512, r() * 512, 2 + r() * 3, 20 + r() * 70);
+  }
+  // ranch brand
+  g.strokeStyle = 'rgba(40,30,25,0.8)'; g.lineWidth = 5;
+  g.font = 'bold 54px serif'; g.strokeText('JE', 300, 140);
+  speckle(g, 512, 512, 4000, ['#00000030', '#ffffff40', '#50603040'], 1, 3, r);
+  return tex(c, [1, 1]);
+});
+
+export const palmBark = () => once('palmBark', () => {
+  const [c, g] = canvas(64, 256); const r = rand(28);
+  g.fillStyle = '#7a6a58'; g.fillRect(0, 0, 64, 256);
+  for (let y = 0; y < 256; y += 10) {
+    g.fillStyle = `rgba(40,30,20,${0.35 + r() * 0.3})`; g.fillRect(0, y, 64, 3);
+    g.fillStyle = 'rgba(200,190,170,0.15)'; g.fillRect(0, y + 3, 64, 2);
+  }
+  return tex(c, [1, 3]);
+});
+
+// a single palm frond with leaflets, drawn with transparency
+export const frond = () => once('frond', () => {
+  const [c, g] = canvas(256, 64); const r = rand(29);
+  g.clearRect(0, 0, 256, 64);
+  g.strokeStyle = '#4a5a22'; g.lineWidth = 3;
+  g.beginPath(); g.moveTo(0, 32); g.lineTo(256, 32); g.stroke();
+  for (let x = 6; x < 250; x += 5) {
+    const len = 30 * Math.sin((x / 256) * Math.PI) + 4;
+    for (const s of [-1, 1]) {
+      g.strokeStyle = ['#3d5a1e', '#5a7a2a', '#2e4a16', '#6a7a30'][Math.floor(r() * 4)];
+      g.lineWidth = 2.2;
+      g.beginPath(); g.moveTo(x, 32); g.lineTo(x + 9, 32 + s * len); g.stroke();
+    }
+  }
+  const t = tex(c);
+  t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+  return t;
+});
+
+export const lushGrass = () => once('lushGrass', () => {
+  const [c, g] = canvas(512); const r = rand(30);
+  g.fillStyle = '#4f6a2a'; g.fillRect(0, 0, 512, 512);
+  for (let i = 0; i < 60; i++) {
+    const x = r() * 512, y = r() * 512, rad = 30 + r() * 90;
+    const gr = g.createRadialGradient(x, y, 0, x, y, rad);
+    const col = r() < 0.4 ? '110,120,50' : '45,85,30';
+    gr.addColorStop(0, `rgba(${col},0.45)`); gr.addColorStop(1, `rgba(${col},0)`);
+    g.fillStyle = gr; g.fillRect(0, 0, 512, 512);
+  }
+  speckle(g, 512, 512, 9000, ['#5f8034', '#3b5a20', '#7a8a3e', '#2f4d18', '#6a8a40'], 1, 3, r);
+  return tex(c, [60, 60]);
+});
+
+export const sand = () => once('sand', () => {
+  const [c, g] = canvas(256); const r = rand(31);
+  g.fillStyle = '#b8a07a'; g.fillRect(0, 0, 256, 256);
+  speckle(g, 256, 256, 5000, ['#a89070', '#c8b08a', '#9a8264', '#d0bc98'], 1, 3, r);
+  return tex(c, [4, 4]);
+});
