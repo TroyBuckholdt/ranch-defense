@@ -11,7 +11,7 @@ import {
 import { buildWorld } from './world.js';
 import { CowView, loadCowAsset } from './cow.js';
 import { DogView, loadDogAssets } from './dog.js';
-import { Avatar } from './avatar.js';
+import { Avatar, CHARACTERS, loadCharacter } from './avatar.js';
 import { Weapon } from './weapon.js';
 import { FX } from './fx.js';
 import { Audio } from './audio.js';
@@ -135,6 +135,21 @@ const tmpV = new THREE.Vector3(), tmpV2 = new THREE.Vector3();
 
 // ---------------------------------------------------------------- menu
 const nameInput = $('name'), roomInput = $('room');
+let myChar = 'p1';
+try { myChar = localStorage.getItem('rd-char') || 'p1'; } catch {}
+const picker = $('char-picker');
+for (const c of CHARACTERS) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.innerHTML = `<img src="/assets/models/people/thumbs/${c.id}.jpg" alt=""><span>${c.label}</span>`;
+  b.classList.toggle('sel', c.id === myChar);
+  b.onclick = () => {
+    myChar = c.id;
+    try { localStorage.setItem('rd-char', c.id); } catch {}
+    for (const el of picker.children) el.classList.toggle('sel', el === b);
+  };
+  picker.appendChild(b);
+}
 try { nameInput.value = localStorage.getItem('rd-name') || ''; } catch {}
 const urlRoom = new URLSearchParams(location.search).get('room');
 if (urlRoom) roomInput.value = urlRoom;
@@ -148,7 +163,7 @@ $('play').onclick = async () => {
   $('menu-status').textContent = 'Connecting...';
   audio.start();
   try {
-    await net.connect(name, room);
+    await net.connect(name, room, myChar);
     history.replaceState(null, '', `?room=${encodeURIComponent(net.room)}`); // shareable invite link
     $('menu').classList.add('hidden');
     $('hud').classList.remove('hidden');
@@ -563,7 +578,7 @@ function syncAvatars(dt) {
   for (const [id, p] of view.players) {
     if (id === net.id) continue;
     let a = avatars.get(id);
-    if (!a) { a = new Avatar(id, p.n, scene); avatars.set(id, a); }
+    if (!a) { a = new Avatar(id, p.n, scene, p.c); avatars.set(id, a); }
     a.apply(p, dt);
   }
   for (const [id, a] of avatars) if (!view.players.has(id)) { a.dispose(); avatars.delete(id); }
@@ -611,4 +626,4 @@ function ambientSounds(dt) {
 frame();
 
 // expose a little for automated testing / debugging
-window.__rd = { net, me, scene, camera, cowViews, renderer, CowView, DogView, weapon };
+window.__rd = { net, me, scene, camera, cowViews, renderer, CowView, DogView, Avatar, weapon };

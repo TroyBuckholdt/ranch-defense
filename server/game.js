@@ -159,8 +159,8 @@ export class Room {
     });
   }
 
-  addPlayer(id, name, send) {
-    const p = { id, name, send, score: 0, kills: 0, using: false, lastShot: 0 };
+  addPlayer(id, name, send, char = 'p1') {
+    const p = { id, name, send, char, score: 0, kills: 0, using: false, lastShot: 0 };
     this.respawn(p);
     if (this.phase === 'wave' && [...this.players.values()].some(o => !o.dead && !o.downed)) {
       p.dead = true; p.hp = 0;
@@ -634,7 +634,7 @@ export class Room {
       boards: this.boards,
       dogs: this.dogs.map(d => [d.id, d.kind === 'little' ? 1 : 0, r(d.x), r(d.z), r(d.yaw), d.state]),
       players: [...this.players.values()].map(p => ({
-        id: p.id, n: p.name, x: r(p.x), y: r(p.y), z: r(p.z), yaw: r(p.yaw), pitch: r(p.pitch),
+        id: p.id, n: p.name, c: p.char, x: r(p.x), y: r(p.y), z: r(p.z), yaw: r(p.yaw), pitch: r(p.pitch),
         hp: Math.round(p.hp), dn: p.downed ? 1 : 0, dd: p.dead ? 1 : 0,
         rv: Math.round((p.revive / REVIVE_TIME) * 100), bl: Math.ceil(p.bleed), s: p.score, k: p.kills,
         rp: Math.round((p.repairT / REPAIR_TIME) * 100),

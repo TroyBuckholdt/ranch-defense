@@ -13,14 +13,14 @@ export class Net {
     this.ws = null;
   }
 
-  connect(name, room) {
+  connect(name, room, char) {
     return new Promise((resolve, reject) => {
       const proto = location.protocol === 'https:' ? 'wss' : 'ws';
       const ws = new WebSocket(`${proto}://${location.host}/ws`);
       this.ws = ws;
       let welcomed = false;
       const timer = setTimeout(() => { if (!welcomed) { ws.close(); reject(new Error('Could not reach the game server.')); } }, 15000);
-      ws.onopen = () => ws.send(JSON.stringify({ t: 'join', name, room }));
+      ws.onopen = () => ws.send(JSON.stringify({ t: 'join', name, room, char }));
       ws.onerror = () => { if (!welcomed) { clearTimeout(timer); reject(new Error('Could not reach the game server.')); } };
       ws.onclose = () => { if (welcomed) this.onEvent({ t: 'disconnected' }); };
       ws.onmessage = (e) => {

@@ -52,7 +52,8 @@ wss.on('connection', (ws) => {
       const name = String(m.name || 'Rancher').replace(/[<>]/g, '').trim().slice(0, 16) || 'Rancher';
       room = getRoom(code);
       if (room.players.size >= 8) { send(JSON.stringify({ t: 'full' })); ws.close(); return; }
-      player = room.addPlayer(nextId++, name, send);
+      const char = /^p[1-8]$/.test(m.char) ? m.char : 'p1';
+      player = room.addPlayer(nextId++, name, send, char);
       send(JSON.stringify({ t: 'welcome', id: player.id, room: code }));
       return;
     }

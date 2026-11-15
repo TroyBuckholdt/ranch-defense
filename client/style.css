@@ -136,3 +136,15 @@ kbd {
   #bottom-right { right: 16px; }
   #ammo b { font-size: 44px; }
 }
+
+/* character picker */
+.pick-label { font-size: 13px; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 6px; }
+#char-picker { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 14px; }
+#char-picker button {
+  padding: 0; border: 2px solid rgba(255,255,255,0.15); border-radius: 8px; overflow: hidden; cursor: pointer;
+  background: #111; color: #fff; font-family: system-ui, sans-serif; font-size: 11px;
+}
+#char-picker button img { display: block; width: 100%; aspect-ratio: 180 / 232; object-fit: cover; }
+#char-picker button span { display: block; padding: 3px 0; }
+#char-picker button.sel { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(200,255,77,0.35); }
+.menu-card { max-height: 100vh; overflow-y: auto; }
