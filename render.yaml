@@ -1,0 +1,14 @@
+# One-click hosting on Render (render.com): New + > Blueprint > pick this repo.
+# A single web service serves the game and runs the multiplayer WebSocket server.
+services:
+  - type: web
+    name: ranch-defense
+    runtime: node
+    plan: free
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
