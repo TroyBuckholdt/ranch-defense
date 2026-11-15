@@ -1,23 +1,23 @@
-// Headless sanity test of the server simulation: one idle player inside the house.
+// Headless test of the cow AI. Usage: node scripts/simtest.js [x z]  (player position)
 import { Room } from '../server/game.js';
-const room = new Room('test', () => {});
-clearInterval(room.interval);
+const [px, pz] = process.argv.slice(2).map(Number);
+const room = new Room('test', () => {}); clearInterval(room.interval);
 const events = [];
 const p = room.addPlayer(1, 'Tester', (s) => { const m = JSON.parse(s); if (m.t !== 'snap') events.push(m); });
-let firstTear = null, firstVault = null, firstInside = null, firstHurt = null;
+if (Number.isFinite(px)) { p.x = px; p.z = pz; }
+const first = {};
+const note = (k, v) => { if (!first[k]) first[k] = v; };
+let maxStep = 0;
 for (let i = 0; i < 20 * 120; i++) {
-  room.step();
+  const t0 = performance.now(); room.step(); maxStep = Math.max(maxStep, performance.now() - t0);
   const t = room.time.toFixed(1);
   for (const c of room.cows.values()) {
-    if (c.state === 'tear' && !firstTear) firstTear = `${t}s cow${c.id} tearing entry ${c.entry}`;
-    if (c.state === 'vault' && !firstVault) firstVault = `${t}s cow${c.id} climbing through entry ${c.entry}`;
-    if (c.inside && !firstInside) firstInside = `${t}s cow${c.id} inside at ${c.x.toFixed(1)},${c.z.toFixed(1)}`;
+    if (c.state === 'tear') note('tear', `${t}s entry ${c.entry}`);
+    if (c.state === 'vault') note('vault', `${t}s entry ${c.entry}`);
+    const d = Math.hypot(c.x - p.x, c.z - p.z);
+    if (d < 10) note('within10m', `${t}s`);
   }
-  if (!firstHurt && events.some(e => e.t === 'hurt')) firstHurt = `${t}s player hurt`;
-  if (room.phase === 'gameover') { console.log(`${t}s GAME OVER on wave ${room.wave}`); break; }
+  if (events.some(e => e.t === 'hurt')) note('hurt', `${t}s`);
+  if (room.phase === 'gameover') { note('gameover', `${t}s wave ${room.wave}`); break; }
 }
-console.log({ firstTear, firstVault, firstInside, firstHurt, boards: room.boards.join(','), wave: room.wave, cows: room.cows.size, phase: room.phase });
-const stuck = [...room.cows.values()].filter(c => !c.inside && c.entry == null && c.state === 'walk');
-console.log('cows still walking outside:', stuck.map(c => `${c.x.toFixed(0)},${c.z.toFixed(0)}`).join(' '));
-console.log('player', p.x, p.z, 'alive?', !p.dead && !p.downed);
-for (const c of room.cows.values()) console.log(c.id, c.type, c.state, 'inside', c.inside, 'entry', c.entry, c.x.toFixed(2), c.z.toFixed(2));
+console.log(`player at ${p.x},${p.z}:`, first, `slowest tick ${maxStep.toFixed(1)}ms`);

@@ -5,13 +5,73 @@
 // Every solid thing is an axis-aligned box: { x, z } centre, w (x size), d (z size), h (height).
 // When the real ranch scan arrives, this file is what gets re-traced to match it.
 //
-// The game: players are holed up inside the ranch house. Zombie cows come across the
-// property, tear the boards off the doors and windows, climb in and go for the players.
-// Players hold E at a window to nail boards back up.
+// The game: the hacienda is your base. Zombie Brahmans roam the pasture and jungle and
+// hunt the players wherever they are. If everyone is inside, they tear the boards off
+// the doors and windows and climb in. Players can walk out through the doors (cows
+// can't until the boards are gone), down the jungle trails to the beach.
 
-export const MAP_HALF = 90;        // playable area is -90..90 on X and Z
-export const SPAWN_EDGE = 64;      // cows stagger out of the tree line around the yard
+export const MAP_HALF = 200;       // playable area is -200..200 on X and Z (south ends at the sea)
 export const MAX_BOARDS = 6;
+
+// ---- Terrain ---------------------------------------------------------------
+// Flat yard around the house, rolling jungle hills, then dunes down to the beach.
+function hash2(ix, iz) {
+  let h = (ix * 374761393 + iz * 668265263) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+function vnoise(x, z) {
+  const ix = Math.floor(x), iz = Math.floor(z), fx = x - ix, fz = z - iz;
+  const u = fx * fx * (3 - 2 * fx), v = fz * fz * (3 - 2 * fz);
+  const a = hash2(ix, iz), b = hash2(ix + 1, iz), c = hash2(ix, iz + 1), d = hash2(ix + 1, iz + 1);
+  return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
+}
+const smooth = (e0, e1, x) => { const t = Math.max(0, Math.min(1, (x - e0) / (e1 - e0))); return t * t * (3 - 2 * t); };
+
+// z of the waterline for a given x (wavy coast)
+export function shoreZ(x) { return 168 + Math.sin(x / 40) * 8 + Math.sin(x / 13 + 1) * 2; }
+export const SAND_WIDTH = 24;
+
+export function heightAt(x, z) {
+  const hills = vnoise(x / 55, z / 55) * 6 + vnoise(x / 17 + 9, z / 17) * 1.4;
+  const yard = smooth(68, 100, Math.hypot(x, z * 1.1));
+  let h = hills * yard;
+  const sz = shoreZ(x);
+  const beachH = (sz - z) * 0.07;                  // gentle slope into the sea
+  const t = smooth(sz - SAND_WIDTH - 22, sz - SAND_WIDTH + 2, z);
+  h = h * (1 - t) + beachH * t;
+  // trails are worn a little into the ground
+  return Math.max(-4, h - trailWear(x, z));
+}
+export const WATER_Y = 0;
+
+// ---- Trails ----------------------------------------------------------------
+// Dirt trails from the yard gates through the jungle to the beach and the pens.
+export const TRAILS = [
+  [[2, 44], [6, 62], [-4, 80], [4, 98], [18, 112], [14, 130], [6, 146], [8, 162]],          // south gate -> beach
+  [[54, -1], [66, -4], [80, 10], [86, 34], [74, 58], [60, 80], [40, 100], [18, 112]],       // east gate -> pens -> joins
+  [[-50, -1], [-66, 8], [-80, 30], [-92, 56], [-86, 86], [-70, 112], [-62, 136], [-58, 160]], // west gate -> beach
+  [[2, -46], [-6, -66], [8, -88], [30, -104], [58, -100], [80, -76], [86, -50]],             // north loop
+];
+function segDist(px, pz, ax, az, bx, bz) {
+  const dx = bx - ax, dz = bz - az, l2 = dx * dx + dz * dz;
+  const t = l2 ? Math.max(0, Math.min(1, ((px - ax) * dx + (pz - az) * dz) / l2)) : 0;
+  return Math.hypot(px - ax - dx * t, pz - az - dz * t);
+}
+export function trailDist(x, z) {
+  let best = Infinity;
+  for (const tr of TRAILS) for (let i = 0; i < tr.length - 1; i++) {
+    const a = tr[i], b = tr[i + 1];
+    if (Math.min(a[0], b[0]) - best > x || Math.max(a[0], b[0]) + best < x) continue;
+    best = Math.min(best, segDist(x, z, a[0], a[1], b[0], b[1]));
+  }
+  return best;
+}
+function trailWear(x, z) {
+  if (Math.hypot(x, z) < 50) return 0;
+  const d = trailDist(x, z);
+  return d < 3 ? 0.18 * (1 - d / 3) : 0;
+}
 
 // ---- The house -------------------------------------------------------------
 
@@ -78,13 +138,13 @@ export const HOUSE_WALLS = (() => {
 
 // Furniture: low cover inside. Low pieces can be jumped onto.
 export const FURNITURE = [
-  { kind: 'couch', x: -7.5, z: 1.4, w: 3.2, d: 1.1, h: 0.85 },
-  { kind: 'table', x: -7.2, z: -1.6, w: 2.2, d: 1.2, h: 0.78 },
+  { kind: 'couch', x: -8.2, z: -3.0, w: 2.6, d: 1.1, h: 0.85 },
+  { kind: 'table', x: 4, z: 3.6, w: 2.2, d: 1.2, h: 0.78 },
   { kind: 'island', x: 4.5, z: -0.5, w: 3.2, d: 1.2, h: 0.95 },
   { kind: 'counter', x: 0.6, z: -6.2, w: 3, d: 0.75, h: 0.95 },
   { kind: 'stove', x: 2.6, z: -6.2, w: 1.0, d: 0.75, h: 0.95 },
   { kind: 'fridge', x: 10.1, z: -5.9, w: 1.1, d: 0.9, h: 2.0 },
-  { kind: 'bookshelf', x: -10.4, z: 0.2, w: 0.5, d: 2.2, h: 2.1 },
+  { kind: 'bookshelf', x: -9, z: -6.45, w: 2.2, d: 0.5, h: 2.1 },
   { kind: 'crate', x: -9.8, z: 5.8, w: 1.2, d: 1.2, h: 1.0 },
   { kind: 'crate', x: 9.8, z: 5.9, w: 1.0, d: 1.0, h: 0.8 },
 ];
@@ -148,21 +208,38 @@ function rng(seed) {
   let s = seed >>> 0;
   return () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296);
 }
-export const TREES = (() => {
+// Trees: open pasture near the house, dense jungle beyond, palms along the beach.
+// Undergrowth (ferns/shrubs) has no collision and is listed separately.
+export const TREES = [];
+export const UNDERGROWTH = [];
+(() => {
   const r = rng(1337);
-  const out = [];
-  let tries = 0;
-  while (out.length < 90 && tries++ < 4000) {
-    const x = (r() * 2 - 1) * (MAP_HALF - 4);
-    const z = (r() * 2 - 1) * (MAP_HALF - 4);
-    if (x > FENCE.minX - 8 && x < FENCE.maxX + 8 && z > FENCE.minZ - 8 && z < FENCE.maxZ + 8) continue;
-    if (Math.abs(z - (FENCE.minZ + FENCE.maxZ) / 2) < 10 || Math.abs(x - (FENCE.minX + FENCE.maxX) / 2) < 10) continue;
-    if (out.some(t => (t.x - x) ** 2 + (t.z - z) ** 2 < 36)) continue;
-    out.push({ x, z, s: 0.8 + r() * 0.7, kind: r() < 0.55 ? 'palm' : 'ceiba' });
+  const yardWall = (x, z) => x > FENCE.minX - 6 && x < FENCE.maxX + 6 && z > FENCE.minZ - 6 && z < FENCE.maxZ + 6;
+  const inPen = (x, z) => PENS.some(p => Math.abs(x - p.x) < p.w / 2 + 4 && Math.abs(z - p.z) < p.d / 2 + 4);
+  for (let gx = -MAP_HALF + 3; gx < MAP_HALF - 3; gx += 6) {
+    for (let gz = -MAP_HALF + 3; gz < MAP_HALF; gz += 6) {
+      const x = gx + (r() - 0.5) * 5, z = gz + (r() - 0.5) * 5;
+      const roll = r(), kindRoll = r(), sc = 0.75 + r() * 0.6, under = r();
+      const sz = shoreZ(x);
+      if (z > sz - 3) continue;                       // sea / wet sand
+      if (yardWall(x, z) || inPen(x, z)) continue;
+      const td = trailDist(x, z);
+      if (td < 4.5) continue;
+      const beach = z > sz - SAND_WIDTH;
+      const pasture = Math.hypot(x, z * 1.1) < 85;
+      let p = beach ? 0.18 : pasture ? 0.05 : 0.62;
+      if (td < 9) p *= 0.6;
+      if (roll < p) {
+        const kind = beach ? 'palm' : kindRoll < 0.38 ? 'palm' : kindRoll < 0.9 ? 'broad' : 'giant';
+        TREES.push({ x, z, s: kind === 'giant' ? sc * 1.5 : sc, kind });
+      }
+      // undergrowth: dense in the jungle, lining the trails
+      if (!beach && !pasture && under < 0.75) UNDERGROWTH.push({ x: x + 2.5, z: z - 2, s: 0.7 + r() * 0.8, kind: r() < 0.5 ? 'fern' : 'shrub', rot: r() * 6.28 });
+      if (!beach && !pasture && td < 7 && td > 2.6) UNDERGROWTH.push({ x: x - 2, z: z + 2.5, s: 0.6 + r() * 0.6, kind: 'fern', rot: r() * 6.28 });
+    }
   }
-  // palms in the front garden
-  for (const [x, z, sc] of [[-7, 17, 1.2], [7.5, 15.5, 1.1], [-14, 10, 1.3], [13, 9, 1.15], [-4, 24, 1.0]]) out.push({ x, z, s: sc, kind: 'palm' });
-  return out;
+  // palms in the front garden, like the photos
+  for (const [x, z, s] of [[-7, 17, 1.2], [7.5, 15.5, 1.1], [-14, 10, 1.3], [13, 9, 1.15], [-4, 24, 1.0]]) TREES.push({ x, z, s, kind: 'palm' });
 })();
 
 // All solid boxes. `shoot: true` means bullets pass through (open doors/windows).
@@ -173,7 +250,7 @@ export const SOLIDS = (() => {
     if (s.x1 !== undefined) out.push({ kind: 'fence', x: (s.x1 + s.x2) / 2, z: s.z, w: s.x2 - s.x1, d: FENCE.t, h: FENCE.h });
     else out.push({ kind: 'fence', x: s.x, z: (s.z1 + s.z2) / 2, w: FENCE.t, d: s.z2 - s.z1, h: FENCE.h });
   }
-  for (const t of TREES) out.push({ kind: 'trunk', x: t.x, z: t.z, w: (t.kind === 'palm' ? 0.6 : 1.1) * t.s, d: (t.kind === 'palm' ? 0.6 : 1.1) * t.s, h: 30 });
+  for (const t of TREES) { const w = (t.kind === 'palm' ? 0.55 : t.kind === 'giant' ? 1.6 : 0.9) * t.s; out.push({ kind: 'trunk', x: t.x, z: t.z, w, d: w, h: 40 }); }
   out.push(...VERANDA.rails, ...VERANDA.columns);
   return out;
 })();
@@ -185,14 +262,50 @@ export function insideHouse(x, z) {
   return Math.abs(x - HOUSE.x) < HX && Math.abs(z - HOUSE.z) < HZ;
 }
 
+// Players can walk through the doors (the boards only stop cows).
+export const playerPassable = (b) => b.kind === 'entry' && ENTRIES[b.entry].kind === 'door';
+
+// ---- Spatial buckets so collision stays fast with thousands of trunks ----------
+const BUCKET = 8;
+const buckets = new Map();
+for (const b of SOLIDS) {
+  const x0 = Math.floor((b.x - b.w / 2) / BUCKET), x1 = Math.floor((b.x + b.w / 2) / BUCKET);
+  const z0 = Math.floor((b.z - b.d / 2) / BUCKET), z1 = Math.floor((b.z + b.d / 2) / BUCKET);
+  for (let i = x0; i <= x1; i++) for (let j = z0; j <= z1; j++) {
+    const k = i * 100003 + j;
+    if (!buckets.has(k)) buckets.set(k, []);
+    buckets.get(k).push(b);
+  }
+}
+const _near = [];
+export function solidsNear(x, z, r) {
+  _near.length = 0;
+  const x0 = Math.floor((x - r) / BUCKET), x1 = Math.floor((x + r) / BUCKET);
+  const z0 = Math.floor((z - r) / BUCKET), z1 = Math.floor((z + r) / BUCKET);
+  for (let i = x0; i <= x1; i++) for (let j = z0; j <= z1; j++) {
+    const list = buckets.get(i * 100003 + j);
+    if (list) for (const b of list) if (!_near.includes(b)) _near.push(b);
+  }
+  return _near;
+}
+
+// keep things on land: inside the map and not out past the surf
+export function clampToMap(x, z, r = 0) {
+  const lim = MAP_HALF - r;
+  x = Math.max(-lim, Math.min(lim, x));
+  z = Math.max(-lim, Math.min(shoreZ(x) + 10, z));
+  return [x, z];
+}
+
 // ---- Shared maths helpers -------------------------------------------------
 
 // Push a circle (x,z,r) out of every solid taller than `feetY + step`.
-export function resolveCircle(x, z, r, feetY = 0, step = 0.4) {
+// Box heights are measured from the flat yard (y = 0); everything solid sits there.
+export function resolveCircle(x, z, r, feetY = 0, step = 0.4, skip = null) {
   for (let iter = 0; iter < 3; iter++) {
     let moved = false;
-    for (const b of SOLIDS) {
-      if (b.h <= feetY + step) continue;
+    for (const b of solidsNear(x, z, r + 1)) {
+      if (b.h <= feetY + step || (skip && skip(b))) continue;
       const hx = b.w / 2, hz = b.d / 2;
       if (Math.abs(x - b.x) > hx + r || Math.abs(z - b.z) > hz + r) continue;
       const cx = Math.max(b.x - hx, Math.min(x, b.x + hx));
@@ -212,30 +325,34 @@ export function resolveCircle(x, z, r, feetY = 0, step = 0.4) {
     }
     if (!moved) break;
   }
-  const lim = MAP_HALF - r;
-  return [Math.max(-lim, Math.min(lim, x)), Math.max(-lim, Math.min(lim, z))];
+  return clampToMap(x, z, r);
 }
 
-// Height of the highest walkable surface under a circle (standing on furniture/bales/truck).
+// Height of the walkable surface under a circle: terrain, or the top of furniture/bales/truck.
 export function groundHeight(x, z, r, feetY, step = 0.4) {
-  let g = 0;
-  for (const b of SOLIDS) {
+  let g = heightAt(x, z);
+  for (const b of solidsNear(x, z, r + 1)) {
     if (b.h > feetY + step || b.h <= g) continue;
     if (Math.abs(x - b.x) < b.w / 2 + r * 0.5 && Math.abs(z - b.z) < b.d / 2 + r * 0.5) g = b.h;
   }
   return g;
 }
 
-// Ray vs everything bullets can't pass through. Returns distance to the first hit.
+// Ray vs everything bullets can't pass through (boxes + terrain). Returns hit distance.
 export function raySolids(o, d, maxDist = 300) {
   let best = maxDist;
-  for (const b of SOLIDS) {
-    if (b.shoot) continue;
-    const t = rayBox(o, d, b.x - b.w / 2, 0, b.z - b.d / 2, b.x + b.w / 2, b.h, b.z + b.d / 2);
-    if (t >= 0 && t < best) best = t;
+  // walk the ray through buckets so long shots stay cheap
+  const step = BUCKET * 0.75, seen = new Set();
+  for (let t = 0; t < best + step; t += step) {
+    const px = o[0] + d[0] * t, pz = o[2] + d[2] * t;
+    for (const b of solidsNear(px, pz, BUCKET)) {
+      if (b.shoot || seen.has(b)) continue;
+      seen.add(b);
+      const hit = rayBox(o, d, b.x - b.w / 2, 0, b.z - b.d / 2, b.x + b.w / 2, b.h, b.z + b.d / 2);
+      if (hit >= 0 && hit < best) best = hit;
+    }
   }
-  // window sills and lintels
-  for (const e of ENTRIES) {
+  for (const e of ENTRIES) { // window sills and lintels
     const hw = e.width / 2, ht = HOUSE.t / 2;
     const [wx, wz] = e.nx === 0 ? [hw, ht] : [ht, hw];
     if (e.sill > 0) {
@@ -245,14 +362,21 @@ export function raySolids(o, d, maxDist = 300) {
     const t = rayBox(o, d, e.x - wx, e.top, e.z - wz, e.x + wx, HOUSE.wallH, e.z + wz);
     if (t >= 0 && t < best) best = t;
   }
-  // ceiling of the house (only matters when shooting upward from inside)
   if (d[1] > 0 && insideHouse(o[0], o[2])) {
     const t = (HOUSE.wallH - o[1]) / d[1];
     if (t >= 0 && t < best) best = t;
   }
-  if (d[1] < 0) {
-    const t = -o[1] / d[1];
-    if (t >= 0 && t < best) best = t;
+  // terrain: march, then refine
+  let prev = 0;
+  for (let t = 0.5; t < best; t += 1) {
+    const y = o[1] + d[1] * t;
+    if (y < heightAt(o[0] + d[0] * t, o[2] + d[2] * t)) {
+      let lo = prev, hi = t;
+      for (let k = 0; k < 6; k++) { const m = (lo + hi) / 2; if (o[1] + d[1] * m < heightAt(o[0] + d[0] * m, o[2] + d[2] * m)) hi = m; else lo = m; }
+      return hi;
+    }
+    if (y > 12 && d[1] >= 0) break; // above any hill and climbing
+    prev = t;
   }
   return best;
 }

@@ -347,7 +347,9 @@ function furniture(f) {
       break;
     case 'bookshelf': { // glass-front cabinet
       box(f.w, f.h, f.d, wood, 0, f.h / 2, 0, g);
-      box(0.02, f.h - 0.3, f.d - 0.2, new THREE.MeshStandardMaterial({ color: 0x223338, roughness: 0.05, metalness: 0.7 }), f.w / 2 + 0.01, f.h / 2 + 0.05, 0, g);
+      const glassMat = new THREE.MeshStandardMaterial({ color: 0x223338, roughness: 0.05, metalness: 0.7 });
+      if (f.w > f.d) box(f.w - 0.2, f.h - 0.3, 0.02, glassMat, 0, f.h / 2 + 0.05, f.d / 2 + 0.01, g); // faces into the room (south)
+      else box(0.02, f.h - 0.3, f.d - 0.2, glassMat, f.w / 2 + 0.01, f.h / 2 + 0.05, 0, g);
       break;
     }
     case 'crate': { // wrought-iron side table with a tile top

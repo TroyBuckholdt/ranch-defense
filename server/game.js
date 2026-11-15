@@ -1,65 +1,94 @@
 // Authoritative game simulation for one room: cows, waves, boards, health, revives, scoring.
 //
-// Cow behaviour:
-//   outside -> walk to the nearest door/window (open ones preferred)
-//           -> tear boards off it, swiping at anyone standing right inside
-//           -> once it's bare, climb in
-//   inside  -> hunt the nearest player
+// Cow behaviour (open world):
+//   - Every cow hunts the nearest living player, following a distance field that routes
+//     around trees, buildings, the yard wall and the sea.
+//   - Open doors/windows (no boards left) are part of the route: cows climb through them.
+//   - If the player is sealed inside, cows go to the nearest door/window, tear the boards
+//     off (swiping at anyone standing right behind it), then climb in.
+//   - Players can walk through doors whatever the boards (the client handles that).
 import {
-  MAP_HALF, SPAWN_EDGE, SOLIDS, ENTRIES, MAX_BOARDS, PLAYER_SPAWNS, COW_TYPES, WEAPON,
-  REPAIR_TIME, REPAIR_RANGE, resolveCircle, raySolids, raySphere, cowHitSpheres, insideHouse,
+  MAP_HALF, SOLIDS, ENTRIES, MAX_BOARDS, PLAYER_SPAWNS, COW_TYPES, WEAPON, REPAIR_TIME, REPAIR_RANGE,
+  resolveCircle, raySolids, raySphere, cowHitSpheres, insideHouse, heightAt, shoreZ, solidsNear,
 } from '../shared/world.js';
 
 const TICK = 1 / 20;
-const INTERMISSION = 14;
-const FIRST_WAVE_DELAY = 8;
+const INTERMISSION = 15;
+const FIRST_WAVE_DELAY = 10;
 const GAMEOVER_TIME = 9;
 const BLEEDOUT = 30;
 const REVIVE_TIME = 3;
 const VAULT_TIME = 1.1;
 const MAX_ALIVE_COWS = 40;
 
-// ---- Path grid: blocked cells, then distance fields toward targets ----
+// ---- Path grid ------------------------------------------------------------
 const CELL = 1;
 const GRID = Math.ceil((MAP_HALF * 2) / CELL);
-const blocked = new Uint8Array(GRID * GRID);
-(() => {
-  const inflate = 0.9;
-  for (const b of SOLIDS) {
-    if (b.h <= 0.4) continue; // steppable (porch)
-    const x0 = Math.floor((b.x - b.w / 2 - inflate + MAP_HALF) / CELL);
-    const x1 = Math.floor((b.x + b.w / 2 + inflate + MAP_HALF) / CELL);
-    const z0 = Math.floor((b.z - b.d / 2 - inflate + MAP_HALF) / CELL);
-    const z1 = Math.floor((b.z + b.d / 2 + inflate + MAP_HALF) / CELL);
-    for (let gz = Math.max(0, z0); gz <= Math.min(GRID - 1, z1); gz++)
-      for (let gx = Math.max(0, x0); gx <= Math.min(GRID - 1, x1); gx++) blocked[gz * GRID + gx] = 1;
-  }
-})();
+const N = GRID * GRID;
 const toCell = (v) => Math.max(0, Math.min(GRID - 1, Math.floor((v + MAP_HALF) / CELL)));
+const cellOf = (x, z) => toCell(z) * GRID + toCell(x);
 const NEIGH = [[1, 0, 1], [-1, 0, 1], [0, 1, 1], [0, -1, 1], [1, 1, 1.414], [1, -1, 1.414], [-1, 1, 1.414], [-1, -1, 1.414]];
 
-// sources: [[x, z, startCost], ...]. Label-correcting search (handles uneven start costs).
-function buildField(sources) {
-  const dist = new Float32Array(GRID * GRID).fill(Infinity);
-  const queue = [];
-  for (const [x, z, c0 = 0] of sources) {
-    const i = toCell(z) * GRID + toCell(x);
-    if (c0 < dist[i]) { dist[i] = c0; queue.push(i); }
+const baseBlocked = new Uint8Array(N);
+(() => {
+  const inflate = 0.6; // roughly a cow's collision radius
+  for (const b of SOLIDS) {
+    if (b.h <= 0.4) continue;
+    const x0 = toCell(b.x - b.w / 2 - inflate), x1 = toCell(b.x + b.w / 2 + inflate);
+    const z0 = toCell(b.z - b.d / 2 - inflate), z1 = toCell(b.z + b.d / 2 + inflate);
+    for (let gz = z0; gz <= z1; gz++) for (let gx = x0; gx <= x1; gx++) baseBlocked[gz * GRID + gx] = 1;
   }
-  let head = 0;
-  while (head < queue.length) {
-    const i = queue[head++];
-    const cx = i % GRID, cz = (i / GRID) | 0;
-    for (const [dx, dz, c] of NEIGH) {
-      const nx = cx + dx, nz = cz + dz;
-      if (nx < 0 || nz < 0 || nx >= GRID || nz >= GRID) continue;
-      const n = nz * GRID + nx;
-      if (blocked[n]) continue;
-      if (dx && dz && (blocked[cz * GRID + nx] || blocked[nz * GRID + cx])) continue;
-      const nd = dist[i] + c;
-      if (nd < dist[n] - 1e-3) { dist[n] = nd; queue.push(n); }
+  // the sea
+  for (let gz = 0; gz < GRID; gz++) for (let gx = 0; gx < GRID; gx++) {
+    const x = (gx + 0.5) * CELL - MAP_HALF, z = (gz + 0.5) * CELL - MAP_HALF;
+    if (z > shoreZ(x) - 1) baseBlocked[gz * GRID + gx] = 1;
+  }
+})();
+
+// a 1-cell corridor through each door/window, open only when it has no boards
+const entryCells = ENTRIES.map(e => {
+  const cells = new Set();
+  for (let t = -1.0; t <= 1.0; t += 0.25) cells.add(cellOf(e.x + e.nx * t, e.z + e.nz * t));
+  return [...cells];
+});
+
+// Dial's algorithm (bucketed Dijkstra) with integer costs: 10 straight, 14 diagonal.
+// Searches out to `maxDist` metres only; cows always spawn well inside that.
+const blockedBuf = new Uint8Array(N);
+const DX = [1, -1, 0, 0, 1, 1, -1, -1], DZ = [0, 0, 1, -1, 1, -1, 1, -1], DC = [10, 10, 10, 10, 14, 14, 14, 14];
+const NB = 16; // bucket ring size > max edge cost
+const bucketQ = Array.from({ length: NB }, () => []);
+
+function buildField(sources, boards, maxDist = 130) {
+  blockedBuf.set(baseBlocked);
+  ENTRIES.forEach((e, i) => { const open = boards[i] === 0; for (const c of entryCells[i]) blockedBuf[c] = open ? 0 : 1; });
+  const dist = new Float32Array(N).fill(Infinity);
+  const di = new Int32Array(N).fill(0x7fffffff);
+  const limit = maxDist * 10;
+  let pending = 0;
+  for (const [x, z, c0 = 0] of sources) {
+    const i = cellOf(x, z), d = Math.round(c0 * 10);
+    if (d < di[i]) { di[i] = d; bucketQ[d % NB].push(i); pending++; }
+  }
+  for (let cur = 0; pending > 0 && cur <= limit; cur++) {
+    const bucket = bucketQ[cur % NB];
+    while (bucket.length) {
+      const i = bucket.pop(); pending--;
+      if (di[i] !== cur) continue; // stale entry
+      dist[i] = cur / 10;
+      const cx = i % GRID, cz = (i / GRID) | 0;
+      for (let k = 0; k < 8; k++) {
+        const nx = cx + DX[k], nz = cz + DZ[k];
+        if (nx < 0 || nz < 0 || nx >= GRID || nz >= GRID) continue;
+        const n = nz * GRID + nx;
+        if (blockedBuf[n]) continue;
+        if (k >= 4 && (blockedBuf[cz * GRID + nx] || blockedBuf[nz * GRID + cx])) continue;
+        const nd = cur + DC[k];
+        if (nd < di[n]) { di[n] = nd; bucketQ[nd % NB].push(n); pending++; }
+      }
     }
   }
+  for (const b of bucketQ) b.length = 0;
   return dist;
 }
 
@@ -77,6 +106,20 @@ function fieldDir(dist, x, z) {
   const vx = tx - x, vz = tz - z, l = Math.hypot(vx, vz) || 1;
   return [vx / l, vz / l];
 }
+
+// true if nothing solid (taller than a step) sits on the straight line between two points
+function clearLine(x0, z0, x1, z1, pad = 0.5) {
+  const len = Math.hypot(x1 - x0, z1 - z0), n = Math.ceil(len / 0.5);
+  for (let i = 1; i < n; i++) {
+    const x = x0 + (x1 - x0) * i / n, z = z0 + (z1 - z0) * i / n;
+    for (const b of solidsNear(x, z, 1)) {
+      if (b.h > 0.4 && Math.abs(x - b.x) < b.w / 2 + pad && Math.abs(z - b.z) < b.d / 2 + pad) return false;
+    }
+  }
+  return true;
+}
+
+const isOpenLand = (x, z) => !baseBlocked[cellOf(x, z)] && z < shoreZ(x) - 6;
 
 // ---- Room ----
 
@@ -100,11 +143,9 @@ export class Room {
     this.spawnTimer = 0;
     this.cows.clear();
     this.boards = ENTRIES.map(() => MAX_BOARDS);
-    this.vaulting = ENTRIES.map(() => 0); // cow id currently climbing through
-    this.outsideField = null;
-    this.insideField = null;
-    this.outsideAge = 99;
-    this.insideAge = 99;
+    this.vaulting = ENTRIES.map(() => 0);
+    this.playerField = null; this.playerAge = 99;
+    this.entryField = null; this.entryAge = 99;
     let i = 0;
     for (const p of this.players.values()) this.respawn(p, i++);
   }
@@ -121,7 +162,7 @@ export class Room {
     const p = { id, name, send, score: 0, kills: 0, using: false, lastShot: 0 };
     this.respawn(p);
     if (this.phase === 'wave' && [...this.players.values()].some(o => !o.dead && !o.downed)) {
-      p.dead = true; p.hp = 0; // sit out until the wave ends
+      p.dead = true; p.hp = 0;
     }
     this.players.set(id, p);
     this.broadcastEvent({ t: 'chat', msg: `${name} joined the ranch` });
@@ -168,8 +209,8 @@ export class Room {
     for (const c of this.cows.values()) {
       if (c.state === 'dead') continue;
       const ox = c.x - o[0], oz = c.z - o[2];
-      if (ox * d[0] + oz * d[2] < -3) continue;
-      for (const s of cowHitSpheres(c.type, c.x, c.z, c.yaw, c.y)) {
+      if (ox * d[0] + oz * d[2] < -3 || ox * ox + oz * oz > WEAPON.range * WEAPON.range) continue;
+      for (const s of cowHitSpheres(c.type, c.x, c.z, c.yaw, c.y + heightAt(c.x, c.z))) {
         const t = raySphere(o, d, s.x, s.y, s.z, s.r);
         if (t >= 0 && t < wallDist && (!best || t < best.t)) best = { t, c, head: !!s.head };
       }
@@ -229,7 +270,7 @@ export class Room {
       }
     }
 
-    this.spawnCows(dt);
+    this.spawnCows(dt, alive);
     this.updatePlayers(dt, players, alive);
     this.updateCows(dt, alive);
     this.broadcastSnapshot();
@@ -240,7 +281,7 @@ export class Room {
     this.phase = 'wave';
     const n = this.wave;
     const pc = Math.max(1, this.players.size);
-    const count = Math.round((5 + n * 3) * (1 + 0.45 * (pc - 1)));
+    const count = Math.round((6 + n * 3) * (1 + 0.45 * (pc - 1)));
     const list = [];
     for (let i = 0; i < count; i++) {
       const runnerChance = n < 3 ? 0 : Math.min(0.45, 0.1 + n * 0.03);
@@ -252,26 +293,36 @@ export class Room {
     this.broadcastEvent({ t: 'wave', wave: n, count: list.length });
   }
 
-  spawnCows(dt) {
-    if (this.phase !== 'wave' || !this.toSpawn.length) return;
+  // Cows stagger out of the jungle 45-75 m from a random player, never right on top of anyone.
+  findSpawn(alive) {
+    for (let tries = 0; tries < 40; tries++) {
+      const anchor = alive[Math.floor(Math.random() * alive.length)];
+      const a = Math.random() * Math.PI * 2, r = 45 + Math.random() * 30;
+      const x = anchor.x + Math.cos(a) * r, z = anchor.z + Math.sin(a) * r;
+      if (Math.abs(x) > MAP_HALF - 3 || Math.abs(z) > MAP_HALF - 3) continue;
+      if (!isOpenLand(x, z) || insideHouse(x, z)) continue;
+      if (alive.some(p => Math.hypot(p.x - x, p.z - z) < 38)) continue;
+      return [x, z];
+    }
+    return null;
+  }
+
+  spawnCows(dt, alive) {
+    if (this.phase !== 'wave' || !this.toSpawn.length || !alive.length) return;
     this.spawnTimer -= dt;
-    const alive = [...this.cows.values()].filter(c => c.state !== 'dead').length;
-    if (this.spawnTimer > 0 || alive >= MAX_ALIVE_COWS) return;
+    const living = [...this.cows.values()].filter(c => c.state !== 'dead').length;
+    if (this.spawnTimer > 0 || living >= MAX_ALIVE_COWS) return;
+    const spot = this.findSpawn(alive);
+    if (!spot) return;
     this.spawnTimer = Math.max(0.35, 1.6 - this.wave * 0.1);
     const type = this.toSpawn.shift();
-    let x = 0, z = -SPAWN_EDGE;
-    for (let tries = 0; tries < 20; tries++) {
-      const side = Math.floor(Math.random() * 4), t = (Math.random() * 2 - 1) * (SPAWN_EDGE - 4);
-      [x, z] = side === 0 ? [t, -SPAWN_EDGE] : side === 1 ? [t, SPAWN_EDGE] : side === 2 ? [-SPAWN_EDGE, t] : [SPAWN_EDGE, t];
-      const [rx, rz] = resolveCircle(x, z, 1);
-      if (Math.hypot(rx - x, rz - z) < 0.01) break;
-    }
+    const [x, z] = spot;
     const def = COW_TYPES[type];
     const hp = Math.round(def.hp * (1 + (this.wave - 1) * 0.09));
     const id = this.nextCowId++;
     this.cows.set(id, {
-      id, type, x, y: 0, z, yaw: Math.atan2(-x, -z), hp, maxHp: hp, state: 'walk',
-      inside: false, entry: null, tearT: def.tear, vaultT: 0,
+      id, type, x, y: 0, z, yaw: Math.random() * 6.28, hp, maxHp: hp, state: 'walk',
+      entry: null, tearT: def.tear, vaultT: 0,
       attackCd: 0, stagger: 0, speedMul: 0.85 + Math.random() * 0.3, deadAt: 0,
     });
   }
@@ -300,8 +351,6 @@ export class Room {
         p.hp = Math.min(100, p.hp + 25 * dt);
       }
     }
-
-    // repairing: holding E near a damaged door/window (and not busy reviving)
     for (const p of alive) {
       const busyReviving = p.reviving;
       p.reviving = false;
@@ -313,7 +362,7 @@ export class Room {
         p.repairT = 0;
         this.boards[e.id] += 1;
         p.score += 10;
-        this.outsideAge = 99; // re-plan cow routes
+        this.entryAge = this.playerAge = 99;
         this.broadcastEvent({ t: 'board', e: e.id, n: this.boards[e.id], add: 1, by: p.id });
       }
     }
@@ -330,43 +379,40 @@ export class Room {
   }
 
   updateCows(dt, alive) {
-    // outside cows head for doors/windows; open ones are "closer" so they get swarmed
-    this.outsideAge += dt;
-    if (this.outsideAge > 1 || !this.outsideField) {
-      this.outsideField = buildField(ENTRIES.map(e => [e.out[0], e.out[1], this.boards[e.id] * 2.5]));
-      this.outsideAge = 0;
+    this.playerAge += dt;
+    this.entryAge += dt;
+    if (alive.length && (this.playerAge > 0.6 || !this.playerField)) {
+      this.playerField = buildField(alive.map(p => [p.x, p.z, 0]), this.boards);
+      this.playerAge = 0;
     }
-    // inside cows hunt players
-    this.insideAge += dt;
-    if (alive.length && (this.insideAge > 0.4 || !this.insideField)) {
-      this.insideField = buildField(alive.map(p => [p.x, p.z, 0]));
-      this.insideAge = 0;
+    else if (this.entryAge > 1.2 || !this.entryField) {
+      this.entryField = buildField(ENTRIES.map(e => [e.out[0], e.out[1], this.boards[e.id] * 2.5]), this.boards, 110);
+      this.entryAge = 0;
     }
 
     const cows = [...this.cows.values()];
     for (const c of cows) {
       if (c.state === 'dead') {
-        if (this.time - c.deadAt > 6) this.cows.delete(c.id);
+        if (this.time - c.deadAt > 8) this.cows.delete(c.id);
         continue;
       }
       const def = COW_TYPES[c.type];
       c.attackCd -= dt;
-
       if (c.state === 'vault') { this.updateVault(c, dt); continue; }
       if (c.stagger > 0) { c.stagger -= dt; continue; }
 
-      // nearest living player (for attacks)
       let target = null, td = Infinity;
       for (const p of alive) {
         const d = Math.hypot(p.x - c.x, p.z - c.z);
         if (d < td) { td = d; target = p; }
       }
+      if (!target) { c.state = 'walk'; continue; }
+      const cIn = insideHouse(c.x, c.z), tIn = insideHouse(target.x, target.z);
 
-      // swipe at a player in reach. From outside, only through the door/window it's at.
-      const sameSide = target && insideHouse(target.x, target.z) === c.inside;
-      const throughOpening = target && !c.inside && c.entry != null &&
-        Math.hypot(target.x - ENTRIES[c.entry].x, target.z - ENTRIES[c.entry].z) < 1.6;
-      if (target && td < def.reach && target.y < 1.9 * def.scale && (sameSide || throughOpening)) {
+      // attack: same side of the walls, or reaching through the opening it's at
+      const throughOpening = c.entry != null && Math.hypot(target.x - ENTRIES[c.entry].x, target.z - ENTRIES[c.entry].z) < 1.6;
+      const standingHigh = target.y - heightAt(target.x, target.z) > 1.9 * def.scale;
+      if (td < def.reach && !standingHigh && (cIn === tIn || throughOpening)) {
         c.state = 'attack';
         c.yaw = turnToward(c.yaw, Math.atan2(target.x - c.x, target.z - c.z), dt * 8);
         if (c.attackCd <= 0) {
@@ -376,51 +422,66 @@ export class Room {
         continue;
       }
 
-      if (c.inside) {
+      // on opposite sides of the walls: use an open door/window, or make one
+      if (cIn !== tIn) {
+        // standing at an opening on my side?
+        if (c.entry == null) {
+          for (const e of ENTRIES) {
+            const spot = cIn ? e.in : e.out;
+            if (Math.hypot(spot[0] - c.x, spot[1] - c.z) < 1.6) { c.entry = e.id; c.tearT = def.tear; break; }
+          }
+        }
+        if (c.entry != null) { this.workEntry(c, cIn, cows, dt); continue; }
+        const routed = this.playerField[cellOf(c.x, c.z)] < Infinity;
+        const field = routed ? this.playerField : cIn ? null : this.entryField;
+        let dir = field && fieldDir(field, c.x, c.z);
+        if (!dir) { // inside with no open route: head for the nearest door/window from the inside
+          const e = ENTRIES.reduce((a, b) => (Math.hypot(b.in[0] - c.x, b.in[1] - c.z) < Math.hypot(a.in[0] - c.x, a.in[1] - c.z) ? b : a));
+          const spot = cIn ? e.in : e.out, l = Math.hypot(spot[0] - c.x, spot[1] - c.z) || 1;
+          dir = [(spot[0] - c.x) / l, (spot[1] - c.z) / l];
+        }
         c.state = 'walk';
-        if (!target) continue;
-        let dir = td < 3.5 ? [(target.x - c.x) / td, (target.z - c.z) / td] : (this.insideField && fieldDir(this.insideField, c.x, c.z));
-        if (!dir) dir = [(target.x - c.x) / td, (target.z - c.z) / td];
         this.moveCow(c, dir, cows, dt);
         continue;
       }
 
-      // outside: at a door/window yet?
-      if (c.entry != null) {
-        const e = ENTRIES[c.entry];
-        const dOut = Math.hypot(e.out[0] - c.x, e.out[1] - c.z);
-        // shuffle up to the opening and face it
-        if (dOut > 0.4) this.moveCow(c, [(e.out[0] - c.x) / dOut, (e.out[1] - c.z) / dOut], cows, dt, 0.6);
-        c.yaw = turnToward(c.yaw, Math.atan2(-e.nx, -e.nz), dt * 6);
-        if (this.boards[e.id] > 0) {
-          c.state = 'tear';
-          c.tearT -= dt;
-          if (c.tearT <= 0) {
-            c.tearT = def.tear * (0.8 + Math.random() * 0.4);
-            const n = c.type === 'bull' ? this.boards[e.id] : 1;
-            this.boards[e.id] -= n;
-            this.outsideAge = 99;
-            this.broadcastEvent({ t: 'board', e: e.id, n: this.boards[e.id], add: -n });
-          }
-        } else if (!this.vaulting[e.id] && dOut < 1.2) {
-          c.state = 'vault';
-          c.vaultT = 0;
-          c.vaultFrom = [c.x, c.z];
-          this.vaulting[e.id] = c.id;
-        } else {
-          c.state = 'tear'; // waiting its turn, still pawing at the frame
-        }
-        continue;
-      }
-
+      // same side: chase
+      c.entry = null;
       c.state = 'walk';
-      // claim a door/window when close to its approach spot
-      for (const e of ENTRIES) {
-        if (Math.hypot(e.out[0] - c.x, e.out[1] - c.z) < 1.6) { c.entry = e.id; c.tearT = def.tear; break; }
-      }
-      if (c.entry != null) continue;
-      const dir = (this.outsideField && fieldDir(this.outsideField, c.x, c.z)) || [-c.x / (Math.hypot(c.x, c.z) || 1), -c.z / (Math.hypot(c.x, c.z) || 1)];
+      const direct = td < 5 && clearLine(c.x, c.z, target.x, target.z);
+      let dir = direct ? [(target.x - c.x) / td, (target.z - c.z) / td] : fieldDir(this.playerField, c.x, c.z);
+      if (!dir) dir = [(target.x - c.x) / td, (target.z - c.z) / td];
       this.moveCow(c, dir, cows, dt);
+    }
+  }
+
+  // At a door/window, on side `cIn`: tear boards until it's open, then climb through.
+  workEntry(c, cIn, cows, dt) {
+    const def = COW_TYPES[c.type];
+    const e = ENTRIES[c.entry];
+    const spot = cIn ? e.in : e.out;
+    const dSpot = Math.hypot(spot[0] - c.x, spot[1] - c.z);
+    if (dSpot > 0.4) this.moveCow(c, [(spot[0] - c.x) / dSpot, (spot[1] - c.z) / dSpot], cows, dt, 0.6);
+    const face = cIn ? 1 : -1;
+    c.yaw = turnToward(c.yaw, Math.atan2(face * e.nx, face * e.nz), dt * 6);
+    if (this.boards[e.id] > 0) {
+      c.state = 'tear';
+      c.tearT -= dt;
+      if (c.tearT <= 0) {
+        c.tearT = def.tear * (0.8 + Math.random() * 0.4);
+        const n = c.type === 'bull' ? this.boards[e.id] : 1;
+        this.boards[e.id] -= n;
+        this.entryAge = this.playerAge = 99;
+        this.broadcastEvent({ t: 'board', e: e.id, n: this.boards[e.id], add: -n });
+      }
+    } else if (!this.vaulting[e.id] && dSpot < 1.3) {
+      c.state = 'vault';
+      c.vaultT = 0;
+      c.vaultFrom = [c.x, c.z];
+      c.vaultTo = cIn ? e.out : e.in;
+      this.vaulting[e.id] = c.id;
+    } else {
+      c.state = 'tear';
     }
   }
 
@@ -428,13 +489,12 @@ export class Room {
     const e = ENTRIES[c.entry];
     c.vaultT += dt / (VAULT_TIME * (c.type === 'runner' ? 0.7 : 1));
     const k = Math.min(1, c.vaultT);
-    c.x = c.vaultFrom[0] + (e.in[0] - c.vaultFrom[0]) * k;
-    c.z = c.vaultFrom[1] + (e.in[1] - c.vaultFrom[1]) * k;
+    c.x = c.vaultFrom[0] + (c.vaultTo[0] - c.vaultFrom[0]) * k;
+    c.z = c.vaultFrom[1] + (c.vaultTo[1] - c.vaultFrom[1]) * k;
     c.y = Math.sin(k * Math.PI) * (e.sill + 0.35);
-    c.yaw = Math.atan2(-e.nx, -e.nz);
+    c.yaw = Math.atan2(c.vaultTo[0] - c.vaultFrom[0], c.vaultTo[1] - c.vaultFrom[1]);
     if (k >= 1) {
       c.y = 0;
-      c.inside = true;
       c.state = 'walk';
       this.vaulting[e.id] = 0;
       c.entry = null;
@@ -443,19 +503,21 @@ export class Room {
 
   moveCow(c, dir, cows, dt, speedMul = 1) {
     const def = COW_TYPES[c.type];
+    const cIn = insideHouse(c.x, c.z);
     let sx = 0, sz = 0;
     for (const o of cows) {
-      if (o === c || o.state === 'dead' || o.state === 'vault' || o.inside !== c.inside) continue;
-      const dx = c.x - o.x, dz = c.z - o.z, d2 = dx * dx + dz * dz;
+      if (o === c || o.state === 'dead' || o.state === 'vault') continue;
+      const dx = c.x - o.x, dz = c.z - o.z;
+      if (Math.abs(dx) > 3 || Math.abs(dz) > 3) continue;
+      const d2 = dx * dx + dz * dz;
       const minD = (def.radius + COW_TYPES[o.type].radius) * 0.9;
       if (d2 < minD * minD && d2 > 1e-6) { const d = Math.sqrt(d2); sx += (dx / d) * (minD - d); sz += (dz / d) * (minD - d); }
     }
-    const speed = def.speed * c.speedMul * speedMul * (c.inside ? 0.85 : 1);
+    const speed = def.speed * c.speedMul * speedMul * (cIn ? 0.85 : 1);
     let nx = c.x + dir[0] * speed * dt + sx * 0.4;
     let nz = c.z + dir[1] * speed * dt + sz * 0.4;
     [nx, nz] = resolveCircle(nx, nz, def.radius * 0.7);
-    // never let separation shove an outside cow through a wall or vice versa
-    if (insideHouse(nx, nz) !== c.inside) return;
+    if (insideHouse(nx, nz) !== cIn) return; // walls only get crossed by vaulting
     c.x = nx; c.z = nz;
     c.yaw = turnToward(c.yaw, Math.atan2(dir[0], dir[1]), dt * (c.type === 'runner' ? 9 : 5));
   }
