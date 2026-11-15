@@ -392,40 +392,42 @@ export const darkWood = () => once('darkWood', () => {
   return tex(c, [1, 1]);
 });
 
+// Real Brahman hide (from the ranch's cattle video) with zombie rot, wounds and blood on top.
 export const brahmanHide = () => once('brahmanHide', () => {
-  const [c, g] = canvas(512); const r = rand(27);
-  g.fillStyle = '#d6d2c6'; g.fillRect(0, 0, 512, 512);
-  // grey shading patches (Brahmans darken around neck/hump/legs)
-  for (let i = 0; i < 30; i++) {
-    const x = r() * 512, y = r() * 512, rad = 40 + r() * 110;
-    const gr = g.createRadialGradient(x, y, 0, x, y, rad);
-    gr.addColorStop(0, 'rgba(110,108,104,0.35)'); gr.addColorStop(1, 'rgba(110,108,104,0)');
-    g.fillStyle = gr; g.fillRect(0, 0, 512, 512);
-  }
-  // undead rot: mottled grey-green and bruising
-  for (let i = 0; i < 45; i++) {
-    const x = r() * 512, y = r() * 512, rad = 15 + r() * 70;
-    const gr = g.createRadialGradient(x, y, 0, x, y, rad);
-    const col = r() < 0.6 ? '95,115,70' : '90,60,80';
-    gr.addColorStop(0, `rgba(${col},0.5)`); gr.addColorStop(1, `rgba(${col},0)`);
-    g.fillStyle = gr; g.fillRect(0, 0, 512, 512);
-  }
-  // open wounds and gashes
-  for (let i = 0; i < 22; i++) {
-    const x = r() * 512, y = r() * 512, rad = 6 + r() * 24;
-    const gr = g.createRadialGradient(x, y, 0, x, y, rad);
-    gr.addColorStop(0, 'rgba(60,0,0,1)'); gr.addColorStop(0.55, 'rgba(140,15,15,0.95)'); gr.addColorStop(1, 'rgba(110,40,30,0)');
-    g.fillStyle = gr; g.beginPath(); g.ellipse(x, y, rad * 1.6, rad * 0.5, r() * 3, 0, 7); g.fill();
-  }
-  for (let i = 0; i < 30; i++) {
-    g.fillStyle = `rgba(${90 + r() * 60},5,5,0.75)`;
-    g.fillRect(r() * 512, r() * 512, 2 + r() * 3, 20 + r() * 70);
-  }
-  // ranch brand
-  g.strokeStyle = 'rgba(40,30,25,0.8)'; g.lineWidth = 5;
-  g.font = 'bold 54px serif'; g.strokeText('JE', 300, 140);
-  speckle(g, 512, 512, 4000, ['#00000030', '#ffffff40', '#50603040'], 1, 3, r);
-  return tex(c, [1, 1]);
+  const [c, g] = canvas(1024);
+  const t = tex(c, [1, 1]);
+  const decorate = () => {
+    const r = rand(27);
+    for (let i = 0; i < 40; i++) { // rot: mottled grey-green and bruising
+      const x = r() * 1024, y = r() * 1024, rad = 30 + r() * 120;
+      const gr = g.createRadialGradient(x, y, 0, x, y, rad);
+      const col = r() < 0.6 ? '80,100,60' : '80,50,70';
+      gr.addColorStop(0, `rgba(${col},0.42)`); gr.addColorStop(1, `rgba(${col},0)`);
+      g.fillStyle = gr; g.fillRect(0, 0, 1024, 1024);
+    }
+    for (let i = 0; i < 26; i++) { // open wounds / gashes
+      const x = r() * 1024, y = r() * 1024, rad = 10 + r() * 40;
+      const gr = g.createRadialGradient(x, y, 0, x, y, rad);
+      gr.addColorStop(0, 'rgba(45,0,0,1)'); gr.addColorStop(0.5, 'rgba(120,10,10,0.95)'); gr.addColorStop(1, 'rgba(100,30,20,0)');
+      g.fillStyle = gr; g.beginPath(); g.ellipse(x, y, rad * 1.7, rad * 0.45, r() * 3, 0, 7); g.fill();
+    }
+    for (let i = 0; i < 40; i++) { // blood runs
+      g.fillStyle = `rgba(${80 + r() * 50},4,4,0.7)`;
+      g.fillRect(r() * 1024, r() * 1024, 3 + r() * 4, 40 + r() * 140);
+    }
+    g.strokeStyle = 'rgba(40,30,25,0.75)'; g.lineWidth = 9; // the ranch brand
+    g.font = 'bold 96px serif'; g.strokeText('JE', 600, 280);
+    t.needsUpdate = true;
+  };
+  g.fillStyle = '#cfcabe'; g.fillRect(0, 0, 1024, 1024);
+  const img = new Image();
+  img.onload = () => {
+    for (let x = 0; x < 2; x++) for (let y = 0; y < 2; y++) g.drawImage(img, x * 512, y * 512, 512, 512);
+    decorate();
+  };
+  img.onerror = decorate;
+  img.src = '/assets/tex/brahman_hide.jpg';
+  return t;
 });
 
 export const palmBark = () => once('palmBark', () => {
@@ -440,18 +442,19 @@ export const palmBark = () => once('palmBark', () => {
 
 // a single palm frond with leaflets, drawn with transparency
 export const frond = () => once('frond', () => {
-  const [c, g] = canvas(256, 64); const r = rand(29);
-  g.clearRect(0, 0, 256, 64);
-  g.strokeStyle = '#4a5a22'; g.lineWidth = 3;
-  g.beginPath(); g.moveTo(0, 32); g.lineTo(256, 32); g.stroke();
-  for (let x = 6; x < 250; x += 5) {
-    const len = 30 * Math.sin((x / 256) * Math.PI) + 4;
+  const [c, g] = canvas(512, 128); const r = rand(29);
+  g.clearRect(0, 0, 512, 128);
+  for (let x = 6; x < 506; x += 4) {
+    const k = x / 512, len = 52 * Math.sin(k * Math.PI) ** 0.7 + 6;
     for (const s of [-1, 1]) {
-      g.strokeStyle = ['#3d5a1e', '#5a7a2a', '#2e4a16', '#6a7a30'][Math.floor(r() * 4)];
-      g.lineWidth = 2.2;
-      g.beginPath(); g.moveTo(x, 32); g.lineTo(x + 9, 32 + s * len); g.stroke();
+      const shade = 0.75 + r() * 0.35, dry = k > 0.85 && r() < 0.5;
+      g.strokeStyle = dry ? `rgb(${140 * shade},${120 * shade},${60 * shade})` : `rgb(${50 * shade},${88 * shade},${32 * shade})`;
+      g.lineWidth = 2.6;
+      g.beginPath(); g.moveTo(x, 64); g.quadraticCurveTo(x + 8, 64 + s * len * 0.6, x + 16, 64 + s * len); g.stroke();
     }
   }
+  g.strokeStyle = '#6a6a3a'; g.lineWidth = 4;
+  g.beginPath(); g.moveTo(0, 64); g.lineTo(512, 64); g.stroke();
   const t = tex(c);
   t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
   return t;
@@ -476,4 +479,36 @@ export const sand = () => once('sand', () => {
   g.fillStyle = '#b8a07a'; g.fillRect(0, 0, 256, 256);
   speckle(g, 256, 256, 5000, ['#a89070', '#c8b08a', '#9a8264', '#d0bc98'], 1, 3, r);
   return tex(c, [4, 4]);
+});
+
+export const waterNormals = () => once('waterNormals', () => {
+  const N = 256; const [c, g] = canvas(N); const r = rand(40);
+  const h = new Float32Array(N * N);
+  for (let o = 0; o < 5; o++) { // sum of wrapped sine waves = seamless
+    const kx = 1 + Math.floor(r() * 6), kz = 1 + Math.floor(r() * 6), ph = r() * 6.28, amp = 1 / (o + 1);
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) h[y * N + x] += Math.sin((x * kx + y * kz) / N * 6.283 * (o + 1) + ph) * amp;
+  }
+  const img = g.createImageData(N, N);
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    const dx = h[y * N + (x + 1) % N] - h[y * N + (x + N - 1) % N], dy = h[((y + 1) % N) * N + x] - h[((y + N - 1) % N) * N + x];
+    const nx = -dx * 2, ny = -dy * 2, nz = 1, l = Math.hypot(nx, ny, nz), i = (y * N + x) * 4;
+    img.data[i] = (nx / l * 0.5 + 0.5) * 255; img.data[i + 1] = (ny / l * 0.5 + 0.5) * 255; img.data[i + 2] = (nz / l * 0.5 + 0.5) * 255; img.data[i + 3] = 255;
+  }
+  g.putImageData(img, 0, 0);
+  return tex(c, [1, 1], false);
+});
+
+// soft low-frequency noise used to break up texture tiling on the terrain
+export const macroNoise = () => once('macroNoise', () => {
+  const [c, g] = canvas(256); const r = rand(41);
+  g.fillStyle = '#808080'; g.fillRect(0, 0, 256, 256);
+  for (let i = 0; i < 220; i++) {
+    const x = r() * 256, y = r() * 256, rad = 10 + r() * 50, v = r() < 0.5 ? 255 : 0;
+    for (const [ox, oy] of [[0, 0], [256, 0], [-256, 0], [0, 256], [0, -256]]) {
+      const gr = g.createRadialGradient(x + ox, y + oy, 0, x + ox, y + oy, rad);
+      gr.addColorStop(0, `rgba(${v},${v},${v},0.18)`); gr.addColorStop(1, `rgba(${v},${v},${v},0)`);
+      g.fillStyle = gr; g.fillRect(0, 0, 256, 256);
+    }
+  }
+  return tex(c, [1, 1], false);
 });

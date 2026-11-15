@@ -2,7 +2,7 @@
 // GLB cow (from a 3D store or generated from photos of the real cows) can replace
 // `buildCowModel` later without touching the rest of the game.
 import * as THREE from 'three';
-import { COW_TYPES } from '../../shared/world.js';
+import { COW_TYPES, heightAt } from '../../shared/world.js';
 import * as T from './textures.js';
 
 let shared = null;
@@ -15,7 +15,7 @@ function materials() {
     bone: new THREE.MeshStandardMaterial({ color: 0xd8ccb0, roughness: 0.6 }),
     hoof: new THREE.MeshStandardMaterial({ color: 0x1a1612, roughness: 0.6 }),
     nose: new THREE.MeshStandardMaterial({ color: 0x5a3a3a, roughness: 0.5 }),
-    eye: new THREE.MeshBasicMaterial({ color: new THREE.Color(4, 0.25, 0.05) }), // >1 so bloom catches it
+    eye: new THREE.MeshBasicMaterial({ color: new THREE.Color(16, 1.0, 0.2) }), // far above 1 so bloom catches it
     bull: new THREE.MeshStandardMaterial({ map: T.brahmanHide(), color: 0x8a8680, roughness: 0.8 }),
     switchHair: new THREE.MeshStandardMaterial({ color: 0x1c1a18, roughness: 1 }),
   };
@@ -180,7 +180,7 @@ export class CowView {
       this.speed += (Math.min(d, 8) - this.speed) * Math.min(1, dt * 8);
     }
     this.lastPos = [x, z];
-    root.position.set(x, y || 0, z);
+    root.position.set(x, (y || 0) + heightAt(x, z), z);
     root.rotation.y = yaw;
     this.state = state;
 

@@ -61,7 +61,7 @@ export class Weapon {
     g.add(this.ejectPort);
 
     // muzzle flash: crossed additive planes + a real light
-    const flashMat = new THREE.MeshBasicMaterial({ map: T.flare(), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, color: new THREE.Color(3, 2.4, 1.6) });
+    const flashMat = new THREE.MeshBasicMaterial({ map: T.flare(), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, color: new THREE.Color(8, 6, 4) });
     this.flash = new THREE.Group();
     for (let i = 0; i < 3; i++) {
       const p = new THREE.Mesh(new THREE.PlaneGeometry(0.32, 0.32), flashMat);

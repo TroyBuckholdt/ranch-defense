@@ -3,9 +3,10 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
+import { GTAOPass } from 'three/examples/jsm/postprocessing/GTAOPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import {
-  ENTRIES, MAX_BOARDS, COW_TYPE_LIST, WEAPON, REPAIR_RANGE, raySolids, raySphere, cowHitSpheres, insideHouse,
+  ENTRIES, MAX_BOARDS, COW_TYPE_LIST, WEAPON, REPAIR_RANGE, raySolids, raySphere, cowHitSpheres, insideHouse, heightAt,
 } from '../../shared/world.js';
 import { buildWorld } from './world.js';
 import { CowView } from './cow.js';
@@ -21,9 +22,9 @@ const $ = (id) => document.getElementById(id);
 
 // ---------------------------------------------------------------- quality
 const PRESETS = {
-  high: { pr: 1.5, shadows: 2048, msaa: 4, bloom: true, grass: 26000 },
-  medium: { pr: 1, shadows: 1024, msaa: 2, bloom: true, grass: 14000 },
-  low: { pr: 0.75, shadows: 0, msaa: 0, bloom: false, grass: 4000 },
+  high: { pr: 1.5, shadows: 4096, msaa: 4, bloom: true, ao: true, grass: 30000 },
+  medium: { pr: 1, shadows: 2048, msaa: 2, bloom: true, ao: false, grass: 14000 },
+  low: { pr: 0.75, shadows: 0, msaa: 0, bloom: false, ao: false, grass: 4000 },
 };
 let qName = new URLSearchParams(location.search).get('q');
 try { qName = qName || localStorage.getItem('rd-quality'); } catch {}
@@ -40,15 +41,18 @@ const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'h
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, Q.pr));
 renderer.setSize(innerWidth, innerHeight);
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.05;
+renderer.toneMappingExposure = 0.95;
 renderer.shadowMap.enabled = Q.shadows > 0;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 $('game').appendChild(renderer.domElement);
 setAnisotropy(Math.min(8, renderer.capabilities.getMaxAnisotropy()));
 
-const world = buildWorld(renderer, Q);
+$('play').disabled = true;
+const world = await buildWorld(renderer, Q, (msg) => { $('menu-status').textContent = msg; });
+$('menu-status').textContent = '';
+$('play').disabled = false;
 const scene = world.scene;
-const camera = new THREE.PerspectiveCamera(74, innerWidth / innerHeight, 0.03, 1200);
+const camera = new THREE.PerspectiveCamera(74, innerWidth / innerHeight, 0.03, 1500);
 scene.add(camera);
 
 // flashlight (kept in the scene always; toggled by intensity to avoid shader recompiles)
@@ -63,7 +67,14 @@ let flashlightOn = false;
 const rt = new THREE.WebGLRenderTarget(innerWidth, innerHeight, { type: THREE.HalfFloatType, samples: Q.msaa });
 const composer = new EffectComposer(renderer, rt);
 composer.addPass(new RenderPass(scene, camera));
-const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.55, 0.5, 0.92);
+if (Q.ao) {
+  const ao = new GTAOPass(scene, camera, innerWidth, innerHeight);
+  ao.updateGtaoMaterial({ radius: 0.6, distanceExponent: 1.5, thickness: 1.2, scale: 1.0 });
+  ao.blendIntensity = 0.85;
+  composer.addPass(ao);
+}
+// only very bright things bloom: the sun, muzzle flashes, glowing zombie eyes
+const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.4, 0.35, 3.0);
 if (Q.bloom) composer.addPass(bloom);
 composer.addPass(new OutputPass());
 const grade = new ShaderPass({
@@ -74,16 +85,14 @@ const grade = new ShaderPass({
     void main(){
       vec4 c = texture2D(tDiffuse, vUv);
       float l = dot(c.rgb, vec3(0.299,0.587,0.114));
-      c.rgb = mix(c.rgb, c.rgb * vec3(0.9,1.0,1.08), 1.0 - smoothstep(0.0, 0.45, l));
-      c.rgb = mix(c.rgb, c.rgb * vec3(1.06,1.0,0.9), smoothstep(0.5, 1.0, l));
-      c.rgb = (c.rgb - 0.5) * 1.07 + 0.5;
+      c.rgb = (c.rgb - 0.5) * 1.04 + 0.5;
       c.rgb = mix(c.rgb, vec3(l) * vec3(1.0, 0.55, 0.5), uDown * 0.75);
       vec2 d = vUv - 0.5;
-      float v = smoothstep(0.9, 0.3, length(d) * 1.25);
-      c.rgb *= mix(0.5 - uDown * 0.3, 1.0, v);
+      float v = smoothstep(1.0, 0.35, length(d) * 1.2);
+      c.rgb *= mix(0.72 - uDown * 0.4, 1.0, v);
       c.rgb = mix(c.rgb, vec3(0.5, 0.0, 0.0), uHurt * (1.0 - v) * 0.8);
       float n = fract(sin(dot(vUv * vec2(12.9898, 78.233) + fract(uTime), vec2(1.0))) * 43758.5453);
-      c.rgb += (n - 0.5) * 0.04;
+      c.rgb += (n - 0.5) * 0.025;
       gl_FragColor = c;
     }`,
 });
@@ -209,7 +218,7 @@ function fire(time) {
   let dist = raySolids(oa, da, WEAPON.range), hitCow = null;
   if (view) for (const [id, c] of view.cows) {
     if (c[3] === 2) continue;
-    for (const s of cowHitSpheres(COW_TYPE_LIST[c[5]], c[0], c[1], c[2], c[4])) {
+    for (const s of cowHitSpheres(COW_TYPE_LIST[c[5]], c[0], c[1], c[2], c[4] + heightAt(c[0], c[1]))) {
       const t = raySphere(oa, da, s.x, s.y, s.z, s.r);
       if (t >= 0 && t < dist) { dist = t; hitCow = id; }
     }

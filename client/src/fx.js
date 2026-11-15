@@ -2,6 +2,7 @@
 // tracers, blood pools and remote muzzle flashes. Everything is pooled.
 import * as THREE from 'three';
 import * as T from './textures.js';
+import { heightAt } from '../../shared/world.js';
 
 const MAX = 1500;
 
@@ -25,7 +26,7 @@ export class FX {
 
     // tracers
     this.tracers = [];
-    this.tracerMat = new THREE.LineBasicMaterial({ color: new THREE.Color(4, 3, 1.6), transparent: true });
+    this.tracerMat = new THREE.LineBasicMaterial({ color: new THREE.Color(9, 7, 3.5), transparent: true });
 
     // blood pools on the floor
     this.pools = [];
@@ -33,7 +34,7 @@ export class FX {
 
     // remote muzzle flashes
     this.flashes = [];
-    this.flashMat = new THREE.SpriteMaterial({ map: T.flare(), blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, color: new THREE.Color(3, 2.2, 1.4) });
+    this.flashMat = new THREE.SpriteMaterial({ map: T.flare(), blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, color: new THREE.Color(8, 6, 4) });
     // fixed pool of lights: adding/removing lights at runtime forces shader recompiles (stutter)
     this.flashLights = [0, 1].map(() => { const l = new THREE.PointLight(0xffaa55, 0, 10, 2); scene.add(l); return l; });
     this.flashLightIdx = 0;
@@ -55,7 +56,7 @@ export class FX {
         p: pos.clone(), v: dir, life: opts.life * (0.6 + Math.random() * 0.8), age: 0,
         size: opts.size * (0.5 + Math.random()), color: new THREE.Color(opts.color).multiplyScalar(0.7 + Math.random() * 0.5),
         grav: opts.grav ?? 9.8, rot: new THREE.Vector3(Math.random() * 6, Math.random() * 6, Math.random() * 6),
-        spin: opts.spin ?? 8, stretch: opts.stretch || 1, bounce: opts.bounce || 0, floor: opts.floor ?? 0,
+        spin: opts.spin ?? 8, stretch: opts.stretch || 1, bounce: opts.bounce || 0, floor: opts.floor ?? (heightAt(pos.x, pos.z) + (pos.y > 0.02 && heightAt(pos.x, pos.z) < 0.01 ? 0.04 : 0)),
       });
     }
   }
@@ -108,7 +109,7 @@ export class FX {
       map: T.blood(), transparent: true, depthWrite: false, roughness: 0.15, metalness: 0.2,
       polygonOffset: true, polygonOffsetFactor: -4,
     }));
-    m.position.set(x, 0.03, z);
+    m.position.set(x, heightAt(x, z) + 0.06, z);
     m.rotation.y = Math.random() * 6;
     m.scale.setScalar(0.01);
     m.receiveShadow = true;

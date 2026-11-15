@@ -1,6 +1,6 @@
 // Local first-person movement with collision against the shared map.
 import * as THREE from 'three';
-import { resolveCircle, groundHeight } from '../../shared/world.js';
+import { resolveCircle, groundHeight, playerPassable } from '../../shared/world.js';
 
 const RADIUS = 0.38;
 const GRAVITY = 20;
@@ -46,8 +46,8 @@ export class LocalPlayer {
 
     const prevVy = this.vel.y;
     let x = this.pos.x + this.vel.x * dt, z = this.pos.z + this.vel.z * dt, y = this.pos.y + this.vel.y * dt;
-    [x, z] = resolveCircle(x, z, RADIUS, Math.max(0, y));
-    const g = groundHeight(x, z, RADIUS, Math.max(0, this.pos.y));
+    [x, z] = resolveCircle(x, z, RADIUS, y, 0.45, playerPassable);
+    const g = groundHeight(x, z, RADIUS, this.pos.y, 0.6);
     if (y <= g) {
       if (!this.grounded && prevVy < -6) this.landDip = Math.min(0.12, -prevVy * 0.012);
       y = g; this.vel.y = 0; this.grounded = true;
