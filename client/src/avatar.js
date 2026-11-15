@@ -8,7 +8,7 @@ import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { nameTag } from './textures.js';
 
 export const CHARACTERS = [
-  { id: 'p1', label: 'Grey tank', height: 1.83 },
+  { id: 'p1', label: 'Troy', height: 1.83 },
   { id: 'p2', label: 'Blue shirt', height: 1.62 },
   { id: 'p3', label: 'White top', height: 1.63 },
   { id: 'p4', label: 'Rafael', height: 1.76 },
