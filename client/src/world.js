@@ -179,7 +179,7 @@ export async function buildWorld(renderer, Q = { shadows: 2048, grass: 26000 }, 
   for (const s of STRUCTURES) { const m = buildStructure(s, updaters); if (m) scene.add(m); }
   for (const b of HAY_BALES) scene.add(hayBale(b));
   scene.add(buildGardenWall());
-  scene.add(buildHedges());
+  scene.add(buildHedges(models));
   for (const p of PENS) scene.add(buildPen(p));
 
   // ---------- Jungle ----------
@@ -717,26 +717,35 @@ function buildGardenWall() {
   return group;
 }
 
-function buildHedges() {
+function buildHedges(models) {
   const group = new THREE.Group();
-  const blobs = [];
+  const spots = [];
   for (const h of HEDGES) {
-    if (h.along === 'x') for (let x = h.x1; x <= h.x2; x += 0.5) blobs.push([x, (h.z1 + h.z2) / 2]);
-    else for (let z = h.z1; z <= h.z2; z += 0.5) blobs.push([h.x, z]);
+    if (h.along === 'x') for (let x = h.x1; x <= h.x2; x += 0.45) spots.push([x, (h.z1 + h.z2) / 2]);
+    else for (let z = h.z1; z <= h.z2; z += 0.45) spots.push([h.x, z]);
   }
-  const mesh = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(0.42, 2), M.hedge, blobs.length);
-  const flowers = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(0.06, 1), M.flower, blobs.length * 10);
-  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), v = new THREE.Vector3(), s = new THREE.Vector3();
+  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), v = new THREE.Vector3(), s = new THREE.Vector3(), e = new THREE.Euler();
+  for (const { geometry, material } of meshOf(models.shrub)) {
+    material.side = THREE.DoubleSide;
+    const mesh = new THREE.InstancedMesh(geometry, material, spots.length * 2);
+    spots.forEach(([x, z], i) => {
+      for (let k = 0; k < 2; k++) {
+        q.setFromEuler(e.set(0, i * 2.3 + k * 1.7, 0));
+        mesh.setMatrixAt(i * 2 + k, m4.compose(v.set(x + (k - 0.5) * 0.2, 0, z), q, s.set(3.2, 3.6 + (i % 3) * 0.4, 3.2)));
+      }
+    });
+    mesh.castShadow = mesh.receiveShadow = true;
+    group.add(mesh);
+  }
+  const flowers = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(0.035, 1), M.flower, spots.length * 14);
   let k = 0;
-  blobs.forEach(([x, z], i) => {
-    mesh.setMatrixAt(i, m4.compose(v.set(x, 0.38, z), q.identity(), s.set(1, 0.85 + Math.sin(i) * 0.1, 1)));
-    for (let j = 0; j < 10; j++) {
-      const a = i * 3.7 + j * 1.9, el = 0.2 + (j % 4) * 0.3;
-      flowers.setMatrixAt(k++, m4.compose(v.set(x + Math.cos(a) * 0.4 * Math.cos(el), 0.38 + Math.sin(el) * 0.36, z + Math.sin(a) * 0.4 * Math.cos(el)), q, s.setScalar(1)));
+  spots.forEach(([x, z], i) => {
+    for (let j = 0; j < 14; j++) {
+      const a = i * 3.7 + j * 1.9, el = 0.35 + (j % 4) * 0.25, rr = 0.32 + (j % 3) * 0.06;
+      flowers.setMatrixAt(k++, m4.compose(v.set(x + Math.cos(a) * rr * Math.cos(el), 0.2 + Math.sin(el) * 0.55, z + Math.sin(a) * rr * Math.cos(el)), q.identity(), s.setScalar(1)));
     }
   });
-  mesh.castShadow = mesh.receiveShadow = true;
-  group.add(mesh, flowers);
+  group.add(flowers);
   return group;
 }
 
@@ -840,11 +849,11 @@ function buildVegetation(models, Q) {
   const trunkT = [], canopyT = [];
   broad.forEach((t, i) => {
     const giant = t.kind === 'giant', h = (giant ? 9 : 5.5) * t.s, y = gy(t.x, t.z);
-    trunkT.push({ x: t.x, y, z: t.z, sx: t.s * (giant ? 1.8 : 1), sy: h, sz: t.s * (giant ? 1.8 : 1), ry: i });
-    const n = giant ? 4 : 3;
+    trunkT.push({ x: t.x, y, z: t.z, sx: t.s * (giant ? 1.8 : 1), sy: h * 0.72, sz: t.s * (giant ? 1.8 : 1), ry: i });
+    const n = giant ? 6 : 4;
     for (let j = 0; j < n; j++) {
       const a = j * 2.1 + i, r = j === 0 ? 0 : 1.6 * t.s * (giant ? 1.6 : 1);
-      canopyT.push({ x: t.x + Math.cos(a) * r, y: y + h * 0.55, z: t.z + Math.sin(a) * r, ry: a, s: t.s * (giant ? 4.2 : 3.0) });
+      canopyT.push({ x: t.x + Math.cos(a) * r, y: y + h * (0.42 + (j % 2) * 0.12), z: t.z + Math.sin(a) * r, ry: a, s: t.s * (giant ? 4.6 : 3.4) });
     }
   });
   add([{ geometry: trunkGeo, material: M.bark }], trunkT, { maxDist: 200 });
@@ -861,17 +870,17 @@ function buildVegetation(models, Q) {
 
 // Grass blades in the pasture around the house.
 function buildGrass(COUNT) {
-  const geo = new THREE.PlaneGeometry(0.07, 0.55, 1, 3);
-  geo.translate(0, 0.275, 0);
+  const geo = new THREE.PlaneGeometry(0.035, 0.42, 1, 3);
+  geo.translate(0, 0.21, 0);
   const pos = geo.attributes.position;
-  for (let i = 0; i < pos.count; i++) { const y = pos.getY(i) / 0.55; pos.setX(i, pos.getX(i) * (1 - y)); }
-  const mat = new THREE.MeshStandardMaterial({ color: 0x7a9a48, roughness: 0.9, side: THREE.DoubleSide });
+  for (let i = 0; i < pos.count; i++) { const y = pos.getY(i) / 0.42; pos.setX(i, pos.getX(i) * (1 - y * 0.85)); pos.setZ(i, y * y * 0.06); }
+  const mat = new THREE.MeshStandardMaterial({ color: 0x86a650, roughness: 0.85, side: THREE.DoubleSide });
   const uniforms = { uTime: { value: 0 } };
   mat.onBeforeCompile = (sh) => {
     sh.uniforms.uTime = uniforms.uTime;
     sh.vertexShader = 'uniform float uTime;\nvarying float vGrassH;\n' + sh.vertexShader.replace('#include <begin_vertex>', `
       #include <begin_vertex>
-      vGrassH = position.y / 0.55;
+      vGrassH = position.y / 0.42;
       vec4 wp = instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
       float sway = sin(uTime * 1.7 + wp.x * 0.35 + wp.z * 0.2) * 0.5 + sin(uTime * 3.1 + wp.x * 0.9) * 0.2;
       transformed.x += sway * position.y * position.y * 0.6;`);
@@ -886,7 +895,7 @@ function buildGrass(COUNT) {
   const r = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
   let n = 0, tries = 0;
   while (n < COUNT && tries++ < COUNT * 5) {
-    const rad = 9 + Math.pow(r(), 1.4) * 80, a = r() * Math.PI * 2;
+    const rad = 9 + Math.pow(r(), 2.2) * 75, a = r() * Math.PI * 2; // densest near the house
     const x = Math.cos(a) * rad, z = Math.sin(a) * rad;
     if (Math.abs(x) < HOUSE.w / 2 + 0.6 && z > -HOUSE.d / 2 - 0.6 && z < VERANDA.z + 0.8) continue;
     if (Math.abs(x) < 1.6 && z > 9 && z < 22.5) continue;
@@ -895,7 +904,7 @@ function buildGrass(COUNT) {
     if (PENS.some(p => Math.abs(x - p.x) < p.w / 2 + 1 && Math.abs(z - p.z) < p.d / 2 + 1)) continue;
     if (solidsNear(x, z, 1).some(b => b.h > 0.3 && Math.abs(x - b.x) < b.w / 2 + 0.2 && Math.abs(z - b.z) < b.d / 2 + 0.2)) continue;
     q.setFromAxisAngle(v.set(0, 1, 0), r() * Math.PI);
-    mesh.setMatrixAt(n, m4.compose(v.set(x, heightAt(x, z) - 0.02, z), q, s.set(1, 0.7 + r() * 1.0, 1)));
+    mesh.setMatrixAt(n, m4.compose(v.set(x, heightAt(x, z) - 0.02, z), q, s.set(0.8 + r() * 0.6, 0.6 + r() * 0.9, 1)));
     mesh.setColorAt(n, color.setHSL(0.2 + r() * 0.06, 0.35 + r() * 0.2, 0.3 + r() * 0.14));
     n++;
   }
