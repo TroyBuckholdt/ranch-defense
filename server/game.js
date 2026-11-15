@@ -9,7 +9,7 @@
 //   - Players can walk through doors whatever the boards (the client handles that).
 import {
   MAP_HALF, SOLIDS, ENTRIES, MAX_BOARDS, PLAYER_SPAWNS, COW_TYPES, WEAPON, REPAIR_TIME, REPAIR_RANGE,
-  resolveCircle, raySolids, raySphere, cowHitSpheres, insideHouse, heightAt, shoreZ, solidsNear,
+  resolveCircle, raySolids, raySphere, cowHitSpheres, insideHouse, heightAt, shoreZ, solidsNear, playerPassable, DOG_TYPES,
 } from '../shared/world.js';
 
 const TICK = 1 / 20;
@@ -144,6 +144,7 @@ export class Room {
     this.cows.clear();
     this.boards = ENTRIES.map(() => MAX_BOARDS);
     this.vaulting = ENTRIES.map(() => 0);
+    this.dogs = DOG_TYPES.map((d, i) => ({ id: i + 1, kind: d.kind, x: -4 + i * 3, z: 9, yaw: 0, hp: d.hp, state: 0, downT: 0, biteCd: 0, target: null, wander: Math.random() * 6 }));
     this.playerField = null; this.playerAge = 99;
     this.entryField = null; this.entryAge = 99;
     let i = 0;
@@ -259,6 +260,7 @@ export class Room {
         this.timer = INTERMISSION;
         let i = 0;
         for (const p of players) if (p.dead || p.downed) this.respawn(p, i++);
+        for (const d of this.dogs) { d.hp = DOG_TYPES.find(t => t.kind === d.kind).hp; if (d.state === 3) d.state = 0; }
         this.broadcastEvent({ t: 'waveclear', wave: this.wave });
       }
     } else if (this.phase === 'gameover') {
@@ -273,6 +275,7 @@ export class Room {
     this.spawnCows(dt, alive);
     this.updatePlayers(dt, players, alive);
     this.updateCows(dt, alive);
+    this.updateDogs(dt, alive);
     this.broadcastSnapshot();
   }
 
@@ -409,6 +412,15 @@ export class Room {
       if (!target) { c.state = 'walk'; continue; }
       const cIn = insideHouse(c.x, c.z), tIn = insideHouse(target.x, target.z);
 
+      // a dog snapping at its legs gets the horns first
+      const pest = this.dogs.find(d => d.state !== 3 && Math.hypot(d.x - c.x, d.z - c.z) < def.reach * 0.8 && insideHouse(d.x, d.z) === insideHouse(c.x, c.z));
+      if (pest && Math.random() < 0.5) {
+        c.state = 'attack';
+        c.yaw = turnToward(c.yaw, Math.atan2(pest.x - c.x, pest.z - c.z), dt * 8);
+        if (c.attackCd <= 0) { c.attackCd = 1.2; this.hurtDog(pest, def.damage); }
+        continue;
+      }
+
       // attack: same side of the walls, or reaching through the opening it's at
       const throughOpening = c.entry != null && Math.hypot(target.x - ENTRIES[c.entry].x, target.z - ENTRIES[c.entry].z) < 1.6;
       const standingHigh = target.y - heightAt(target.x, target.z) > 1.9 * def.scale;
@@ -522,6 +534,68 @@ export class Room {
     c.yaw = turnToward(c.yaw, Math.atan2(dir[0], dir[1]), dt * (c.type === 'runner' ? 9 : 5));
   }
 
+  // ---- the ranch dogs: follow the players, charge and bite zombie cows ----
+  updateDogs(dt, alive) {
+    for (const d of this.dogs) {
+      const def = DOG_TYPES.find(t => t.kind === d.kind);
+      d.biteCd -= dt;
+      if (d.state === 3) { // knocked down
+        d.downT -= dt;
+        if (d.downT <= 0) { d.state = 0; d.hp = def.hp * 0.6; }
+        continue;
+      }
+      const dIn = insideHouse(d.x, d.z);
+      // closest living cow on the same side, not too far from the pack
+      let prey = null, pd = def.sight;
+      for (const c of this.cows.values()) {
+        if (c.state === 'dead' || c.state === 'vault' || insideHouse(c.x, c.z) !== dIn) continue;
+        const dd = Math.hypot(c.x - d.x, c.z - d.z);
+        if (dd < pd) { pd = dd; prey = c; }
+      }
+      const owner = alive.reduce((a, p) => (!a || Math.hypot(p.x - d.x, p.z - d.z) < Math.hypot(a.x - d.x, a.z - d.z) ? p : a), null);
+      let goal = null, speed = def.speed;
+      if (prey) {
+        const reach = def.bite + COW_TYPES[prey.type].radius;
+        if (pd < reach) {
+          d.state = 2;
+          d.yaw = turnToward(d.yaw, Math.atan2(prey.x - d.x, prey.z - d.z), dt * 10);
+          if (d.biteCd <= 0) {
+            d.biteCd = def.biteEvery;
+            prey.hp -= def.damage;
+            if (prey.type !== 'bull') prey.stagger = 0.3;
+            this.broadcastEvent({ t: 'dogbite', dog: d.id, cow: prey.id, p: [prey.x, 0.9, prey.z] });
+            if (prey.hp <= 0) this.killCow(prey);
+          }
+          continue;
+        }
+        goal = [prey.x, prey.z];
+        if (Math.random() < dt * 0.6) this.broadcastEvent({ t: 'bark', dog: d.id });
+      } else if (owner) {
+        const od = Math.hypot(owner.x - d.x, owner.z - d.z);
+        if (od > 5) { goal = [owner.x, owner.z]; speed = od > 12 ? def.speed : def.speed * 0.55; }
+        else { // mill about near the owner
+          d.wander += dt * 0.4;
+          goal = [owner.x + Math.cos(d.wander + d.id * 2) * 3, owner.z + Math.sin(d.wander + d.id * 2) * 3];
+          speed = def.speed * 0.25;
+        }
+      }
+      if (!goal) { d.state = 0; continue; }
+      const gx = goal[0] - d.x, gz = goal[1] - d.z, gl = Math.hypot(gx, gz);
+      if (gl < 0.3) { d.state = 0; continue; }
+      d.state = speed > def.speed * 0.4 ? 1 : 0;
+      let nx = d.x + (gx / gl) * speed * dt, nz = d.z + (gz / gl) * speed * dt;
+      [nx, nz] = resolveCircle(nx, nz, def.radius, 0, 0.4, playerPassable);
+      d.x = nx; d.z = nz;
+      d.yaw = turnToward(d.yaw, Math.atan2(gx, gz), dt * 9);
+    }
+  }
+
+  hurtDog(d, dmg) {
+    d.hp -= dmg;
+    this.broadcastEvent({ t: 'dogyelp', dog: d.id });
+    if (d.hp <= 0) { d.state = 3; d.downT = 20; }
+  }
+
   hurtPlayer(p, dmg, cow) {
     if (p.downed || p.dead) return;
     p.hp -= dmg;
@@ -558,6 +632,7 @@ export class Room {
       timer: Math.max(0, Math.ceil(this.timer)),
       left: this.toSpawn.length + [...this.cows.values()].filter(c => c.state !== 'dead').length,
       boards: this.boards,
+      dogs: this.dogs.map(d => [d.id, d.kind === 'little' ? 1 : 0, r(d.x), r(d.z), r(d.yaw), d.state]),
       players: [...this.players.values()].map(p => ({
         id: p.id, n: p.name, x: r(p.x), y: r(p.y), z: r(p.z), yaw: r(p.yaw), pitch: r(p.pitch),
         hp: Math.round(p.hp), dn: p.downed ? 1 : 0, dd: p.dead ? 1 : 0,

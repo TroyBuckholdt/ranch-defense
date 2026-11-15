@@ -9,7 +9,8 @@ import {
   ENTRIES, MAX_BOARDS, COW_TYPE_LIST, WEAPON, REPAIR_RANGE, raySolids, raySphere, cowHitSpheres, insideHouse, heightAt,
 } from '../../shared/world.js';
 import { buildWorld } from './world.js';
-import { CowView } from './cow.js';
+import { CowView, loadCowAsset } from './cow.js';
+import { DogView, loadDogAssets } from './dog.js';
 import { Avatar } from './avatar.js';
 import { Weapon } from './weapon.js';
 import { FX } from './fx.js';
@@ -48,6 +49,8 @@ $('game').appendChild(renderer.domElement);
 setAnisotropy(Math.min(8, renderer.capabilities.getMaxAnisotropy()));
 
 $('play').disabled = true;
+$('menu-status').textContent = 'Waking the herd...';
+await Promise.all([loadCowAsset(), loadDogAssets()]);
 const world = await buildWorld(renderer, Q, (msg) => { $('menu-status').textContent = msg; });
 $('menu-status').textContent = '';
 $('play').disabled = false;
@@ -113,6 +116,7 @@ const me = new LocalPlayer();
 const net = new Net(onEvent);
 const cowViews = new Map();
 const avatars = new Map();
+const dogViews = new Map();
 const flyingPlanks = [];
 let view = null;            // latest interpolated world
 let mySnap = null;          // my own state from the server
@@ -279,6 +283,23 @@ function onEvent(m) {
       }
       break;
     }
+    case 'dogbite': {
+      const p = new THREE.Vector3(...m.p);
+      fx.blood(p, new THREE.Vector3(0, 0.3, 0));
+      cowViews.get(m.cow)?.hit();
+      audio.bark(m.p, dogViews.get(m.dog)?.kind === 1, true);
+      break;
+    }
+    case 'bark': {
+      const d = view?.dogs?.get(m.dog);
+      if (d) audio.bark([d[0], 0.6, d[1]], d[4] === 1);
+      break;
+    }
+    case 'dogyelp': {
+      const d = view?.dogs?.get(m.dog);
+      if (d) audio.yelp([d[0], 0.6, d[1]], d[4] === 1);
+      break;
+    }
     case 'hurt':
       hurtT = 1; shake = 1;
       audio.hurt();
@@ -435,6 +456,7 @@ function frame() {
     stepLocal(dt);
     syncCows(dt);
     syncAvatars(dt);
+    syncDogs(dt);
     syncBoards();
     ambientSounds(dt);
     updateHud(dt);
@@ -547,6 +569,15 @@ function syncAvatars(dt) {
   for (const [id, a] of avatars) if (!view.players.has(id)) { a.dispose(); avatars.delete(id); }
 }
 
+function syncDogs(dt) {
+  if (!view?.dogs) return;
+  for (const [id, d] of view.dogs) {
+    let v = dogViews.get(id);
+    if (!v) { v = new DogView(id, d[4], scene); dogViews.set(id, v); }
+    v.apply(d, dt, elapsed);
+  }
+}
+
 function syncBoards() {
   const s = net.latest;
   if (!s) return;
@@ -580,4 +611,4 @@ function ambientSounds(dt) {
 frame();
 
 // expose a little for automated testing / debugging
-window.__rd = { net, me, scene, camera, cowViews, renderer, CowView, weapon };
+window.__rd = { net, me, scene, camera, cowViews, renderer, CowView, DogView, weapon };

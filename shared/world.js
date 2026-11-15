@@ -418,17 +418,27 @@ export const COW_TYPES = {
 };
 export const COW_TYPE_LIST = ['walker', 'runner', 'bull'];
 
+// The ranch dogs (two big red-brown dogs and the little fluffy one) fight on your side.
+export const DOG_TYPES = [
+  { kind: 'big', hp: 90, speed: 7.5, sight: 20, bite: 1.0, damage: 7, biteEvery: 0.9, radius: 0.4 },
+  { kind: 'big', hp: 90, speed: 7.2, sight: 20, bite: 1.0, damage: 7, biteEvery: 0.95, radius: 0.4 },
+  { kind: 'little', hp: 45, speed: 8.0, sight: 14, bite: 0.7, damage: 3, biteEvery: 0.6, radius: 0.28 },
+];
+
 // Hit spheres for a cow at (x,z) facing yaw. Index 0 is the head.
 // `rear` lifts the front end (used while climbing through a window).
+// Hit spheres for a cow at (x,z) facing yaw, matched to the Brahman model
+// (2.7 m nose to rump, head ~1.55 m forward, back ~1.55 m high). Index 0 is the head.
 export function cowHitSpheres(type, x, z, yaw, y = 0) {
   const s = COW_TYPES[type].scale;
   const fx = Math.sin(yaw), fz = Math.cos(yaw);
+  const at = (f, h, r, head) => ({ x: x + fx * f * s, y: y + h * s, z: z + fz * f * s, r: r * s, head });
   return [
-    { x: x + fx * 1.25 * s, y: y + 1.35 * s, z: z + fz * 1.25 * s, r: 0.42 * s, head: true },
-    { x: x + fx * 0.55 * s, y: y + 1.05 * s, z: z + fz * 0.55 * s, r: 0.62 * s },
-    { x: x - fx * 0.35 * s, y: y + 1.05 * s, z: z - fz * 0.35 * s, r: 0.64 * s },
-    { x: x - fx * 0.95 * s, y: y + 1.0 * s, z: z - fz * 0.95 * s, r: 0.55 * s },
-    { x, y: y + 0.45 * s, z, r: 0.5 * s },
+    at(1.58, 1.42, 0.3, true),
+    at(0.9, 1.2, 0.48),
+    at(0.25, 1.15, 0.5),
+    at(-0.4, 1.12, 0.5),
+    at(0.1, 0.45, 0.45),
   ];
 }
 

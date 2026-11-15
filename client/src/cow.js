@@ -2,6 +2,8 @@
 // GLB cow (from a 3D store or generated from photos of the real cows) can replace
 // `buildCowModel` later without touching the rest of the game.
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { COW_TYPES, heightAt } from '../../shared/world.js';
 import * as T from './textures.js';
 
@@ -150,30 +152,114 @@ export function buildCowModel(type) {
   return { root, body, neckPivot, head, jaw, legs, tail, hideMat };
 }
 
+// ---------------------------------------------------------------------------
+// The real model: a Brahman generated from the ranch's own cattle photo (fal/Rodin),
+// rigged in Blender (tools/blender/rig_quadruped.py). Zombie rot, wounds and blood are
+// painted onto its hide here, and glowing eyes ride on the head bone.
+let ASSET = null;
+export async function loadCowAsset() {
+  try {
+    const gltf = await new GLTFLoader().loadAsync('/assets/models/brahman/brahman.glb');
+    const meta = await (await fetch('/assets/models/brahman/brahman.json')).json();
+    gltf.scene.traverse(o => {
+      if (!o.isMesh) return;
+      o.castShadow = true; o.receiveShadow = true; o.frustumCulled = false;
+      const m = o.material;
+      if (m.map?.image) m.map = T.zombify(m.map.image);
+      m.roughness = 0.82; m.metalness = 0;
+    });
+    ASSET = { scene: gltf.scene, meta };
+  } catch (e) {
+    console.warn('Brahman model failed to load; using the simple cow.', e);
+  }
+}
+
+const TINT = { walker: 0xd6d2c6, runner: 0xbdb8ac, bull: 0x7e7a74 };
+const qTmp = new THREE.Quaternion(), eTmp = new THREE.Euler();
+
+class BrahmanRig {
+  constructor(type) {
+    const M = materials();
+    this.root = new THREE.Group();
+    this.body = new THREE.Group();
+    this.root.add(this.body);
+    this.model = SkeletonUtils.clone(ASSET.scene);
+    this.model.scale.setScalar(COW_TYPES[type].scale);
+    this.body.add(this.model);
+    this.mats = [];
+    this.model.traverse(o => {
+      if (o.isMesh) {
+        o.material = o.material.clone();
+        o.material.color.set(TINT[type]);
+        this.mats.push(o.material);
+      }
+    });
+    this.bones = {};
+    this.model.traverse(o => { if (o.isBone) this.bones[o.name] = { bone: o, rest: o.quaternion.clone() }; });
+    // glowing eyes, placed in the head bone's space
+    const head = this.bones.head?.bone;
+    if (head) {
+      this.model.updateMatrixWorld(true);
+      const meta = ASSET.meta;
+      const hx = meta.head[0], hy = meta.head[1] + 0.05, hz = meta.head[2] + 0.08;
+      for (const sx of [-1, 1]) {
+        const eye = new THREE.Mesh(new THREE.SphereGeometry(0.035, 8, 6), M.eye);
+        const wp = this.model.localToWorld(new THREE.Vector3(hx + sx * 0.13, hy, hz));
+        head.add(eye);
+        eye.position.copy(head.worldToLocal(wp));
+        eye.scale.setScalar(1 / COW_TYPES[type].scale);
+      }
+    }
+  }
+  set(name, x = 0, y = 0, z = 0) {
+    const b = this.bones[name];
+    if (!b) return;
+    b.bone.quaternion.copy(b.rest).multiply(qTmp.setFromEuler(eTmp.set(x, y, z)));
+  }
+}
+
+// The old primitive cow, kept as a fallback if the model can't load.
+class SimpleRig {
+  constructor(type) {
+    const m = buildCowModel(type);
+    Object.assign(this, { root: m.root, body: m.body, m });
+    this.mats = [m.hideMat.clone()];
+    m.root.traverse(o => { if (o.isMesh && o.material === m.hideMat) o.material = this.mats[0]; });
+    m.body.scale.setScalar(COW_TYPES[type].scale);
+  }
+  set(name, x = 0, y = 0, z = 0) {
+    const { m } = this;
+    const legIdx = { FL: 0, FR: 1, BL: 2, BR: 3 };
+    const lm = name.match(/^leg_(\w\w)_(up|lo)$/);
+    if (lm) { const l = m.legs[legIdx[lm[1]]]; (lm[2] === 'up' ? l.hip : l.knee).rotation.x = lm[2] === 'up' ? -x : x; return; }
+    if (name === 'neck') m.neckPivot.rotation.set(x, y, z);
+    if (name === 'head') m.jaw.rotation.x = 0.15 + Math.max(0, x);
+    if (name === 'tail') m.tail.rotation.z = z;
+  }
+}
+
 // One cow on screen. `apply` takes the interpolated server state each frame.
 export class CowView {
   constructor(id, type, scene) {
     this.id = id;
     this.type = type;
-    this.m = buildCowModel(type);
+    this.rig = ASSET ? new BrahmanRig(type) : new SimpleRig(type);
+    this.root = this.rig.root;
+    this.body = this.rig.body;
     this.scene = scene;
-    scene.add(this.m.root);
+    scene.add(this.root);
     this.phase = Math.random() * 10;
-    this.limp = 0.6 + Math.random() * 0.8;   // every zombie lurches differently
-    this.tilt = (Math.random() - 0.5) * 0.6;
+    this.limp = 0.6 + Math.random() * 0.8;
+    this.tilt = (Math.random() - 0.5) * 0.5;
     this.deathT = 0;
     this.flash = 0;
     this.lastPos = null;
     this.speed = 0;
-    this.state = 0;
     this.deathSide = Math.random() < 0.5 ? -1 : 1;
-    // individual material so hit flashes don't light up every cow
-    this.mat = this.m.hideMat.clone();
-    this.m.root.traverse(o => { if (o.isMesh && o.material === this.m.hideMat) o.material = this.mat; });
   }
 
   apply(s, dt, t) {
-    const { root, body, neckPivot, head, jaw, legs, tail } = this.m;
+    const { rig, root, body } = this;
     const [x, z, yaw, state, y] = s;
     if (this.lastPos) {
       const d = Math.hypot(x - this.lastPos[0], z - this.lastPos[1]) / Math.max(dt, 1e-3);
@@ -182,80 +268,70 @@ export class CowView {
     this.lastPos = [x, z];
     root.position.set(x, (y || 0) + heightAt(x, z), z);
     root.rotation.y = yaw;
-    this.state = state;
 
-    // hit flash
     this.flash = Math.max(0, this.flash - dt * 6);
-    this.mat.emissive.setRGB(this.flash * 0.8, 0, 0);
+    for (const m of rig.mats) m.emissive.setRGB(this.flash * 0.6, 0, 0);
 
-    if (state === 2) { // dead: topple onto its side, then sink into the ground
+    const sc = COW_TYPES[this.type].scale;
+    if (state === 2) { // dead: knees buckle, topple onto its side, then sink away
       this.deathT += dt;
-      const k = Math.min(1, this.deathT / 0.55);
-      const ease = 1 - (1 - k) ** 3;
-      body.rotation.z = this.deathSide * ease * 1.45;
-      body.position.y = -ease * 0.45 * COW_TYPES[this.type].scale + (this.deathT > 4 ? -(this.deathT - 4) * 0.6 : 0);
-      for (const l of legs) { l.hip.rotation.x *= 0.9; l.knee.rotation.x = -0.6 * ease; }
-      neckPivot.rotation.x = 0.6 * ease;
+      const k = Math.min(1, this.deathT / 0.6), ease = 1 - (1 - k) ** 3;
+      body.rotation.set(0, 0, this.deathSide * ease * 1.5);
+      body.position.y = -ease * 0.35 * sc + (this.deathT > 5 ? -(this.deathT - 5) * 0.5 : 0);
+      for (const l of ['FL', 'FR', 'BL', 'BR']) { rig.set(`leg_${l}_up`, -0.25 * ease); rig.set(`leg_${l}_lo`, 0.5 * ease); }
+      rig.set('neck', 0.5 * ease, 0, -this.deathSide * 0.4 * ease);
       return;
     }
 
     const runner = this.type === 'runner';
-    const gait = runner ? 2.2 : 1.5;
-    this.phase += dt * (1.5 + this.speed * gait);
-    const p = this.phase;
-    const moving = Math.min(1, this.speed / 1.5);
+    this.phase += dt * (1.4 + this.speed * (runner ? 2.0 : 1.45));
+    const p = this.phase, moving = Math.min(1, this.speed / 1.5);
+    const swing = (runner ? 0.65 : 0.42) * moving;
 
-    // legs: diagonal pairs, with a dragging limp on one rear leg
-    const swing = (runner ? 0.75 : 0.5) * moving;
-    const off = [0, Math.PI, Math.PI, 0];
-    legs.forEach((l, i) => {
-      const lp = p + off[i];
-      const limp = i === 3 ? this.limp : 1;
-      l.hip.rotation.x = Math.sin(lp) * swing * limp;
-      l.knee.rotation.x = Math.max(0, -Math.cos(lp)) * 0.7 * moving * limp;
-    });
+    // diagonal gait, one dragging rear leg
+    const legs = [['FL', 0], ['FR', Math.PI], ['BL', Math.PI], ['BR', 0]];
+    for (const [l, off] of legs) {
+      const limp = l === 'BR' ? this.limp : 1;
+      const lp = p + off;
+      rig.set(`leg_${l}_up`, -Math.sin(lp) * swing * limp);
+      rig.set(`leg_${l}_lo`, Math.max(0, Math.cos(lp)) * 0.75 * moving * limp);
+    }
+    body.position.y = Math.abs(Math.sin(p)) * 0.05 * moving;
+    body.rotation.set(0, 0, this.tilt * 0.25 + Math.sin(p * 0.5) * 0.06);
+    rig.set('tail', 0, 0, Math.sin(t * 2.5 + this.id) * 0.35);
 
-    // body lurch + sway
-    body.position.y = Math.abs(Math.sin(p)) * 0.07 * moving;
-    body.rotation.z = this.tilt * 0.3 + Math.sin(p * 0.5) * 0.08;
-    body.rotation.x = 0;
-    tail.rotation.z = Math.sin(t * 3 + this.id) * 0.4;
+    // lolling zombie head with the odd twitch
+    const twitch = Math.sin(t * 17 + this.id * 3) > 0.97 ? Math.sin(t * 60) * 0.2 : 0;
+    let neckX = 0.12 + Math.sin(p * 0.5) * 0.08, neckY = Math.sin(t * 0.7 + this.id) * 0.2, neckZ = this.tilt + twitch;
+    let headX = 0.1;
 
-    // head: lolling zombie head, twitches now and then
-    const twitch = Math.sin(t * 17 + this.id * 3) > 0.97 ? Math.sin(t * 60) * 0.25 : 0;
-    neckPivot.rotation.set(-0.15 + Math.sin(p * 0.5) * 0.12, Math.sin(t * 0.7 + this.id) * 0.25, this.tilt + twitch);
-    jaw.rotation.x = 0.15 + Math.abs(Math.sin(t * 4 + this.id)) * 0.25;
-
-    if (state === 1) { // attack: violent headbutt / bite
+    if (state === 1) { // attack: violent headbutt
       const a = (t * 2.2 + this.id) % 1;
       const thrust = a < 0.25 ? a / 0.25 : Math.max(0, 1 - (a - 0.25) / 0.4);
-      neckPivot.rotation.x = -0.1 + thrust * 0.7;
-      head.position.z = 0.55 + thrust * 0.25;
-      body.rotation.x = -thrust * 0.12;
-      jaw.rotation.x = 0.2 + thrust * 0.5;
-    } else if (state === 3) { // tearing at boards: rear up and paw/bite at the opening
+      neckX = -0.15 + thrust * 0.75; headX = thrust * 0.3;
+      body.rotation.x = -thrust * 0.08;
+    } else if (state === 3) { // tearing at boards: rear up, paw and bite
       const a = Math.sin(t * 7 + this.id);
-      body.rotation.x = -0.35 - a * 0.12;
-      body.position.y = 0.25;
-      legs[0].hip.rotation.x = -1.0 + Math.sin(t * 9 + this.id) * 0.6;
-      legs[1].hip.rotation.x = -1.0 + Math.sin(t * 9 + this.id + 2) * 0.6;
-      neckPivot.rotation.x = 0.2 + a * 0.4;
-      jaw.rotation.x = 0.5 + Math.abs(a) * 0.4;
-      head.position.z = 0.55;
-    } else if (state === 4) { // vaulting in: pitch forward over the sill
-      body.rotation.x = -0.5 + Math.sin(t * 6) * 0.1;
-      legs[0].hip.rotation.x = legs[1].hip.rotation.x = -1.2;
-      legs[2].hip.rotation.x = legs[3].hip.rotation.x = 0.8;
-      head.position.z = 0.55;
+      body.rotation.x = -0.32 - a * 0.1;
+      body.position.y = 0.2;
+      rig.set('leg_FL_up', -1.0 + Math.sin(t * 9 + this.id) * 0.5); rig.set('leg_FL_lo', 0.9);
+      rig.set('leg_FR_up', -1.0 + Math.sin(t * 9 + this.id + 2) * 0.5); rig.set('leg_FR_lo', 0.9);
+      neckX = 0.3 + a * 0.3;
+    } else if (state === 4) { // climbing through
+      body.rotation.x = -0.45 + Math.sin(t * 6) * 0.08;
+      rig.set('leg_FL_up', -1.1); rig.set('leg_FR_up', -1.1); rig.set('leg_FL_lo', 1.0); rig.set('leg_FR_lo', 1.0);
+      rig.set('leg_BL_up', 0.6); rig.set('leg_BR_up', 0.6);
     } else {
-      head.position.z = 0.55;
+      body.rotation.x = 0;
     }
+    rig.set('neck', neckX, neckY, neckZ);
+    rig.set('head', headX);
   }
 
   hit() { this.flash = 1; }
 
   dispose() {
-    this.scene.remove(this.m.root);
-    this.mat.dispose();
+    this.scene.remove(this.root);
+    for (const m of this.rig.mats) m.dispose();
   }
 }

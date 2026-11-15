@@ -512,3 +512,34 @@ export const macroNoise = () => once('macroNoise', () => {
   }
   return tex(c, [1, 1], false);
 });
+
+// Paint zombie rot, wounds, blood runs and the ranch brand onto a real hide texture.
+export function zombify(image) {
+  const S = 1024;
+  const [c, g] = canvas(S);
+  g.drawImage(image, 0, 0, S, S);
+  const r = rand(77);
+  for (let i = 0; i < 46; i++) { // mottled grey-green rot and bruising
+    const x = r() * S, y = r() * S, rad = 25 + r() * 110;
+    const gr = g.createRadialGradient(x, y, 0, x, y, rad);
+    const col = r() < 0.65 ? '72,92,54' : '78,46,64';
+    gr.addColorStop(0, `rgba(${col},0.45)`); gr.addColorStop(1, `rgba(${col},0)`);
+    g.fillStyle = gr; g.fillRect(0, 0, S, S);
+  }
+  for (let i = 0; i < 30; i++) { // open wounds
+    const x = r() * S, y = r() * S, rad = 8 + r() * 30;
+    const gr = g.createRadialGradient(x, y, 0, x, y, rad);
+    gr.addColorStop(0, 'rgba(40,0,0,1)'); gr.addColorStop(0.5, 'rgba(115,8,8,0.95)'); gr.addColorStop(1, 'rgba(95,25,18,0)');
+    g.fillStyle = gr; g.beginPath(); g.ellipse(x, y, rad * 1.8, rad * 0.45, r() * 3, 0, 7); g.fill();
+  }
+  for (let i = 0; i < 45; i++) { // blood runs
+    g.fillStyle = `rgba(${75 + r() * 50},3,3,0.65)`;
+    g.fillRect(r() * S, r() * S, 2 + r() * 4, 30 + r() * 120);
+  }
+  speckle(g, S, S, 5000, ['#00000030', '#3a4a2050', '#5a0a0a40'], 1, 3, r);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.flipY = false; // glTF texture convention
+  t.anisotropy = anisotropy;
+  return t;
+}

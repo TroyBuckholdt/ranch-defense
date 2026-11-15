@@ -168,6 +168,26 @@ export class Audio {
     o.start(t); lfo.start(t); o.stop(t + dur + 0.05); lfo.stop(t + dur + 0.05);
   }
 
+  // dog bark: a short voiced burst through a mouth-like formant; little dog is higher
+  bark(pos, little = false, growl = false) {
+    if (!this.ctx) return;
+    const out = this.out(pos, little ? 3 : 5);
+    const base = little ? 520 : 260;
+    const n = growl ? 1 : 1 + Math.floor(Math.random() * 2);
+    for (let i = 0; i < n; i++) {
+      const st = i * 0.18;
+      this.tone(out, { dur: 0.12, type: 'sawtooth', freq: base * 1.3, freqEnd: base * 0.8, gain: 0.35, start: st, attack: 0.008 });
+      this.noise(out, { dur: 0.1, type: 'bandpass', freq: base * 3, q: 3, gain: 0.6, start: st });
+    }
+    if (growl) this.noise(out, { dur: 0.35, type: 'lowpass', freq: little ? 600 : 300, gain: 0.5, attack: 0.03 });
+  }
+
+  yelp(pos, little = false) {
+    if (!this.ctx) return;
+    const out = this.out(pos, 4);
+    this.tone(out, { dur: 0.25, type: 'triangle', freq: little ? 900 : 600, freqEnd: little ? 1500 : 1000, gain: 0.3 });
+  }
+
   boardTear(pos) {
     if (!this.ctx) return;
     const out = this.out(pos, 5);

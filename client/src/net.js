@@ -44,6 +44,7 @@ export class Net {
     // index for quick lookups
     s.cowMap = new Map(s.cows.map(c => [c[0], c]));
     s.playerMap = new Map(s.players.map(p => [p.id, p]));
+    s.dogMap = new Map((s.dogs || []).map(d => [d[0], d]));
     this.buf.push(s);
     if (this.buf.length > 30) this.buf.shift();
     this.latest = s;
@@ -75,7 +76,12 @@ export class Net {
         yaw: lerpAngle(pa.yaw, pb.yaw, k), pitch: lerp(pa.pitch, pb.pitch, k),
       } : pb);
     }
-    return { cows, players };
+    const dogs = new Map();
+    for (const db of b.dogs || []) {
+      const da = a.dogMap?.get(db[0]);
+      dogs.set(db[0], da ? [lerp(da[2], db[2], k), lerp(da[3], db[3], k), lerpAngle(da[4], db[4], k), db[5], db[1]] : [db[2], db[3], db[4], db[5], db[1]]);
+    }
+    return { cows, players, dogs };
   }
 }
 

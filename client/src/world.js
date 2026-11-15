@@ -737,7 +737,7 @@ function buildHedges(models) {
     mesh.castShadow = mesh.receiveShadow = true;
     group.add(mesh);
   }
-  const flowers = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(0.035, 1), M.flower, spots.length * 14);
+  const flowers = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(0.018, 1), M.flower, spots.length * 14);
   let k = 0;
   spots.forEach(([x, z], i) => {
     for (let j = 0; j < 14; j++) {
