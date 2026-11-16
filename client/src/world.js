@@ -10,7 +10,7 @@
 //    ferns and shrubs (simplified for the jungle).
 import * as THREE from 'three';
 import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { gltfLoader, texURL, isLowDetail } from './gltf.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import {
   HOUSE, HOUSE_WALLS, ENTRIES, FURNITURE, STRUCTURES, HAY_BALES, TREES, UNDERGROWTH, FENCE_SEGMENTS,
@@ -56,7 +56,7 @@ function flat(w, d, mat, x, y, z, repeat) {
 // ---------------------------------------------------------------- asset loading
 const texLoader = new THREE.TextureLoader();
 function loadTex(file, srgb = true) {
-  const t = texLoader.load(A + 'tex/' + file);
+  const t = texLoader.load(texURL(file));
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
   t.anisotropy = 8;
   if (srgb) t.colorSpace = THREE.SRGBColorSpace;
@@ -74,7 +74,7 @@ function pbr(name, opts = {}) {
 }
 
 async function loadModel(path) {
-  const gltf = await new GLTFLoader().loadAsync(A + 'models/' + path);
+  const gltf = await gltfLoader().loadAsync(A + 'models/' + path);
   gltf.scene.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
   return gltf.scene;
 }
@@ -235,7 +235,7 @@ export async function buildWorld(renderer, Q = { shadows: 2048, grass: 26000 }, 
 
   // ---------- Real sky photo for background + image-based lighting ----------
   onProgress('Loading the sky...');
-  const hdr = await new HDRLoader().loadAsync(A + 'hdri/kloofendal_48d_partly_cloudy_puresky.hdr');
+  const hdr = await new HDRLoader().loadAsync(A + (isLowDetail() ? 'hdri/kloofendal_lo.hdr' : 'hdri/kloofendal_48d_partly_cloudy_puresky.hdr'));
   hdr.mapping = THREE.EquirectangularReflectionMapping;
   scene.background = hdr;
   scene.backgroundIntensity = 0.9;

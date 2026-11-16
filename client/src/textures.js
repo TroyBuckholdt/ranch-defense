@@ -1,6 +1,7 @@
 // Procedural textures drawn on canvases, so the prototype needs no downloaded art.
 // Each one gets swapped for real photo-based textures once the ranch footage is in.
 import * as THREE from 'three';
+import { texURL } from './gltf.js';
 
 let anisotropy = 4;
 export function setAnisotropy(a) { anisotropy = a; }
@@ -416,7 +417,7 @@ export const brahmanHide = () => once('brahmanHide', () => {
     decorate();
   };
   img.onerror = decorate;
-  img.src = '/assets/tex/brahman_hide.jpg';
+  img.src = texURL('brahman_hide.jpg');
   return t;
 });
 

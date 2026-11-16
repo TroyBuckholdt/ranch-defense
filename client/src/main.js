@@ -19,6 +19,7 @@ import { Audio } from './audio.js';
 import { Net } from './net.js';
 import { LocalPlayer } from './player.js';
 import { setAnisotropy } from './textures.js';
+import { setLowDetail } from './gltf.js';
 import * as T from './textures.js';
 import { detectTouch, isPhone, TouchControls, enterFullscreen, getSensitivity, setSensitivity } from './touch.js';
 
@@ -30,7 +31,7 @@ const PRESETS = {
   ultra: { pr: 2, shadows: 4096, msaa: 4, bloom: true, ao: true, rays: 48, grass: 50000, crowns: 2 },
   high: { pr: 1.25, shadows: 4096, msaa: 4, bloom: true, ao: false, rays: 24, grass: 22000, crowns: 1 },
   medium: { pr: 1, shadows: 2048, msaa: 2, bloom: true, ao: false, rays: 0, grass: 12000, crowns: 1 },
-  low: { pr: 0.75, shadows: 0, msaa: 0, bloom: false, ao: false, rays: 0, grass: 4000, crowns: 1 },
+  low: { pr: 0.75, shadows: 0, msaa: 0, bloom: false, ao: false, rays: 0, grass: 4000, crowns: 1, lowTex: true },
 };
 // Default by graphics chip: built-in laptop/phone graphics start on Medium/Low, only
 // dedicated gaming cards get High. (Players can always change it on the menu.)
@@ -49,6 +50,7 @@ let qName = new URLSearchParams(location.search).get('q');
 try { qName = qName || localStorage.getItem('rd-quality'); } catch {}
 if (!PRESETS[qName]) qName = touchMode ? (isPhone() ? 'low' : 'medium') : guessQuality();
 const Q = PRESETS[qName];
+setLowDetail(Q.lowTex);
 $('quality').value = qName;
 $('quality').onchange = (e) => {
   try { localStorage.setItem('rd-quality', e.target.value); } catch {}
@@ -66,10 +68,38 @@ renderer.shadowMap.type = THREE.PCFShadowMap;
 $('game').appendChild(renderer.domElement);
 setAnisotropy(Math.min(8, renderer.capabilities.getMaxAnisotropy()));
 
+// ---------------------------------------------------------------- menu
+// built before anything heavy loads, so the characters show up straight away
+const nameInput = $('name'), roomInput = $('room');
+let myChar = 'p1';
+try { myChar = localStorage.getItem('rd-char') || 'p1'; } catch {}
+if (!CHARACTERS.some(c => c.id === myChar)) myChar = 'p1'; // e.g. a removed duplicate
+const picker = $('char-picker');
+for (const c of CHARACTERS) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.innerHTML = `<img src="/assets/models/people/thumbs/${c.id}.jpg" alt=""><span>${c.label}</span>`;
+  b.classList.toggle('sel', c.id === myChar);
+  b.onclick = () => {
+    myChar = c.id;
+    try { localStorage.setItem('rd-char', c.id); } catch {}
+    for (const el of picker.children) el.classList.toggle('sel', el === b);
+  };
+  picker.appendChild(b);
+}
+try { nameInput.value = localStorage.getItem('rd-name') || ''; } catch {}
+const urlRoom = new URLSearchParams(location.search).get('room');
+if (urlRoom) roomInput.value = urlRoom;
+
 $('play').disabled = true;
-$('menu-status').textContent = 'Waking the herd...';
+// loading readout: what's happening plus how many of the files have arrived
+let loadMsg = 'Waking the herd...', loadPct = 0, loading = true;
+const showLoad = () => { if (loading) $('menu-status').textContent = `${loadMsg} ${loadPct}%`; };
+THREE.DefaultLoadingManager.onProgress = (url, done, total) => { loadPct = Math.max(loadPct, Math.min(99, Math.round((done / total) * 100))); showLoad(); };
+showLoad();
 await Promise.all([loadCowAsset(renderer), loadDogAssets()]);
-const world = await buildWorld(renderer, Q, (msg) => { $('menu-status').textContent = msg; });
+const world = await buildWorld(renderer, Q, (msg) => { loadMsg = msg; showLoad(); });
+loading = false;
 $('menu-status').textContent = '';
 $('play').disabled = false;
 const scene = world.scene;
@@ -232,27 +262,6 @@ let mooTimer = 2, heartbeatT = 0;
 const keys = {};
 const tmpV = new THREE.Vector3(), tmpV2 = new THREE.Vector3();
 
-// ---------------------------------------------------------------- menu
-const nameInput = $('name'), roomInput = $('room');
-let myChar = 'p1';
-try { myChar = localStorage.getItem('rd-char') || 'p1'; } catch {}
-if (!CHARACTERS.some(c => c.id === myChar)) myChar = 'p1'; // e.g. a removed duplicate
-const picker = $('char-picker');
-for (const c of CHARACTERS) {
-  const b = document.createElement('button');
-  b.type = 'button';
-  b.innerHTML = `<img src="/assets/models/people/thumbs/${c.id}.jpg" alt=""><span>${c.label}</span>`;
-  b.classList.toggle('sel', c.id === myChar);
-  b.onclick = () => {
-    myChar = c.id;
-    try { localStorage.setItem('rd-char', c.id); } catch {}
-    for (const el of picker.children) el.classList.toggle('sel', el === b);
-  };
-  picker.appendChild(b);
-}
-try { nameInput.value = localStorage.getItem('rd-name') || ''; } catch {}
-const urlRoom = new URLSearchParams(location.search).get('room');
-if (urlRoom) roomInput.value = urlRoom;
 if (touchMode) {
   $('touch-menu').classList.remove('hidden');
   const sens = $('touch-sens');

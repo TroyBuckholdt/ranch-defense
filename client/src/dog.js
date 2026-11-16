@@ -1,14 +1,14 @@
 // The ranch dogs: two big red-brown dogs and the little fluffy golden one, generated
 // from the ranch's own video (fal/Rodin) and rigged in Blender. They fight on your side.
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { gltfLoader } from './gltf.js';
 import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { heightAt, DOG_TYPES } from '../../shared/world.js';
 import { nameTag } from './textures.js';
 
 const ASSETS = {};
 export async function loadDogAssets() {
-  const loader = new GLTFLoader();
+  const loader = gltfLoader();
   await Promise.all(['bigdog', 'littledog'].map(async (n) => {
     try {
       const g = await loader.loadAsync(`/assets/models/dogs/${n}.glb`);

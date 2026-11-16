@@ -13,7 +13,7 @@
 //    pallor and mud on the legs, plus glowing eyes that the bloom pass picks up.
 //    Deliberately no open wounds or gore.
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { gltfLoader } from './gltf.js';
 import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { COW_TYPES, heightAt } from '../../shared/world.js';
 import * as T from './textures.js';
@@ -281,7 +281,7 @@ let ASSET = null;
 const HIDE_VARIANTS = 3;
 export async function loadCowAsset(renderer) {
   try {
-    const gltf = await new GLTFLoader().loadAsync('/assets/models/brahman/brahman.glb');
+    const gltf = await gltfLoader().loadAsync('/assets/models/brahman/brahman.glb');
     const meta = await (await fetch('/assets/models/brahman/brahman.json')).json();
     const hides = [];
     gltf.scene.traverse(o => {
