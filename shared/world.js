@@ -173,6 +173,8 @@ function fenceSegments() {
 }
 export const FENCE_SEGMENTS = fenceSegments();
 export const FENCE_HEIGHT = FENCE.h;
+// the mowed lawn inside the yard fence (the pasture beyond it grows long)
+export const YARD = { minX: FENCE.minX, maxX: FENCE.maxX, minZ: FENCE.minZ, maxZ: FENCE.maxZ };
 
 export const STRUCTURES = [
   // long front veranda (terracotta floor, white columns, iron railing) like the real house
