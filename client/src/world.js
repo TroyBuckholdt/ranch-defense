@@ -10,7 +10,7 @@
 //    ferns and shrubs (simplified for the jungle).
 import * as THREE from 'three';
 import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { gltfLoader, texURL, isLowDetail } from './gltf.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import {
   HOUSE, HOUSE_WALLS, ENTRIES, FURNITURE, STRUCTURES, HAY_BALES, TREES, UNDERGROWTH, FENCE_SEGMENTS,
@@ -56,7 +56,7 @@ function flat(w, d, mat, x, y, z, repeat) {
 // ---------------------------------------------------------------- asset loading
 const texLoader = new THREE.TextureLoader();
 function loadTex(file, srgb = true) {
-  const t = texLoader.load(A + 'tex/' + file);
+  const t = texLoader.load(texURL(file));
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
   t.anisotropy = 8;
   if (srgb) t.colorSpace = THREE.SRGBColorSpace;
@@ -74,7 +74,7 @@ function pbr(name, opts = {}) {
 }
 
 async function loadModel(path) {
-  const gltf = await new GLTFLoader().loadAsync(A + 'models/' + path);
+  const gltf = await gltfLoader().loadAsync(A + 'models/' + path);
   gltf.scene.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
   return gltf.scene;
 }
@@ -235,7 +235,7 @@ export async function buildWorld(renderer, Q = { shadows: 2048, grass: 26000 }, 
 
   // ---------- Real sky photo for background + image-based lighting ----------
   onProgress('Loading the sky...');
-  const hdr = await new HDRLoader().loadAsync(A + 'hdri/kloofendal_48d_partly_cloudy_puresky.hdr');
+  const hdr = await new HDRLoader().loadAsync(A + (isLowDetail() ? 'hdri/kloofendal_lo.hdr' : 'hdri/kloofendal_48d_partly_cloudy_puresky.hdr'));
   hdr.mapping = THREE.EquirectangularReflectionMapping;
   scene.background = hdr;
   scene.backgroundIntensity = 0.9;
@@ -1395,7 +1395,7 @@ function foliage(m, { sway = 0.03, flutter = 0.006, tint = null, glow = 0.9, h =
 // Instances are grouped into 40 m chunks so the GPU can skip whole patches that are
 // off-screen, and distant chunks are hidden (the haze covers the pop).
 class ChunkedInstances {
-  constructor(geometry, material, transforms, { chunk = 40, maxDist = 160, shadows = true } = {}) {
+  constructor(geometry, material, transforms, { chunk = 64, maxDist = 160, shadows = true } = {}) {
     this.group = new THREE.Group();
     this.maxDist = maxDist;
     const cells = new Map();
@@ -1481,7 +1481,7 @@ function buildVegetation(models, Q) {
   add(canopy, canopyT, { maxDist: 200, shadows: !lowQ });
   // dense rounded crowns (the real trees are full and leafy): lumpy leaf-covered blobs
   // filling each crown behind the branches
-  const blob = new THREE.IcosahedronGeometry(1, Q.shadows ? 2 : 1);
+  const blob = new THREE.IcosahedronGeometry(1, Q.crowns || 1);
   { const bp = blob.attributes.position, v = new THREE.Vector3();
     for (let i = 0; i < bp.count; i++) { v.fromBufferAttribute(bp, i); const n = 1 + 0.22 * Math.sin(v.x * 5.1 + v.y * 3.7) * Math.cos(v.z * 4.3 - v.y * 2.1); v.multiplyScalar(n); v.y *= 0.78; bp.setXYZ(i, v.x, v.y, v.z); }
     blob.computeVertexNormals(); }
@@ -1498,7 +1498,7 @@ function buildVegetation(models, Q) {
       crownT.push({ x: t.x + Math.cos(a) * rr, y: cy + ((j % 3) - 1) * R * 0.18, z: t.z + Math.sin(a) * rr, ry: a, sx: sc, sy: sc * 0.8, sz: sc });
     }
   });
-  add([{ geometry: blob, material: crownM }], crownT, { maxDist: 220, shadows: !lowQ });
+  add([{ geometry: blob, material: crownM }], crownT, { maxDist: 220, shadows: (Q.crowns || 1) > 1 });
 
   // undergrowth: ferns and shrubs from the real models
   const ferns = UNDERGROWTH.filter(u => u.kind === 'fern').map(u => ({ x: u.x, y: gy(u.x, u.z), z: u.z, ry: u.rot, s: u.s * 2.6 }));

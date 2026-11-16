@@ -4,7 +4,7 @@
 // simple placeholder guns show until they finish loading. The arms and gun live in their
 // own scene, drawn on top of the world (see ViewmodelPass) and lit by their own lights.
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { gltfLoader } from './gltf.js';
 import * as T from './textures.js';
 
 // Real-world fit for each generated model: overall length (m), where the trigger hand sits
@@ -26,7 +26,7 @@ export const HAND_FIT = {
   left: { at: [-0.012, -0.075, 0], arm: [-0.12, -0.05, 1], up: [0.85, 1, 0], bend: 0.55, len: 0.42, palm: 0.15, wrist: 0.36 },
   revolverLeft: { at: [-0.03, -0.1, 0.045], arm: [-0.3, -0.25, 0.92], up: [0.8, 1, 0], bend: 0.6 },
 };
-const loader = new GLTFLoader();
+const loader = gltfLoader();
 
 const metal = new THREE.MeshStandardMaterial({ color: 0x4a4e54, roughness: 0.35, metalness: 0.8 });
 const metal2 = new THREE.MeshStandardMaterial({ color: 0x5a5e64, roughness: 0.45, metalness: 0.7 });

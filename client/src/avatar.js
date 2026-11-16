@@ -3,7 +3,7 @@
 // Legs come from the walk/run animation clips; the upper body is posed in code to hold
 // the rifle and aim wherever that player is looking.
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { gltfLoader } from './gltf.js';
 import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { nameTag } from './textures.js';
 
@@ -17,7 +17,7 @@ export const CHARACTERS = [
 ];
 
 const A = '/assets/models/people/';
-const loader = new GLTFLoader();
+const loader = gltfLoader();
 const cache = new Map(); // id -> Promise<{scene, walk, run, height}>
 
 export function loadCharacter(id) {

@@ -3,6 +3,7 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { Room } from './game.js';
@@ -15,8 +16,26 @@ const TYPES = {
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp',
   '.svg': 'image/svg+xml', '.json': 'application/json', '.mp3': 'audio/mpeg', '.ogg': 'audio/ogg',
   '.glb': 'model/gltf-binary', '.spz': 'application/octet-stream', '.ply': 'application/octet-stream',
-  '.splat': 'application/octet-stream', '.mp4': 'video/mp4', '.ico': 'image/x-icon',
+  '.splat': 'application/octet-stream', '.mp4': 'video/mp4', '.ico': 'image/x-icon', '.wasm': 'application/wasm', '.hdr': 'application/octet-stream',
 };
+
+// Files are compressed once (brotli or gzip) and kept in memory: the game's code shrinks
+// about 4x, which matters on phones. Built code has hashed names and is cached for good;
+// everything else (models, textures) is revalidated after an hour, so updates show up.
+const COMPRESS = new Set(['.html', '.js', '.css', '.json', '.svg', '.hdr', '.glb', '.wasm']);
+const packed = new Map(); // file|encoding -> { buf, etag }
+function getPacked(file, enc, stat) {
+  const key = file + '|' + enc;
+  const hit = packed.get(key);
+  if (hit && hit.mtime === stat.mtimeMs) return hit;
+  const raw = fs.readFileSync(file);
+  const buf = enc === 'br' ? zlib.brotliCompressSync(raw, { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 9 } })
+    : enc === 'gzip' ? zlib.gzipSync(raw, { level: 9 }) : raw;
+  // keep the compressed copy only if it actually helps
+  const entry = buf.length < raw.length * 0.92 ? { buf, enc, mtime: stat.mtimeMs } : { buf: null, enc: null, mtime: stat.mtimeMs };
+  packed.set(key, entry);
+  return entry;
+}
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
@@ -25,10 +44,23 @@ const server = http.createServer((req, res) => {
   if (!file.startsWith(DIST)) { res.writeHead(403); res.end(); return; }
   if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) file = path.join(DIST, 'index.html');
   if (!fs.existsSync(file)) { res.writeHead(404); res.end('Run `npm run build` first.'); return; }
+  const stat = fs.statSync(file);
   const ext = path.extname(file).toLowerCase();
-  const cache = file.includes(`${path.sep}assets${path.sep}`) ? 'public, max-age=31536000, immutable' : 'no-cache';
-  res.writeHead(200, { 'Content-Type': TYPES[ext] || 'application/octet-stream', 'Cache-Control': cache });
-  fs.createReadStream(file).pipe(res);
+  const hashed = /-[A-Za-z0-9_-]{8}\.(js|css)$/.test(file);
+  const cache = hashed ? 'public, max-age=31536000, immutable'
+    : file.includes(`${path.sep}assets${path.sep}`) ? 'public, max-age=3600' : 'no-cache';
+  const etag = `"${stat.size.toString(36)}-${Math.floor(stat.mtimeMs).toString(36)}"`;
+  const headers = { 'Content-Type': TYPES[ext] || 'application/octet-stream', 'Cache-Control': cache, ETag: etag, Vary: 'Accept-Encoding' };
+  if (req.headers['if-none-match'] === etag) { res.writeHead(304, headers); res.end(); return; }
+  const accept = String(req.headers['accept-encoding'] || '');
+  const enc = !COMPRESS.has(ext) ? null : /\bbr\b/.test(accept) ? 'br' : /\bgzip\b/.test(accept) ? 'gzip' : null;
+  if (!enc) { headers['Content-Length'] = stat.size; res.writeHead(200, headers); fs.createReadStream(file).pipe(res); return; }
+  const p = getPacked(file, enc, stat);
+  if (!p.enc) { headers['Content-Length'] = stat.size; res.writeHead(200, headers); fs.createReadStream(file).pipe(res); return; }
+  headers['Content-Encoding'] = p.enc;
+  headers['Content-Length'] = p.buf.length;
+  res.writeHead(200, headers);
+  res.end(req.method === 'HEAD' ? undefined : p.buf);
 });
 
 const rooms = new Map();

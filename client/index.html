@@ -2,7 +2,10 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="theme-color" content="#000000" />
   <title>Ranch Defense</title>
   <link rel="stylesheet" href="./style.css" />
 </head>
@@ -41,32 +44,39 @@
   <!-- Menu -->
   <div id="menu">
     <div class="menu-card">
-      <h1>RANCH<br/><span>DEFENSE</span></h1>
-      <p class="tag">The cows came back wrong. Hold the ranch.</p>
-      <label>Your name<input id="name" maxlength="16" autocomplete="off" placeholder="Rancher" /></label>
-      <label>Room code <small>(friends type the same code to play together)</small><input id="room" maxlength="20" autocomplete="off" placeholder="ranch" /></label>
-      <div class="pick-label">Choose your character</div>
-      <div id="char-picker"></div>
-      <label>Graphics
-        <select id="quality">
-          <option value="ultra">Ultra (strong gaming PC)</option>
-          <option value="high">High (gaming PC / recent Mac)</option>
-          <option value="medium">Medium (most laptops)</option>
-          <option value="low">Low (older computers)</option>
-        </select>
-      </label>
-      <button id="play">PLAY</button>
-      <div id="menu-status"></div>
-      <div class="controls">
-        <div><kbd>WASD</kbd> move</div><div><kbd>Shift</kbd> sprint</div>
-        <div><kbd>Space</kbd> jump</div><div><kbd>Mouse</kbd> aim / shoot</div>
-        <div><kbd>R</kbd> reload</div><div><kbd>E</kbd> (hold) revive</div>
-        <div><kbd>F</kbd> flashlight</div><div><kbd>Tab</kbd> scores</div>
-        <div><kbd>1</kbd><kbd>2</kbd> switch gun</div><div><kbd>V</kbd> machete</div>
-        <div><kbd>G</kbd> grenade</div><div><kbd>C</kbd> crouch / slide</div>
-        <div><kbd>E</kbd> buy guns off walls</div><div><kbd>RMB</kbd> aim</div>
+      <div class="menu-left">
+        <h1>RANCH<br/><span>DEFENSE</span></h1>
+        <p class="tag">The cows came back wrong. Hold the ranch.</p>
+        <label class="f-name">Your name<input id="name" maxlength="16" autocomplete="off" placeholder="Rancher" /></label>
+        <label class="f-room">Room code <small>(friends type the same code to play together)</small><input id="room" maxlength="20" autocomplete="off" placeholder="ranch" /></label>
+        <label class="f-gfx">Graphics
+          <select id="quality">
+            <option value="ultra">Ultra (strong gaming PC)</option>
+            <option value="high">High (gaming PC / recent Mac)</option>
+            <option value="medium">Medium (most laptops, tablets)</option>
+            <option value="low">Low (phones, older computers)</option>
+          </select>
+        </label>
+        <div id="touch-menu" class="hidden">
+          <label id="touch-settings">Look sensitivity<input id="touch-sens" type="range" min="0.3" max="3" step="0.1" /></label>
+        </div>
+        <button id="play">PLAY</button>
+        <div id="menu-status"></div>
+        <div class="touch-help touch-only">Hold your phone sideways. Left thumb: drag to move (push all the way up to sprint). Right thumb: drag to look, hold FIRE to shoot (drag on it to track). Tap AIM to aim down sights. Hold USE to buy guns, revive and rebuild barricades.</div>
+        <div class="controls">
+          <div><kbd>WASD</kbd> move</div><div><kbd>Shift</kbd> sprint</div>
+          <div><kbd>Space</kbd> jump</div><div><kbd>Mouse</kbd> aim / shoot</div>
+          <div><kbd>R</kbd> reload</div><div><kbd>E</kbd> (hold) revive</div>
+          <div><kbd>F</kbd> flashlight</div><div><kbd>Tab</kbd> scores</div>
+          <div><kbd>1</kbd><kbd>2</kbd> switch gun</div><div><kbd>V</kbd> machete</div>
+          <div><kbd>G</kbd> grenade</div><div><kbd>C</kbd> crouch / slide</div>
+          <div><kbd>E</kbd> buy guns off walls</div><div><kbd>RMB</kbd> aim</div>
+        </div>
       </div>
-      <div id="touch-note" class="hidden">Needs a keyboard and mouse for now. Phone controls are coming.</div>
+      <div class="menu-right">
+        <div class="pick-label">Choose your character</div>
+        <div id="char-picker"></div>
+      </div>
     </div>
   </div>
 

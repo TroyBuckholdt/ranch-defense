@@ -17,17 +17,22 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #000; color:
   background: radial-gradient(ellipse at 50% 30%, rgba(40, 18, 6, 0.55), rgba(0, 0, 0, 0.92));
   z-index: 20;
 }
-.menu-card { width: min(440px, 100%); }
+.menu-card {
+  /* desktop: settings on the left, the six characters on the right, all on one screen */
+  width: min(1120px, 100%); max-height: calc(100vh - 32px); overflow-y: auto;
+  display: grid; grid-template-columns: minmax(300px, 400px) minmax(0, 1fr);
+  gap: clamp(20px, 3.5vw, 56px); align-items: center;
+}
 .menu-card h1 {
-  margin: 0; font-size: clamp(52px, 13vw, 84px); line-height: 0.88; letter-spacing: 2px;
+  margin: 0; font-size: clamp(40px, min(7vw, 9vh), 84px); line-height: 0.88; letter-spacing: 2px;
   text-shadow: 0 4px 0 #3b0d06, 0 0 40px rgba(255, 90, 20, 0.35);
 }
 .menu-card h1 span { color: var(--accent); text-shadow: 0 4px 0 #1f3300, 0 0 40px rgba(170, 255, 60, 0.45); }
-.tag { margin: 10px 0 24px; opacity: 0.8; font-family: system-ui, sans-serif; font-size: 15px; }
-label { display: block; font-size: 13px; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 14px; opacity: 0.95; }
+.tag { margin: 8px 0 clamp(10px, 2.4vh, 24px); opacity: 0.8; font-family: system-ui, sans-serif; font-size: 15px; }
+label { display: block; font-size: 13px; letter-spacing: 1px; text-transform: uppercase; margin-bottom: clamp(8px, 1.6vh, 14px); opacity: 0.95; }
 label small { text-transform: none; letter-spacing: 0; opacity: 0.6; font-family: system-ui, sans-serif; }
 input, select {
-  display: block; width: 100%; margin-top: 6px; padding: 12px 14px; font-size: 18px;
+  display: block; width: 100%; margin-top: 6px; padding: clamp(7px, 1.3vh, 12px) 14px; font-size: 17px;
   background: rgba(255, 255, 255, 0.07); border: 1px solid rgba(255, 255, 255, 0.2);
   color: #fff; border-radius: 6px; outline: none; font-family: system-ui, sans-serif;
 }
@@ -42,14 +47,13 @@ button#play:active { transform: translateY(2px); box-shadow: 0 2px 0 #5c8a12; }
 button#play:disabled { opacity: 0.6; cursor: wait; }
 #menu-status { min-height: 22px; margin-top: 10px; font-family: system-ui, sans-serif; font-size: 14px; color: #ffb199; }
 .controls {
-  display: grid; grid-template-columns: 1fr 1fr; gap: 6px 16px; margin-top: 18px;
+  display: grid; grid-template-columns: 1fr 1fr; gap: clamp(3px, 0.7vh, 6px) 16px; margin-top: clamp(8px, 1.8vh, 18px);
   font-family: system-ui, sans-serif; font-size: 13px; opacity: 0.75;
 }
 kbd {
   display: inline-block; min-width: 22px; padding: 1px 6px; margin-right: 4px; text-align: center;
   border: 1px solid rgba(255, 255, 255, 0.35); border-bottom-width: 2px; border-radius: 4px; font-size: 12px;
 }
-#touch-note { margin-top: 14px; font-family: system-ui, sans-serif; font-size: 14px; color: #ffd27a; }
 
 /* ---------- HUD ---------- */
 #hud { position: fixed; inset: 0; pointer-events: none; z-index: 10; text-shadow: var(--shadow); }
@@ -139,15 +143,24 @@ kbd {
 
 /* character picker */
 .pick-label { font-size: 13px; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 6px; }
-#char-picker { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 14px; }
+/* three across, two rows; the width is capped by the window height so both rows always fit */
+#char-picker {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;
+  width: min(100%, calc(116vh - 192px)); margin: 0 auto;
+}
+.menu-right .pick-label { width: min(100%, calc(116vh - 192px)); margin: 0 auto 8px; }
 #char-picker button {
   padding: 0; border: 2px solid rgba(255,255,255,0.15); border-radius: 8px; overflow: hidden; cursor: pointer;
   background: #111; color: #fff; font-family: system-ui, sans-serif; font-size: 11px;
 }
 #char-picker button img { display: block; width: 100%; aspect-ratio: 180 / 232; object-fit: cover; }
-#char-picker button span { display: block; padding: 3px 0; }
+#char-picker button span { display: block; padding: 4px 0; font-size: 13px; }
 #char-picker button.sel { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(200,255,77,0.35); }
-.menu-card { max-height: 100vh; overflow-y: auto; }
+/* narrow screens (phones, small windows): one column, characters below the settings */
+@media (max-width: 760px) {
+  .menu-card { grid-template-columns: 1fr; align-items: start; }
+  #char-picker, .menu-right .pick-label { width: 100%; }
+}
 
 #nades { font-size: 18px; color: #c8d08a; letter-spacing: 2px; min-height: 22px; }
 #powerups { position: absolute; top: 18px; left: 50%; transform: translateX(-50%); display: flex; gap: 10px; }

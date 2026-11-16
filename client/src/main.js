@@ -19,21 +19,38 @@ import { Audio } from './audio.js';
 import { Net } from './net.js';
 import { LocalPlayer } from './player.js';
 import { setAnisotropy } from './textures.js';
+import { setLowDetail } from './gltf.js';
 import * as T from './textures.js';
+import { detectTouch, isPhone, TouchControls, enterFullscreen, getSensitivity, setSensitivity } from './touch.js';
 
 const $ = (id) => document.getElementById(id);
+const touchMode = detectTouch(); // phone / tablet: on-screen controls instead of pointer lock
 
 // ---------------------------------------------------------------- quality
 const PRESETS = {
-  ultra: { pr: 2, shadows: 4096, msaa: 4, bloom: true, ao: true, rays: 64, grass: 60000 },
-  high: { pr: 1.5, shadows: 4096, msaa: 4, bloom: true, ao: true, rays: 40, grass: 30000 },
-  medium: { pr: 1, shadows: 2048, msaa: 2, bloom: true, ao: false, rays: 24, grass: 14000 },
-  low: { pr: 0.75, shadows: 0, msaa: 0, bloom: false, ao: false, rays: 0, grass: 4000 },
+  ultra: { pr: 2, shadows: 4096, msaa: 4, bloom: true, ao: true, rays: 48, grass: 50000, crowns: 2 },
+  high: { pr: 1.25, shadows: 4096, msaa: 4, bloom: true, ao: false, rays: 24, grass: 22000, crowns: 1 },
+  medium: { pr: 1, shadows: 2048, msaa: 2, bloom: true, ao: false, rays: 0, grass: 12000, crowns: 1 },
+  low: { pr: 0.75, shadows: 0, msaa: 0, bloom: false, ao: false, rays: 0, grass: 4000, crowns: 1, lowTex: true },
 };
+// Default by graphics chip: built-in laptop/phone graphics start on Medium/Low, only
+// dedicated gaming cards get High. (Players can always change it on the menu.)
+function guessQuality() {
+  const phone = matchMedia('(pointer: coarse)').matches;
+  try {
+    const gl = document.createElement('canvas').getContext('webgl2');
+    const ext = gl && gl.getExtension('WEBGL_debug_renderer_info');
+    const gpu = String(gl ? gl.getParameter(ext ? ext.UNMASKED_RENDERER_WEBGL : gl.RENDERER) : '');
+    if (phone || /Mali|Adreno|PowerVR|SwiftShader|llvmpipe|Software/i.test(gpu)) return 'low';
+    if (/RTX|GTX 1[0-9]{3}|GTX 9[6-9]0|RX ?[5-9][0-9]{2,3}|Radeon (Pro|VII)|Arc A[57]|Apple M[1-9] (Pro|Max|Ultra)/i.test(gpu)) return 'high';
+    return 'medium';
+  } catch { return phone ? 'low' : 'medium'; }
+}
 let qName = new URLSearchParams(location.search).get('q');
 try { qName = qName || localStorage.getItem('rd-quality'); } catch {}
-if (!PRESETS[qName]) qName = (navigator.hardwareConcurrency || 4) >= 8 ? 'high' : 'medium';
+if (!PRESETS[qName]) qName = touchMode ? (isPhone() ? 'low' : 'medium') : guessQuality();
 const Q = PRESETS[qName];
+setLowDetail(Q.lowTex);
 $('quality').value = qName;
 $('quality').onchange = (e) => {
   try { localStorage.setItem('rd-quality', e.target.value); } catch {}
@@ -51,15 +68,45 @@ renderer.shadowMap.type = THREE.PCFShadowMap;
 $('game').appendChild(renderer.domElement);
 setAnisotropy(Math.min(8, renderer.capabilities.getMaxAnisotropy()));
 
+// ---------------------------------------------------------------- menu
+// built before anything heavy loads, so the characters show up straight away
+const nameInput = $('name'), roomInput = $('room');
+let myChar = 'p1';
+try { myChar = localStorage.getItem('rd-char') || 'p1'; } catch {}
+if (!CHARACTERS.some(c => c.id === myChar)) myChar = 'p1'; // e.g. a removed duplicate
+const picker = $('char-picker');
+for (const c of CHARACTERS) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.innerHTML = `<img src="/assets/models/people/thumbs/${c.id}.jpg" alt=""><span>${c.label}</span>`;
+  b.classList.toggle('sel', c.id === myChar);
+  b.onclick = () => {
+    myChar = c.id;
+    try { localStorage.setItem('rd-char', c.id); } catch {}
+    for (const el of picker.children) el.classList.toggle('sel', el === b);
+  };
+  picker.appendChild(b);
+}
+try { nameInput.value = localStorage.getItem('rd-name') || ''; } catch {}
+const urlRoom = new URLSearchParams(location.search).get('room');
+if (urlRoom) roomInput.value = urlRoom;
+
 $('play').disabled = true;
-$('menu-status').textContent = 'Waking the herd...';
-await Promise.all([loadCowAsset(), loadDogAssets()]);
-const world = await buildWorld(renderer, Q, (msg) => { $('menu-status').textContent = msg; });
+// loading readout: what's happening plus how many of the files have arrived
+let loadMsg = 'Waking the herd...', loadPct = 0, loading = true;
+const showLoad = () => { if (loading) $('menu-status').textContent = `${loadMsg} ${loadPct}%`; };
+THREE.DefaultLoadingManager.onProgress = (url, done, total) => { loadPct = Math.max(loadPct, Math.min(99, Math.round((done / total) * 100))); showLoad(); };
+showLoad();
+await Promise.all([loadCowAsset(renderer), loadDogAssets()]);
+const world = await buildWorld(renderer, Q, (msg) => { loadMsg = msg; showLoad(); });
+loading = false;
 $('menu-status').textContent = '';
 $('play').disabled = false;
 const scene = world.scene;
 const camera = new THREE.PerspectiveCamera(74, innerWidth / innerHeight, 0.03, 1500);
 scene.add(camera);
+// compile the cow shader now, so the first wave doesn't hitch when the herd appears
+{ const warm = new CowView(-1, 'walker', scene); renderer.compile(scene, camera); warm.dispose(); }
 
 // flashlight (kept in the scene always; toggled by intensity to avoid shader recompiles)
 const flashlight = new THREE.SpotLight(0xfff1dc, 0, 40, 0.42, 0.45, 1.4);
@@ -81,8 +128,9 @@ const composer = new EffectComposer(renderer, rt);
 composer.addPass(new RenderPass(scene, camera));
 const sunPass = Q.rays ? new SunPass(Q.rays) : null;
 if (sunPass) composer.addPass(sunPass);
+let aoPass = null;
 if (Q.ao) {
-  const ao = new GTAOPass(scene, camera, innerWidth, innerHeight);
+  const ao = aoPass = new GTAOPass(scene, camera, innerWidth, innerHeight);
   ao.updateGtaoMaterial({ radius: 0.6, distanceExponent: 1.5, thickness: 1.2, scale: 1.0 });
   ao.blendIntensity = 0.85;
   // objects placed by custom vertex code (the travelling grass) can't go through AO's
@@ -136,14 +184,44 @@ const grade = new ShaderPass({
 });
 composer.addPass(grade);
 
-addEventListener('resize', () => {
+function resize() {
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);
+  composer.setPixelRatio(renderer.getPixelRatio());
   composer.setSize(innerWidth, innerHeight);
   grade.uniforms.uTexel.value.set(1 / (innerWidth * renderer.getPixelRatio()), 1 / (innerHeight * renderer.getPixelRatio()));
-});
+}
+addEventListener('resize', resize);
+
 grade.uniforms.uTexel.value.set(1 / (innerWidth * renderer.getPixelRatio()), 1 / (innerHeight * renderer.getPixelRatio()));
+
+// ---------------------------------------------------------------- adaptive quality
+// Keeps the frame rate smooth on weaker GPUs: when frames run long it steps down render
+// resolution and the heaviest effects (AO, light shafts), and steps back up once frames
+// are steady again, waiting longer each time a step up didn't hold.
+const AQ_STEPS = [
+  { s: 1 }, { s: 0.87 }, { s: 0.75 }, { s: 0.75, ao: false }, { s: 0.65, ao: false },
+  { s: 0.65, ao: false, rays: false }, { s: 0.55, ao: false, rays: false },
+];
+const aq = { level: 0, avg: 1 / 60, cool: 3, steady: 0, upWait: 6, base: renderer.getPixelRatio(), off: new URLSearchParams(location.search).get('aq') === '0' };
+function adaptQuality(raw) {
+  if (aq.off || raw > 0.25) return; // tab was hidden or a hitch: ignore
+  aq.avg += (raw - aq.avg) * 0.08;
+  aq.cool -= raw;
+  aq.steady = aq.avg < 1 / 55 ? aq.steady + raw : 0;
+  let next = aq.level;
+  if (aq.cool <= 0 && aq.avg > 1 / 48 && aq.level < AQ_STEPS.length - 1) next++;
+  else if (aq.level > 0 && aq.steady > aq.upWait) { next--; aq.upWait = Math.min(120, aq.upWait * 2); }
+  if (next === aq.level) return;
+  aq.level = next; aq.cool = 1.5; aq.steady = 0;
+  const st = AQ_STEPS[next], pr = aq.base * st.s;
+  renderer.setPixelRatio(pr);
+  composer.setPixelRatio(pr);
+  if (aoPass) aoPass.enabled = st.ao !== false;
+  if (sunPass) sunPass.enabled = st.rays !== false;
+  grade.uniforms.uTexel.value.set(1 / (innerWidth * pr), 1 / (innerHeight * pr));
+}
 
 // ---------------------------------------------------------------- game state
 const audio = new Audio();
@@ -184,28 +262,12 @@ let mooTimer = 2, heartbeatT = 0;
 const keys = {};
 const tmpV = new THREE.Vector3(), tmpV2 = new THREE.Vector3();
 
-// ---------------------------------------------------------------- menu
-const nameInput = $('name'), roomInput = $('room');
-let myChar = 'p1';
-try { myChar = localStorage.getItem('rd-char') || 'p1'; } catch {}
-if (!CHARACTERS.some(c => c.id === myChar)) myChar = 'p1'; // e.g. a removed duplicate
-const picker = $('char-picker');
-for (const c of CHARACTERS) {
-  const b = document.createElement('button');
-  b.type = 'button';
-  b.innerHTML = `<img src="/assets/models/people/thumbs/${c.id}.jpg" alt=""><span>${c.label}</span>`;
-  b.classList.toggle('sel', c.id === myChar);
-  b.onclick = () => {
-    myChar = c.id;
-    try { localStorage.setItem('rd-char', c.id); } catch {}
-    for (const el of picker.children) el.classList.toggle('sel', el === b);
-  };
-  picker.appendChild(b);
+if (touchMode) {
+  $('touch-menu').classList.remove('hidden');
+  const sens = $('touch-sens');
+  sens.value = getSensitivity();
+  sens.oninput = () => { setSensitivity(sens.value); if (touch) touch.sens = +sens.value; };
 }
-try { nameInput.value = localStorage.getItem('rd-name') || ''; } catch {}
-const urlRoom = new URLSearchParams(location.search).get('room');
-if (urlRoom) roomInput.value = urlRoom;
-if (matchMedia('(pointer: coarse)').matches && !matchMedia('(any-pointer: fine)').matches) $('touch-note').classList.remove('hidden');
 
 $('play').onclick = async () => {
   const name = nameInput.value.trim() || 'Rancher';
@@ -220,7 +282,8 @@ $('play').onclick = async () => {
     $('menu').classList.add('hidden');
     $('hud').classList.remove('hidden');
     playing = true;
-    lockPointer();
+    if (touchMode) { touch.show(true); enterFullscreen(); }
+    else lockPointer();
   } catch (e) {
     $('menu-status').textContent = e.message;
     $('play').disabled = false;
@@ -229,10 +292,31 @@ $('play').onclick = async () => {
 [nameInput, roomInput].forEach(i => i.addEventListener('keydown', e => { if (e.key === 'Enter') $('play').click(); }));
 
 // ---------------------------------------------------------------- input
-function lockPointer() { renderer.domElement.requestPointerLock?.(); }
+function lockPointer() {
+  const el = renderer.domElement;
+  // raw mouse input where supported (no OS acceleration, avoids Chrome's jump bug)
+  try { const p = el.requestPointerLock?.({ unadjustedMovement: true }); if (p?.catch) p.catch(() => el.requestPointerLock?.()); }
+  catch { el.requestPointerLock?.(); }
+}
 const locked = () => document.pointerLockElement === renderer.domElement;
+// gameplay input is live: pointer locked on desktop, or simply in a game on touch screens
+const active = () => locked() || (touchMode && playing);
+const KEY_USE = touchMode ? '<kbd>USE</kbd>' : '<kbd>E</kbd>';
+const touch = touchMode ? new TouchControls({
+  keys,
+  fire(down) { mouseDown = down; if (!down) triggerHeld = false; },
+  toggleAim() { aiming = !aiming; },
+  reload: () => startReload(),
+  grenade: () => throwGrenade(),
+  melee: () => doMelee(),
+  swap: () => switchTo(1 - loadout.cur),
+  use(down) { keys.KeyE = down; if (down) tryBuy(); },
+  look(dx, dy) { lookDX += dx; lookDY += dy; },
+  flashlight() { flashlightOn = !flashlightOn; audio.click(); },
+  scores(show) { $('scoreboard').classList.toggle('show', show); if (show) renderScoreboard(); },
+}) : null;
 document.addEventListener('pointerlockchange', () => {
-  $('click-to-play').classList.toggle('hidden', locked());
+  $('click-to-play').classList.toggle('hidden', locked() || touchMode);
   if (!locked()) { mouseDown = false; aiming = false; for (const k in keys) keys[k] = false; }
 });
 renderer.domElement.addEventListener('mousedown', (e) => {
@@ -248,14 +332,16 @@ let lockedAt = 0;
 document.addEventListener('pointerlockchange', () => { lockedAt = performance.now(); });
 addEventListener('mousemove', (e) => {
   if (!locked()) return;
-  // Chrome sometimes reports one huge jump right after locking the pointer; ignore spikes
-  if (performance.now() - lockedAt < 150 || Math.abs(e.movementX) > 250 || Math.abs(e.movementY) > 250) return;
+  // Chrome sometimes reports one bogus jump right after locking (or a rare huge spike);
+  // ignore only those. At low frame rates Chrome batches a whole frame of real motion into
+  // one event, so ordinary large movements must be kept or turning stalls.
+  if (performance.now() - lockedAt < 150 || Math.abs(e.movementX) > 900 || Math.abs(e.movementY) > 900) return;
   lookDX += e.movementX; lookDY += e.movementY;
 });
 addEventListener('keydown', (e) => {
   if (!playing) return;
   if (e.code === 'Tab') { e.preventDefault(); $('scoreboard').classList.add('show'); renderScoreboard(); }
-  if (!locked()) return;
+  if (!active()) return;
   keys[e.code] = true;
   if (e.code === 'KeyR') startReload();
   if (e.code === 'Digit1') switchTo(0);
@@ -321,7 +407,7 @@ function fire(time) {
       }
     }
     const hit = o.clone().addScaledVector(dir, dist);
-    if (hitCow != null) { fx.blood(hit, dir); cowViews.get(hitCow)?.hit(); }
+    if (hitCow != null) { fx.blood(hit, dir); cowViews.get(hitCow)?.hit(da); }
     else if (dist < w.range - 1 && (i % 3 === 0)) fx.dust(hit, dir.clone().negate());
     if (i < 3 && Math.random() < 0.6) fx.tracer(weapon.muzzleWorld(tmpV), hit);
   });
@@ -379,7 +465,7 @@ function onEvent(m) {
         if (m.kill) fx.blood(p, d, true);
       } else {
         fx.blood(p, d, m.kill);
-        cowViews.get(m.cow)?.hit();
+        cowViews.get(m.cow)?.hit(m.d);
       }
       audio.impact(m.p, m.head);
       break;
@@ -551,7 +637,7 @@ function updateHud(dt) {
   $('ammo-mag').classList.toggle('low', am.mag <= Math.ceil(w.mag * 0.25));
   $('weapon-name').textContent = w.name;
   $('nades').textContent = '● '.repeat(mySnap.g || 0).trim();
-  $('reload-hint').textContent = reloadT > 0 ? 'RELOADING' : am.mag === 0 && am.res === 0 ? 'NO AMMO' : am.mag <= Math.ceil(w.mag * 0.25) ? 'R  RELOAD' : '';
+  $('reload-hint').textContent = reloadT > 0 ? 'RELOADING' : am.mag === 0 && am.res === 0 ? 'NO AMMO' : am.mag <= Math.ceil(w.mag * 0.25) ? (touchMode ? 'RELOAD' : 'R  RELOAD') : '';
   $('powerups').innerHTML = (s.ik ? `<span class="pu ik">INSTA-KILL ${s.ik}</span>` : '') + (s.dp ? `<span class="pu dp">DOUBLE POINTS ${s.dp}</span>` : '');
   const spread = aiming ? 2 : 6 + Math.min(1, me.speed / 4) * 10 + weapon.recoil * 10;
   $('crosshair').style.setProperty('--spread', `${spread}px`);
@@ -565,7 +651,7 @@ function updateHud(dt) {
   if (mySnap.dn) {
     ov.classList.add('show');
     ov.querySelector('.big').textContent = "YOU'RE DOWN";
-    $('downed-sub').textContent = mySnap.rv > 0 ? `Being revived... ${mySnap.rv}%` : `Bleeding out in ${mySnap.bl}s. A teammate can hold E next to you to revive.`;
+    $('downed-sub').textContent = mySnap.rv > 0 ? `Being revived... ${mySnap.rv}%` : `Bleeding out in ${mySnap.bl}s. A teammate can hold ${touchMode ? 'USE' : 'E'} next to you to revive.`;
   } else if (mySnap.dd && s.phase !== 'gameover') {
     ov.classList.add('show');
     ov.querySelector('.big').textContent = 'SPECTATING';
@@ -577,21 +663,22 @@ function updateHud(dt) {
   if (alive() && view) {
     for (const [id, p] of view.players) {
       if (id !== net.id && p.dn && Math.hypot(p.x - me.pos.x, p.z - me.pos.z) < 2.6) {
-        prompt = p.rv > 0 ? `Reviving ${escapeHtml(p.n)}... ${p.rv}%` : `Hold <kbd>E</kbd> to revive ${escapeHtml(p.n)}`;
+        prompt = p.rv > 0 ? `Reviving ${escapeHtml(p.n)}... ${p.rv}%` : `Hold ${KEY_USE} to revive ${escapeHtml(p.n)}`;
         break;
       }
     }
     const bi = !prompt ? nearestBuy() : null;
     if (bi != null) {
       const b = WALL_BUYS[bi], owned = loadout.weapons.includes(b.weapon);
-      prompt = `Press <kbd>E</kbd> to ${owned ? 'buy ammo for' : 'buy'} ${WEAPONS[b.weapon].name} <b>$${owned ? Math.round(b.cost / 2) : b.cost}</b>`;
+      prompt = `${touchMode ? 'Tap' : 'Press'} ${KEY_USE} to ${owned ? 'buy ammo for' : 'buy'} ${WEAPONS[b.weapon].name} <b>$${owned ? Math.round(b.cost / 2) : b.cost}</b>`;
     }
     if (!prompt) {
       const e = nearestRepairable();
-      if (e) prompt = mySnap.rp > 0 ? `Rebuilding... ${'▮'.repeat(s.boards[e.id])}${'▯'.repeat(MAX_BOARDS - s.boards[e.id])}` : `Hold <kbd>E</kbd> to rebuild barricade`;
+      if (e) prompt = mySnap.rp > 0 ? `Rebuilding... ${'▮'.repeat(s.boards[e.id])}${'▯'.repeat(MAX_BOARDS - s.boards[e.id])}` : `Hold ${KEY_USE} to rebuild barricade`;
     }
   }
   $('revive-prompt').innerHTML = prompt;
+  touch?.update({ aiming, crouched: keys.KeyC, prompt: !!prompt, canSwap: loadout.weapons.length > 1, grenades: mySnap.g > 0, flashlight: flashlightOn });
 }
 
 function nearestRepairable() {
@@ -612,7 +699,9 @@ let elapsed = 0;
 function frame() {
   requestAnimationFrame(frame);
   clock.update();
-  const dt = Math.min(0.05, clock.getDelta());
+  const rawDt = clock.getDelta();
+  if (playing) adaptQuality(rawDt);
+  const dt = Math.min(0.05, rawDt);
   elapsed += dt;
 
   if (playing) {
@@ -667,7 +756,7 @@ function stepLocal(dt) {
 
   const sens = 0.0022 * (aiming ? 0.6 : 1);
   if (!dead) me.look(lookDX, lookDY, sens);
-  me.update(dt, keys, { aiming, downed, canMove: locked() && !dead });
+  me.update(dt, keys, { aiming, downed, canMove: active() && !dead });
   if (keys.KeyC || keys.ControlLeft) { if (!me.crouchHeld) me.startCrouch(); me.crouchHeld = true; } else { me.crouchHeld = false; me.crouching = false; }
 
   // weapon + firing
@@ -677,7 +766,7 @@ function stepLocal(dt) {
   }
   // keep the loadout in sync with the server (e.g. after a restart)
   if (mySnap.w && mySnap.w.join() !== loadout.weapons.join()) { loadout.weapons = [...mySnap.w]; loadout.cur = Math.min(loadout.cur, loadout.weapons.length - 1); weapon.setGun(curId()); }
-  const canShoot = alive() && locked() && reloadT <= 0 && !me.sprinting && weapon.meleeT <= 0 && weapon.switchT <= 0;
+  const canShoot = alive() && active() && reloadT <= 0 && !me.sprinting && weapon.meleeT <= 0 && weapon.switchT <= 0;
   const am = ammo();
   if (mouseDown && canShoot && elapsed >= nextFire && am.mag > 0 && (W().auto || !triggerHeld)) fire(elapsed);
   else if (mouseDown && canShoot && am.mag === 0 && !triggerHeld) { startReload(); triggerHeld = true; }
