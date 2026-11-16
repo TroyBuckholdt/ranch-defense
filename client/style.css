@@ -148,3 +148,16 @@ kbd {
 #char-picker button span { display: block; padding: 3px 0; }
 #char-picker button.sel { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(200,255,77,0.35); }
 .menu-card { max-height: 100vh; overflow-y: auto; }
+
+#nades { font-size: 18px; color: #c8d08a; letter-spacing: 2px; min-height: 22px; }
+#powerups { position: absolute; top: 18px; left: 50%; transform: translateX(-50%); display: flex; gap: 10px; }
+#powerups .pu { padding: 4px 10px; border-radius: 4px; font-size: 16px; letter-spacing: 2px; background: rgba(0,0,0,0.5); }
+#powerups .ik { color: #ff6060; border: 1px solid #ff6060; }
+#powerups .dp { color: #ffd84a; border: 1px solid #ffd84a; }
+#scope { position: absolute; inset: 0; display: none;
+  background: radial-gradient(circle at center, transparent 0, transparent 30vmin, rgba(0,0,0,0.96) 30.4vmin); }
+#scope::before, #scope::after { content: ''; position: absolute; left: 50%; top: 50%; background: rgba(0,0,0,0.85); }
+#scope::before { width: 60vmin; height: 1px; transform: translate(-50%, -50%); }
+#scope::after { width: 1px; height: 60vmin; transform: translate(-50%, -50%); }
+#scope.show { display: block; }
+#revive-prompt b { color: var(--accent); }

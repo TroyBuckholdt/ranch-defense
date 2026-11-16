@@ -60,6 +60,10 @@ wss.on('connection', (ws) => {
     if (!player) return;
     if (m.t === 'state') room.onState(player, m);
     else if (m.t === 'shoot') room.onShoot(player, m);
+    else if (m.t === 'melee') room.onMelee(player, m);
+    else if (m.t === 'nade') room.onNade(player, m);
+    else if (m.t === 'buy') room.onBuy(player, m);
+    else if (m.t === 'switch') { if (player.weapons[m.slot | 0]) player.cur = m.slot | 0; }
     else if (m.t === 'ping') send(JSON.stringify({ t: 'pong', c: m.c }));
   });
 

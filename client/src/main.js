@@ -5,8 +5,9 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { GTAOPass } from 'three/examples/jsm/postprocessing/GTAOPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
+import { SunPass, ViewmodelPass } from './post.js';
 import {
-  ENTRIES, MAX_BOARDS, COW_TYPE_LIST, WEAPON, REPAIR_RANGE, raySolids, raySphere, cowHitSpheres, insideHouse, heightAt,
+  ENTRIES, MAX_BOARDS, COW_TYPE_LIST, WEAPON, WEAPONS, START_WEAPONS, WALL_BUYS, BUY_RANGE, MELEE, REPAIR_RANGE, raySolids, raySphere, cowHitSpheres, insideHouse, heightAt, shoreZ, SAND_WIDTH,
 } from '../../shared/world.js';
 import { buildWorld } from './world.js';
 import { CowView, loadCowAsset } from './cow.js';
@@ -18,14 +19,16 @@ import { Audio } from './audio.js';
 import { Net } from './net.js';
 import { LocalPlayer } from './player.js';
 import { setAnisotropy } from './textures.js';
+import * as T from './textures.js';
 
 const $ = (id) => document.getElementById(id);
 
 // ---------------------------------------------------------------- quality
 const PRESETS = {
-  high: { pr: 1.5, shadows: 4096, msaa: 4, bloom: true, ao: true, grass: 30000 },
-  medium: { pr: 1, shadows: 2048, msaa: 2, bloom: true, ao: false, grass: 14000 },
-  low: { pr: 0.75, shadows: 0, msaa: 0, bloom: false, ao: false, grass: 4000 },
+  ultra: { pr: 2, shadows: 4096, msaa: 4, bloom: true, ao: true, rays: 64, grass: 60000 },
+  high: { pr: 1.5, shadows: 4096, msaa: 4, bloom: true, ao: true, rays: 40, grass: 30000 },
+  medium: { pr: 1, shadows: 2048, msaa: 2, bloom: true, ao: false, rays: 24, grass: 14000 },
+  low: { pr: 0.75, shadows: 0, msaa: 0, bloom: false, ao: false, rays: 0, grass: 4000 },
 };
 let qName = new URLSearchParams(location.search).get('q');
 try { qName = qName || localStorage.getItem('rd-quality'); } catch {}
@@ -44,7 +47,7 @@ renderer.setSize(innerWidth, innerHeight);
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 0.95;
 renderer.shadowMap.enabled = Q.shadows > 0;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.type = THREE.PCFShadowMap;
 $('game').appendChild(renderer.domElement);
 setAnisotropy(Math.min(8, renderer.capabilities.getMaxAnisotropy()));
 
@@ -66,29 +69,61 @@ flashlight.target.position.set(0, -0.1, -5);
 camera.add(flashlight.target);
 let flashlightOn = false;
 
-// post-processing: MSAA render target -> bloom -> tone map -> film grade
+// first-person arms + gun: their own scene, drawn over the world after AO / light shafts
+const vmScene = new THREE.Scene();
+vmScene.environment = scene.environment;
+
+// post-processing: MSAA render target (with depth) -> sun shafts/flare -> AO -> viewmodel
+// -> bloom -> tone map -> film grade (sharpen, fringing, grain, vignette)
 const rt = new THREE.WebGLRenderTarget(innerWidth, innerHeight, { type: THREE.HalfFloatType, samples: Q.msaa });
+rt.depthTexture = new THREE.DepthTexture(innerWidth, innerHeight);
 const composer = new EffectComposer(renderer, rt);
 composer.addPass(new RenderPass(scene, camera));
+const sunPass = Q.rays ? new SunPass(Q.rays) : null;
+if (sunPass) composer.addPass(sunPass);
 if (Q.ao) {
   const ao = new GTAOPass(scene, camera, innerWidth, innerHeight);
   ao.updateGtaoMaterial({ radius: 0.6, distanceExponent: 1.5, thickness: 1.2, scale: 1.0 });
   ao.blendIntensity = 0.85;
+  // objects placed by custom vertex code (the travelling grass) can't go through AO's
+  // override-material pass, so hide them while it renders its normals/depth
+  const aoRender = ao.render.bind(ao);
+  ao.render = (...args) => {
+    const hidden = [];
+    scene.traverse(o => { if (o.userData.noAO && o.visible) { o.visible = false; hidden.push(o); } });
+    aoRender(...args);
+    for (const o of hidden) o.visible = true;
+  };
   composer.addPass(ao);
 }
+const vmPass = new ViewmodelPass(vmScene, camera);
+composer.addPass(vmPass);
 // only very bright things bloom: the sun, muzzle flashes, glowing zombie eyes
 const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.4, 0.35, 3.0);
 if (Q.bloom) composer.addPass(bloom);
 composer.addPass(new OutputPass());
 const grade = new ShaderPass({
-  uniforms: { tDiffuse: { value: null }, uTime: { value: 0 }, uHurt: { value: 0 }, uDown: { value: 0 } },
+  uniforms: { tDiffuse: { value: null }, uTime: { value: 0 }, uHurt: { value: 0 }, uDown: { value: 0 }, uTexel: { value: new THREE.Vector2(1 / innerWidth, 1 / innerHeight) } },
   vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
   fragmentShader: `
-    uniform sampler2D tDiffuse; uniform float uTime, uHurt, uDown; varying vec2 vUv;
+    uniform sampler2D tDiffuse; uniform float uTime, uHurt, uDown; uniform vec2 uTexel; varying vec2 vUv;
     void main(){
+      vec2 d0 = vUv - 0.5;
+      // faint lens fringing toward the edges of the frame
+      vec2 ca = d0 * dot(d0, d0) * 0.012;
       vec4 c = texture2D(tDiffuse, vUv);
+      c.r = texture2D(tDiffuse, vUv + ca).r;
+      c.b = texture2D(tDiffuse, vUv - ca).b;
+      // contrast-adaptive sharpening: crisper texture detail without halos
+      vec3 nb = texture2D(tDiffuse, vUv + vec2(uTexel.x, 0.0)).rgb + texture2D(tDiffuse, vUv - vec2(uTexel.x, 0.0)).rgb
+              + texture2D(tDiffuse, vUv + vec2(0.0, uTexel.y)).rgb + texture2D(tDiffuse, vUv - vec2(0.0, uTexel.y)).rgb;
+      vec3 detail = c.rgb - nb * 0.25;
+      float amt = 0.45 * (1.0 - smoothstep(0.04, 0.25, length(detail)));
+      c.rgb = clamp(c.rgb + detail * amt, 0.0, 1.0);
       float l = dot(c.rgb, vec3(0.299,0.587,0.114));
       c.rgb = (c.rgb - 0.5) * 1.04 + 0.5;
+      // gentle split-tone: warm highlights, cool shadows
+      c.rgb += mix(vec3(-0.012, -0.004, 0.014), vec3(0.016, 0.006, -0.012), smoothstep(0.2, 0.8, l));
       c.rgb = mix(c.rgb, vec3(l) * vec3(1.0, 0.55, 0.5), uDown * 0.75);
       vec2 d = vUv - 0.5;
       float v = smoothstep(1.0, 0.35, length(d) * 1.2);
@@ -106,22 +141,38 @@ addEventListener('resize', () => {
   camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);
   composer.setSize(innerWidth, innerHeight);
+  grade.uniforms.uTexel.value.set(1 / (innerWidth * renderer.getPixelRatio()), 1 / (innerHeight * renderer.getPixelRatio()));
 });
+grade.uniforms.uTexel.value.set(1 / (innerWidth * renderer.getPixelRatio()), 1 / (innerHeight * renderer.getPixelRatio()));
 
 // ---------------------------------------------------------------- game state
 const audio = new Audio();
 const fx = new FX(scene);
-const weapon = new Weapon(camera);
+const weapon = new Weapon(camera, vmScene, world.lightDir);
+let vmLight = 1;
+vmPass.camera = weapon.vmCamera;
+weapon.loadModels().catch(e => console.warn('weapon models failed to load', e));
 const me = new LocalPlayer();
 const net = new Net(onEvent);
 const cowViews = new Map();
 const avatars = new Map();
 const dogViews = new Map();
+const pickupViews = new Map(); // power-ups on the ground
+const nadeViews = new Map();
 const flyingPlanks = [];
 let view = null;            // latest interpolated world
 let mySnap = null;          // my own state from the server
 let playing = false;
-let mag = WEAPON.mag;
+// loadout: two weapon slots, ammo tracked per gun
+const loadout = { weapons: [...START_WEAPONS], cur: 0, ammo: {} };
+const curId = () => loadout.weapons[loadout.cur] || 'rifle';
+const W = () => WEAPONS[curId()];
+function ammo(id = curId()) {
+  if (!loadout.ammo[id]) loadout.ammo[id] = { mag: WEAPONS[id].mag, res: WEAPONS[id].reserve };
+  return loadout.ammo[id];
+}
+function refillAll() { for (const id of loadout.weapons) loadout.ammo[id] = { mag: WEAPONS[id].mag, res: WEAPONS[id].reserve }; }
+let triggerHeld = false; // semi-auto guns need a fresh click per shot
 let reloadT = 0;
 let nextFire = 0;
 let mouseDown = false, aiming = false;
@@ -189,7 +240,8 @@ renderer.domElement.addEventListener('mousedown', (e) => {
   if (e.button === 0) mouseDown = true;
   if (e.button === 2) aiming = true;
 });
-addEventListener('mouseup', (e) => { if (e.button === 0) mouseDown = false; if (e.button === 2) aiming = false; });
+addEventListener('mouseup', (e) => { if (e.button === 0) { mouseDown = false; triggerHeld = false; } if (e.button === 2) aiming = false; });
+addEventListener('wheel', (e) => { if (locked() && Math.abs(e.deltaY) > 10) switchTo(1 - loadout.cur); });
 addEventListener('contextmenu', (e) => e.preventDefault());
 let lockedAt = 0;
 document.addEventListener('pointerlockchange', () => { lockedAt = performance.now(); });
@@ -205,6 +257,11 @@ addEventListener('keydown', (e) => {
   if (!locked()) return;
   keys[e.code] = true;
   if (e.code === 'KeyR') startReload();
+  if (e.code === 'Digit1') switchTo(0);
+  if (e.code === 'Digit2') switchTo(1);
+  if (e.code === 'KeyV') doMelee();
+  if (e.code === 'KeyG') throwGrenade();
+  if (e.code === 'KeyE') tryBuy();
   if (e.code === 'KeyF') { flashlightOn = !flashlightOn; audio.click(); }
 });
 addEventListener('keyup', (e) => {
@@ -214,52 +271,100 @@ addEventListener('keyup', (e) => {
 
 // ---------------------------------------------------------------- weapon
 function startReload() {
-  if (reloadT > 0 || mag === WEAPON.mag || !alive()) return;
-  reloadT = WEAPON.reload;
-  weapon.startReload(WEAPON.reload);
-  audio.reload();
+  const am = ammo(), w = W();
+  if (reloadT > 0 || am.mag === w.mag || am.res <= 0 || !alive()) return;
+  reloadT = w.reload;
+  weapon.startReload(w.reload);
+  audio.reload(curId());
+}
+
+function switchTo(slot) {
+  if (!loadout.weapons[slot] || slot === loadout.cur || !alive()) return;
+  loadout.cur = slot;
+  reloadT = 0;
+  weapon.setGun(curId());
+  nextFire = Math.max(nextFire, elapsed + 0.45);
+  net.send({ t: 'switch', slot });
+  audio.click();
 }
 
 const alive = () => mySnap && !mySnap.dn && !mySnap.dd;
 
 function fire(time) {
-  nextFire = time + WEAPON.fireInterval;
-  mag -= 1;
+  const w = W(), am = ammo();
+  nextFire = time + w.fireInterval;
+  am.mag -= 1;
+  if (!w.auto) triggerHeld = true;
   const moving = Math.min(1, me.speed / 4);
-  const spread = aiming ? 0.003 + moving * 0.006 : 0.03 + moving * 0.03 + (me.grounded ? 0 : 0.04);
-  const dir = new THREE.Vector3((Math.random() - 0.5) * spread, (Math.random() - 0.5) * spread, -1).normalize()
-    .applyQuaternion(camera.quaternion);
+  const crouchK = me.crouching ? 0.6 : 1;
+  const spread = (aiming ? w.ads + moving * 0.006 : w.hip + moving * 0.03 + (me.grounded ? 0 : 0.04)) * crouchK;
   const o = camera.getWorldPosition(new THREE.Vector3());
-  net.send({ t: 'shoot', o: [o.x, o.y, o.z], d: [dir.x, dir.y, dir.z] });
+  const dirs = [];
+  for (let i = 0; i < w.pellets; i++) {
+    dirs.push(new THREE.Vector3((Math.random() - 0.5) * spread * 2, (Math.random() - 0.5) * spread * 2, -1).normalize().applyQuaternion(camera.quaternion));
+  }
+  const msg = { t: 'shoot', w: curId(), o: [o.x, o.y, o.z] };
+  if (w.pellets > 1) msg.ds = dirs.map(d => [r3(d.x), r3(d.y), r3(d.z)]); else msg.d = [dirs[0].x, dirs[0].y, dirs[0].z];
+  net.send(msg);
 
-  // predict the hit locally for instant feedback (server decides damage)
-  const oa = [o.x, o.y, o.z], da = [dir.x, dir.y, dir.z];
-  let dist = raySolids(oa, da, WEAPON.range), hitCow = null;
-  if (view) for (const [id, c] of view.cows) {
-    if (c[3] === 2) continue;
-    for (const s of cowHitSpheres(COW_TYPE_LIST[c[5]], c[0], c[1], c[2], c[4] + heightAt(c[0], c[1]))) {
-      const t = raySphere(oa, da, s.x, s.y, s.z, s.r);
-      if (t >= 0 && t < dist) { dist = t; hitCow = id; }
+  // predict hits locally for instant feedback (the server decides damage)
+  const oa = [o.x, o.y, o.z];
+  dirs.forEach((dir, i) => {
+    const da = [dir.x, dir.y, dir.z];
+    let dist = raySolids(oa, da, w.range), hitCow = null;
+    if (view) for (const [id, c] of view.cows) {
+      if (c[3] === 2) continue;
+      for (const sp of cowHitSpheres(COW_TYPE_LIST[c[5]], c[0], c[1], c[2], c[4] + heightAt(c[0], c[1]))) {
+        const t = raySphere(oa, da, sp.x, sp.y, sp.z, sp.r);
+        if (t >= 0 && t < dist) { dist = t; hitCow = id; }
+      }
     }
-  }
-  const hit = o.clone().addScaledVector(dir, dist);
-  if (hitCow != null) {
-    fx.blood(hit, dir);
-    cowViews.get(hitCow)?.hit();
-  } else if (dist < WEAPON.range - 1) {
-    fx.dust(hit, dir.clone().negate());
-  }
-  if (Math.random() < 0.6) fx.tracer(weapon.muzzleWorld(tmpV), hit);
+    const hit = o.clone().addScaledVector(dir, dist);
+    if (hitCow != null) { fx.blood(hit, dir); cowViews.get(hitCow)?.hit(); }
+    else if (dist < w.range - 1 && (i % 3 === 0)) fx.dust(hit, dir.clone().negate());
+    if (i < 3 && Math.random() < 0.6) fx.tracer(weapon.muzzleWorld(tmpV), hit);
+  });
   fx.casing(weapon.ejectWorld(tmpV2), new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion));
 
-  weapon.kick();
-  const kick = aiming ? 0.006 : 0.011;
-  me.recoil = Math.min(0.12, me.recoil + kick);   // recovers on its own
-  me.pitch += kick * 0.25;                          // a little stays, so long bursts climb
+  const heavy = curId() === 'shotgun' || curId() === 'hunting' ? 2.2 : curId() === 'revolver' ? 1.5 : 1;
+  weapon.kick(heavy);
+  const kick = (aiming ? 0.006 : 0.011) * heavy * crouchK;
+  me.recoil = Math.min(0.2, me.recoil + kick);
+  me.pitch += kick * 0.25;
   me.yaw += (Math.random() - 0.5) * kick * 0.8;
-  shake = Math.min(1, shake + 0.12);
-  audio.gunshot(null, insideHouse(me.pos.x, me.pos.z));
-  if (mag <= 0) startReload();
+  shake = Math.min(1, shake + 0.12 * heavy);
+  audio.gunshot(null, insideHouse(me.pos.x, me.pos.z), curId());
+  if (am.mag <= 0) startReload();
+}
+const r3 = (v) => Math.round(v * 1000) / 1000;
+
+function doMelee() {
+  if (!alive() || weapon.meleeT > 0) return;
+  weapon.melee();
+  audio.swish();
+  net.send({ t: 'melee' });
+  nextFire = Math.max(nextFire, elapsed + 0.4);
+}
+
+function throwGrenade() {
+  if (!alive() || !mySnap || mySnap.g <= 0 || weapon.throwT > 0) return;
+  weapon.throwNade();
+  const o = camera.getWorldPosition(new THREE.Vector3());
+  const d = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+  const v = d.multiplyScalar(17).add(new THREE.Vector3(0, 4, 0));
+  net.send({ t: 'nade', o: [o.x, o.y - 0.2, o.z], v: [v.x, v.y, v.z] });
+  audio.swish();
+}
+
+function nearestBuy() {
+  let best = null, bd = BUY_RANGE;
+  WALL_BUYS.forEach((b, i) => { const d = Math.hypot(me.pos.x - b.x, me.pos.z - b.z); if (d < bd) { bd = d; best = i; } });
+  return best;
+}
+function tryBuy() {
+  const i = nearestBuy();
+  if (i == null || !alive()) return;
+  net.send({ t: 'buy', s: i, slot: loadout.cur });
 }
 
 // ---------------------------------------------------------------- server events
@@ -278,13 +383,47 @@ function onEvent(m) {
       audio.impact(m.p, m.head);
       break;
     }
+    case 'bought': {
+      const had = loadout.weapons.includes(m.w);
+      loadout.weapons = m.weapons;
+      if (had && m.ammo) loadout.ammo[m.w] = { mag: WEAPONS[m.w].mag, res: WEAPONS[m.w].reserve };
+      else loadout.ammo[m.w] = { mag: WEAPONS[m.w].mag, res: WEAPONS[m.w].reserve };
+      loadout.cur = Math.max(0, loadout.weapons.indexOf(m.w));
+      weapon.setGun(m.w);
+      audio.cash();
+      feed(m.ammo ? `Ammo refilled: ${WEAPONS[m.w].name}` : `Bought ${WEAPONS[m.w].name}`);
+      break;
+    }
+    case 'buyfail':
+      feed(`Not enough points ($${m.cost} needed)`);
+      audio.click();
+      break;
+    case 'swing':
+      audio.swish(avatars.get(m.id)?.group.position.toArray());
+      break;
+    case 'boom': {
+      const p = new THREE.Vector3(...m.p);
+      fx.explosion(p);
+      audio.explosion(m.p);
+      const d = p.distanceTo(me.pos);
+      if (d < 25) shake = Math.min(1.5, shake + (25 - d) / 15);
+      break;
+    }
+    case 'powerup': {
+      const label = { maxammo: 'MAX AMMO', instakill: 'INSTA-KILL', double: 'DOUBLE POINTS', nuke: 'KABOOM' }[m.type];
+      banner(label, `picked up by ${escapeHtml(m.by)}`, 2500);
+      audio.powerup(m.type);
+      if (m.type === 'maxammo') refillAll();
+      if (m.type === 'nuke') { hurtT = 0; shake = 1; }
+      break;
+    }
     case 'fx': {
       const av = avatars.get(m.id);
       const from = av ? av.muzzleWorld(new THREE.Vector3()) : new THREE.Vector3(...m.o);
       fx.muzzleFlash(from);
       const dist = raySolids(m.o, m.d, WEAPON.range);
       fx.tracer(from, new THREE.Vector3(...m.o).addScaledVector(new THREE.Vector3(...m.d), dist));
-      audio.gunshot(m.o, insideHouse(m.o[0], m.o[2]));
+      audio.gunshot(m.o, insideHouse(m.o[0], m.o[2]), m.w);
       break;
     }
     case 'board': {
@@ -326,7 +465,6 @@ function onEvent(m) {
     case 'waveclear':
       banner(`WAVE ${m.wave} SURVIVED`, 'Fix the barricades. Hold E at a window.');
       audio.stinger(true);
-      mag = WEAPON.mag;
       break;
     case 'gameover':
       banner('THE HERD GOT IN', `You held the ranch for ${m.wave - 1} wave${m.wave === 2 ? '' : 's'}. Restarting...`, 8000);
@@ -334,7 +472,7 @@ function onEvent(m) {
       break;
     case 'restart':
       fx.clearPools();
-      mag = WEAPON.mag;
+      loadout.weapons = [...START_WEAPONS]; loadout.cur = 0; loadout.ammo = {}; weapon.setGun('rifle');
       break;
     case 'chat':
       feed(m.msg);
@@ -406,12 +544,18 @@ function updateHud(dt) {
   $('hp-fill').style.width = `${mySnap.hp}%`;
   $('hp-fill').classList.toggle('low', mySnap.hp < 35);
   $('score').textContent = mySnap.s;
-  $('ammo-mag').textContent = reloadT > 0 ? '--' : mag;
-  $('ammo-mag').classList.toggle('low', mag <= 8);
-  $('reload-hint').textContent = reloadT > 0 ? 'RELOADING' : mag <= 8 ? 'R  RELOAD' : '';
+  const am = ammo(), w = W();
+  $('ammo-mag').textContent = reloadT > 0 ? '--' : am.mag;
+  $('ammo-res').textContent = `/ ${am.res}`;
+  $('ammo-mag').classList.toggle('low', am.mag <= Math.ceil(w.mag * 0.25));
+  $('weapon-name').textContent = w.name;
+  $('nades').textContent = '● '.repeat(mySnap.g || 0).trim();
+  $('reload-hint').textContent = reloadT > 0 ? 'RELOADING' : am.mag === 0 && am.res === 0 ? 'NO AMMO' : am.mag <= Math.ceil(w.mag * 0.25) ? 'R  RELOAD' : '';
+  $('powerups').innerHTML = (s.ik ? `<span class="pu ik">INSTA-KILL ${s.ik}</span>` : '') + (s.dp ? `<span class="pu dp">DOUBLE POINTS ${s.dp}</span>` : '');
   const spread = aiming ? 2 : 6 + Math.min(1, me.speed / 4) * 10 + weapon.recoil * 10;
   $('crosshair').style.setProperty('--spread', `${spread}px`);
   $('crosshair').style.opacity = aiming ? 0 : 1;
+  $('scope').classList.toggle('show', weapon.scoped && weapon.aim > 0.85 && alive());
   $('damage').style.opacity = Math.max(hurtT, mySnap.hp < 35 ? 0.35 + Math.sin(performance.now() / 300) * 0.1 : 0);
   if ($('scoreboard').classList.contains('show')) renderScoreboard();
 
@@ -435,6 +579,11 @@ function updateHud(dt) {
         prompt = p.rv > 0 ? `Reviving ${escapeHtml(p.n)}... ${p.rv}%` : `Hold <kbd>E</kbd> to revive ${escapeHtml(p.n)}`;
         break;
       }
+    }
+    const bi = !prompt ? nearestBuy() : null;
+    if (bi != null) {
+      const b = WALL_BUYS[bi], owned = loadout.weapons.includes(b.weapon);
+      prompt = `Press <kbd>E</kbd> to ${owned ? 'buy ammo for' : 'buy'} ${WEAPONS[b.weapon].name} <b>$${owned ? Math.round(b.cost / 2) : b.cost}</b>`;
     }
     if (!prompt) {
       const e = nearestRepairable();
@@ -472,6 +621,7 @@ function frame() {
     syncCows(dt);
     syncAvatars(dt);
     syncDogs(dt);
+    syncPickups(dt);
     syncBoards();
     ambientSounds(dt);
     updateHud(dt);
@@ -501,6 +651,8 @@ function frame() {
   grade.uniforms.uHurt.value = hurtT;
   grade.uniforms.uDown.value += (((mySnap?.dn || mySnap?.dd) ? 1 : 0) - grade.uniforms.uDown.value) * Math.min(1, dt * 3);
   flashlight.intensity = flashlightOn ? 60 : 0;
+  camera.updateMatrixWorld();
+  sunPass?.setSun(camera, world.sunDir);
   composer.render(dt);
 }
 
@@ -515,12 +667,19 @@ function stepLocal(dt) {
   const sens = 0.0022 * (aiming ? 0.6 : 1);
   if (!dead) me.look(lookDX, lookDY, sens);
   me.update(dt, keys, { aiming, downed, canMove: locked() && !dead });
+  if (keys.KeyC || keys.ControlLeft) { if (!me.crouchHeld) me.startCrouch(); me.crouchHeld = true; } else { me.crouchHeld = false; me.crouching = false; }
 
   // weapon + firing
-  if (reloadT > 0) { reloadT -= dt; if (reloadT <= 0) mag = WEAPON.mag; }
-  const canShoot = alive() && locked() && reloadT <= 0 && !me.sprinting;
-  if (mouseDown && canShoot && elapsed >= nextFire && mag > 0) fire(elapsed);
-  else if (mouseDown && canShoot && mag === 0) startReload();
+  if (reloadT > 0) {
+    reloadT -= dt;
+    if (reloadT <= 0) { const am = ammo(), take = Math.min(W().mag - am.mag, am.res); am.mag += take; am.res -= take; }
+  }
+  // keep the loadout in sync with the server (e.g. after a restart)
+  if (mySnap.w && mySnap.w.join() !== loadout.weapons.join()) { loadout.weapons = [...mySnap.w]; loadout.cur = Math.min(loadout.cur, loadout.weapons.length - 1); weapon.setGun(curId()); }
+  const canShoot = alive() && locked() && reloadT <= 0 && !me.sprinting && weapon.meleeT <= 0 && weapon.switchT <= 0;
+  const am = ammo();
+  if (mouseDown && canShoot && elapsed >= nextFire && am.mag > 0 && (W().auto || !triggerHeld)) fire(elapsed);
+  else if (mouseDown && canShoot && am.mag === 0 && !triggerHeld) { startReload(); triggerHeld = true; }
 
   // camera
   if (dead && view) {
@@ -542,11 +701,23 @@ function stepLocal(dt) {
       'YXZ');
     weapon.root.visible = !downed;
   }
-  const targetFov = aiming && !downed ? 52 : me.sprinting ? 80 : 74;
+  const targetFov = aiming && !downed ? W().zoom : me.sprinting ? 80 : me.sliding ? 82 : 74;
   camera.fov += (targetFov - camera.fov) * Math.min(1, dt * 12);
   camera.updateProjectionMatrix();
 
   weapon.update(dt, { aiming: aiming && !downed, moveSpeed: me.speed, sprinting: me.sprinting, lookDX, lookDY, time: elapsed, grounded: me.grounded });
+  // light the arms/gun like the world around them: dim indoors, under roofs and in the jungle
+  {
+    let lit = 1;
+    if (insideHouse(me.pos.x, me.pos.z)) lit = 0.3;
+    else {
+      const eye = [me.pos.x, me.pos.y + me.eye, me.pos.z], L = world.lightDir;
+      if (raySolids(eye, [L.x, L.y, L.z], 60) < 60) lit = 0.4;
+      else if (Math.hypot(me.pos.x, me.pos.z * 1.1) > 92 && me.pos.z < shoreZ(me.pos.x) - SAND_WIDTH) lit = 0.6;
+    }
+    vmLight += (lit - vmLight) * Math.min(1, dt * 4);
+    weapon.setLight(vmLight);
+  }
   lookDX = lookDY = 0;
 
   audio.setListener(camera.position, tmpV.set(0, 0, -1).applyQuaternion(camera.quaternion));
@@ -593,12 +764,40 @@ function syncDogs(dt) {
   }
 }
 
+const nadeGeo = new THREE.SphereGeometry(0.07, 10, 8), nadeMat = new THREE.MeshStandardMaterial({ color: 0x3a4a2a, roughness: 0.6 });
+function syncPickups(dt) {
+  const s = net.latest;
+  if (!s) return;
+  const seen = new Set();
+  for (const [id, type, x, z] of s.pu || []) {
+    seen.add(id);
+    let v = pickupViews.get(id);
+    if (!v) {
+      v = new THREE.Sprite(new THREE.SpriteMaterial({ map: T.powerIcon(type), transparent: true, depthWrite: false, color: new THREE.Color(2, 2, 2) }));
+      v.scale.setScalar(1.1);
+      scene.add(v); pickupViews.set(id, v);
+    }
+    v.position.set(x, heightAt(x, z) + 1.1 + Math.sin(elapsed * 3 + id) * 0.15, z);
+    v.material.rotation = Math.sin(elapsed * 2 + id) * 0.2;
+  }
+  for (const [id, v] of pickupViews) if (!seen.has(id)) { scene.remove(v); v.material.map.dispose(); pickupViews.delete(id); }
+  const nseen = new Set();
+  for (const [id, x, y, z] of s.nd || []) {
+    nseen.add(id);
+    let v = nadeViews.get(id);
+    if (!v) { v = new THREE.Mesh(nadeGeo, nadeMat); v.castShadow = true; scene.add(v); nadeViews.set(id, v); }
+    v.position.lerp(new THREE.Vector3(x, y, z), v.position.lengthSq() ? Math.min(1, dt * 15) : 1);
+  }
+  for (const [id, v] of nadeViews) if (!nseen.has(id)) { scene.remove(v); nadeViews.delete(id); }
+}
+
 function syncBoards() {
   const s = net.latest;
   if (!s) return;
   s.boards.forEach((n, i) => {
     if (n === boardsShown[i]) return;
     const list = world.boards[i];
+    if (world.grilles?.[i]) world.grilles[i].visible = n > 0; // torn out with the last board
     list.forEach((b, k) => {
       const show = k < n;
       if (show && !b.visible) { b.scale.set(1, 1, 1); } // freshly nailed back on
@@ -626,4 +825,4 @@ function ambientSounds(dt) {
 frame();
 
 // expose a little for automated testing / debugging
-window.__rd = { net, me, scene, camera, cowViews, renderer, CowView, DogView, Avatar, weapon };
+window.__rd = { net, me, scene, camera, cowViews, renderer, CowView, DogView, Avatar, weapon, world, vmScene };

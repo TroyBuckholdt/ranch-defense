@@ -101,12 +101,13 @@ export class Audio {
     o.start(t); o.stop(t + dur + 0.05);
   }
 
-  gunshot(pos = null, indoor = true) {
+  gunshot(pos = null, indoor = true, w = 'rifle') {
     if (!this.ctx) return;
     const out = this.out(pos, 8);
-    const crack = this.noise(out, { dur: 0.09, type: 'highpass', freq: 1800, gain: 1.1 });
-    this.noise(out, { dur: 0.35, type: 'lowpass', freq: 2400, freqEnd: 300, gain: 1.4 });
-    this.tone(out, { dur: 0.18, type: 'sine', freq: 150, freqEnd: 45, gain: 1.6 });
+    const P = { rifle: [1, 1, 150], revolver: [1.2, 1.3, 120], shotgun: [0.8, 2.0, 70], hunting: [1.4, 2.2, 90], lmg: [1, 1.2, 130] }[w] || [1, 1, 150];
+    const crack = this.noise(out, { dur: 0.09 * P[0], type: 'highpass', freq: 1800, gain: 1.1 * P[0] });
+    this.noise(out, { dur: 0.35 * P[1], type: 'lowpass', freq: 2400, freqEnd: 300, gain: 1.4 });
+    this.tone(out, { dur: 0.18 * P[1], type: 'sine', freq: P[2], freqEnd: 40, gain: 1.6 });
     if (indoor) { crack.connect(this.verb); }
     // tail
     this.noise(out, { dur: 0.9, type: 'lowpass', freq: 600, freqEnd: 120, gain: 0.25, attack: 0.02, start: 0.03 });
@@ -117,8 +118,13 @@ export class Audio {
     this.noise(this.master, { dur: 0.03, type: 'highpass', freq: 3500, gain: 0.5 });
   }
 
-  reload() {
+  reload(w = 'rifle') {
     if (!this.ctx) return;
+    if (w === 'shotgun') { // shells one at a time, then a pump
+      for (let i = 0; i < 5; i++) this.noise(this.master, { dur: 0.05, type: 'bandpass', freq: 1800, q: 4, gain: 0.6, start: 0.3 + i * 0.45 });
+      this.noise(this.master, { dur: 0.12, type: 'bandpass', freq: 900, q: 2, gain: 0.9, start: 2.6 });
+      return;
+    }
     this.noise(this.master, { dur: 0.05, type: 'bandpass', freq: 2200, q: 4, gain: 0.6, start: 0.25 });  // mag out
     this.noise(this.master, { dur: 0.06, type: 'bandpass', freq: 1500, q: 3, gain: 0.7, start: 1.15 }); // mag in
     this.noise(this.master, { dur: 0.04, type: 'highpass', freq: 3000, gain: 0.8, start: 1.6 });          // bolt
@@ -186,6 +192,30 @@ export class Audio {
     if (!this.ctx) return;
     const out = this.out(pos, 4);
     this.tone(out, { dur: 0.25, type: 'triangle', freq: little ? 900 : 600, freqEnd: little ? 1500 : 1000, gain: 0.3 });
+  }
+
+  swish(pos = null) {
+    if (!this.ctx) return;
+    this.noise(this.out(pos, 3), { dur: 0.22, type: 'bandpass', freq: 2500, freqEnd: 600, q: 1.5, gain: 0.5, attack: 0.04 });
+  }
+
+  explosion(pos) {
+    if (!this.ctx) return;
+    const out = this.out(pos, 15);
+    this.noise(out, { dur: 1.6, type: 'lowpass', freq: 1200, freqEnd: 80, gain: 2.2, attack: 0.005 });
+    this.tone(out, { dur: 0.8, freq: 70, freqEnd: 25, gain: 2.0 });
+    this.noise(out, { dur: 0.15, type: 'highpass', freq: 2500, gain: 1.0 });
+  }
+
+  cash() {
+    if (!this.ctx) return;
+    [880, 1320, 1760].forEach((f, i) => this.tone(this.master, { dur: 0.12, type: 'triangle', freq: f, gain: 0.12, start: i * 0.06 }));
+  }
+
+  powerup(type) {
+    if (!this.ctx) return;
+    const notes = type === 'nuke' ? [220, 165, 110] : [523, 659, 784, 1046];
+    notes.forEach((f, i) => this.tone(this.master, { dur: 0.35, type: 'square', freq: f, gain: 0.06, start: i * 0.09, attack: 0.01 }));
   }
 
   boardTear(pos) {

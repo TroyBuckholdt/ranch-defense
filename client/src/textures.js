@@ -543,3 +543,130 @@ export function zombify(image) {
   t.anisotropy = anisotropy;
   return t;
 }
+
+// Chalk-on-wood sign for a wall-buy station
+export function buySign(name, cost) {
+  const [c, g] = canvas(512, 256);
+  g.fillStyle = '#2a1a10'; g.fillRect(0, 0, 512, 256);
+  const r = rand(name.length * 7);
+  for (let i = 0; i < 9; i++) { g.fillStyle = `rgba(${60 + r() * 30},${35 + r() * 20},20,0.6)`; g.fillRect(0, i * 29, 512, 26); }
+  g.strokeStyle = 'rgba(240,235,220,0.9)'; g.lineWidth = 5; g.strokeRect(14, 14, 484, 228);
+  g.fillStyle = '#f2ecd8'; g.textAlign = 'center';
+  g.font = 'bold 52px Impact, Arial Narrow, sans-serif'; g.fillText(name, 256, 108);
+  g.fillStyle = '#c8ff4d'; g.font = 'bold 64px Impact, Arial Narrow, sans-serif'; g.fillText('$' + cost, 256, 196);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+}
+
+// Floating power-up icon
+export function powerIcon(type) {
+  const [c, g] = canvas(256);
+  const col = { maxammo: '#7cff6b', instakill: '#ff5050', double: '#ffd84a', nuke: '#ffa040' }[type];
+  const label = { maxammo: 'AMMO', instakill: 'SKULL', double: 'x2', nuke: 'NUKE' }[type];
+  const gr = g.createRadialGradient(128, 128, 10, 128, 128, 128);
+  gr.addColorStop(0, col); gr.addColorStop(0.45, col + 'aa'); gr.addColorStop(1, col + '00');
+  g.fillStyle = gr; g.fillRect(0, 0, 256, 256);
+  g.fillStyle = '#111'; g.font = 'bold 54px Impact, Arial Narrow, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillText(label, 128, 132);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+}
+
+// Polished brown marble (the living-room table tops): warm base, soft clouds and fine veins.
+export const marble = () => once('marble', () => {
+  const [c, g] = canvas(512); const r = rand(77);
+  g.fillStyle = '#5b3a28'; g.fillRect(0, 0, 512, 512);
+  for (let i = 0; i < 40; i++) {
+    const x = r() * 512, y = r() * 512, rad = 40 + r() * 120;
+    const gr = g.createRadialGradient(x, y, 0, x, y, rad);
+    const col = r() < 0.5 ? '120,80,55' : '45,26,18';
+    gr.addColorStop(0, `rgba(${col},0.5)`); gr.addColorStop(1, `rgba(${col},0)`);
+    g.fillStyle = gr; g.fillRect(0, 0, 512, 512);
+  }
+  g.lineCap = 'round';
+  for (let i = 0; i < 26; i++) {
+    let x = r() * 512, y = r() * 512, a = r() * Math.PI * 2;
+    g.strokeStyle = r() < 0.6 ? `rgba(225,195,160,${0.15 + r() * 0.35})` : `rgba(25,12,8,${0.2 + r() * 0.3})`;
+    g.lineWidth = 0.6 + r() * 2.2;
+    g.beginPath(); g.moveTo(x, y);
+    for (let k = 0; k < 30; k++) { a += (r() - 0.5) * 0.7; x += Math.cos(a) * 12; y += Math.sin(a) * 12; g.lineTo(x, y); }
+    g.stroke();
+  }
+  return tex(c);
+});
+
+// The veranda tablecloth: white leaves on dark green, like the one in the garden photo.
+export const leafCloth = () => once('leafCloth', () => {
+  const [c, g] = canvas(512); const r = rand(31);
+  g.fillStyle = '#25433a'; g.fillRect(0, 0, 512, 512);
+  for (let i = 0; i < 140; i++) {
+    const x = r() * 512, y = r() * 512, a = r() * Math.PI * 2, L = 16 + r() * 26;
+    g.save(); g.translate(x, y); g.rotate(a);
+    g.fillStyle = r() < 0.55 ? 'rgba(225,235,228,0.85)' : 'rgba(95,140,120,0.7)';
+    g.beginPath(); g.moveTo(-L, 0); g.quadraticCurveTo(0, -L * 0.42, L, 0); g.quadraticCurveTo(0, L * 0.42, -L, 0); g.fill();
+    g.strokeStyle = 'rgba(37,67,58,0.7)'; g.lineWidth = 1; g.beginPath(); g.moveTo(-L, 0); g.lineTo(L, 0); g.stroke();
+    g.restore();
+  }
+  return tex(c, [2, 2]);
+});
+
+// Plain white linen tablecloth with a faint weave.
+export const linen = () => once('linen', () => {
+  const [c, g] = canvas(256); const r = rand(12);
+  g.fillStyle = '#f1efe9'; g.fillRect(0, 0, 256, 256);
+  for (let y = 0; y < 256; y += 2) { g.fillStyle = `rgba(0,0,0,${0.015 + r() * 0.02})`; g.fillRect(0, y, 256, 1); }
+  for (let x = 0; x < 256; x += 2) { g.fillStyle = `rgba(0,0,0,${0.01 + r() * 0.015})`; g.fillRect(x, 0, 1, 256); }
+  return tex(c, [3, 3]);
+});
+
+// Woven rugs: 'living' = the charcoal and ivory geometric rug, 'oriental' = the red runner in the den
+export const rug = (style) => once('rug-' + style, () => {
+  const W = 512, H = style === 'oriental' ? 1024 : 768;
+  const [c, g] = canvas(W, H); const r = rand(style.length * 7);
+  const pal = style === 'oriental'
+    ? { bg: '#7a1f1c', band: '#1f2a44', line: '#d9b77a', motif: '#c8862f', dark: '#3a0f0e' }
+    : { bg: '#2c2c2e', band: '#d8d2c4', line: '#8a8478', motif: '#e6e0d2', dark: '#151516' };
+  g.fillStyle = pal.bg; g.fillRect(0, 0, W, H);
+  // borders
+  for (const [inset, col, wdt] of [[10, pal.dark, 14], [30, pal.band, 34], [70, pal.line, 6]]) {
+    g.strokeStyle = col; g.lineWidth = wdt; g.strokeRect(inset, inset, W - inset * 2, H - inset * 2);
+  }
+  // repeating diamonds / medallions in the field
+  g.save(); g.beginPath(); g.rect(80, 80, W - 160, H - 160); g.clip();
+  const step = style === 'oriental' ? 88 : 64;
+  for (let y = 80; y < H - 40; y += step) for (let x = 80; x < W - 40; x += step) {
+    const cx = x + step / 2, cy = y + step / 2, s = step * 0.42;
+    g.fillStyle = pal.motif; g.beginPath(); g.moveTo(cx, cy - s); g.lineTo(cx + s, cy); g.lineTo(cx, cy + s); g.lineTo(cx - s, cy); g.fill();
+    g.fillStyle = pal.bg; g.beginPath(); g.moveTo(cx, cy - s * 0.55); g.lineTo(cx + s * 0.55, cy); g.lineTo(cx, cy + s * 0.55); g.lineTo(cx - s * 0.55, cy); g.fill();
+    g.fillStyle = style === 'oriental' ? pal.band : pal.line; g.fillRect(cx - s * 0.16, cy - s * 0.16, s * 0.32, s * 0.32);
+  }
+  g.restore();
+  // border motif: little chevrons
+  g.fillStyle = style === 'oriental' ? pal.motif : pal.bg;
+  for (let x = 40; x < W - 40; x += 24) for (const y of [36, H - 52]) { g.beginPath(); g.moveTo(x, y + 8); g.lineTo(x + 8, y); g.lineTo(x + 16, y + 8); g.lineTo(x + 8, y + 16); g.fill(); }
+  // wear and fibre noise
+  for (let i = 0; i < 26000; i++) { g.fillStyle = `rgba(${r() < 0.5 ? '255,255,255' : '0,0,0'},${r() * 0.06})`; g.fillRect(r() * W, r() * H, 2, 1); }
+  const t = tex(c); t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping; return t;
+});
+
+// The compass-rose medallion set into the front path (seen in the drone photo)
+export const compass = () => once('compass', () => {
+  const S = 512, [c, g] = canvas(S); const m = S / 2;
+  g.fillStyle = '#b4573a'; g.fillRect(0, 0, S, S);
+  const ring = (rad, col, w) => { g.strokeStyle = col; g.lineWidth = w; g.beginPath(); g.arc(m, m, rad, 0, Math.PI * 2); g.stroke(); };
+  g.fillStyle = '#e9dcc4'; g.beginPath(); g.arc(m, m, 240, 0, Math.PI * 2); g.fill();
+  ring(236, '#7a3a26', 10); ring(214, '#7a3a26', 4); ring(120, '#7a3a26', 3);
+  const star = (n, outer, inner, rot, a, b) => {
+    for (let i = 0; i < n; i++) {
+      const ang = rot + (i / n) * Math.PI * 2;
+      for (const [side, col] of [[-1, a], [1, b]]) {
+        g.fillStyle = col; g.beginPath(); g.moveTo(m, m);
+        g.lineTo(m + Math.cos(ang) * outer, m + Math.sin(ang) * outer);
+        const s2 = ang + side * Math.PI / n;
+        g.lineTo(m + Math.cos(s2) * inner, m + Math.sin(s2) * inner); g.fill();
+      }
+    }
+  };
+  star(8, 150, 46, Math.PI / 8 - Math.PI / 2, '#9c4a30', '#5e2c1d');
+  star(4, 205, 52, -Math.PI / 2, '#c9a77a', '#7a3a26');
+  g.fillStyle = '#5e2c1d'; g.beginPath(); g.arc(m, m, 14, 0, Math.PI * 2); g.fill();
+  return tex(c);
+});

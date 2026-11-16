@@ -8,7 +8,8 @@
 //     off (swiping at anyone standing right behind it), then climb in.
 //   - Players can walk through doors whatever the boards (the client handles that).
 import {
-  MAP_HALF, SOLIDS, ENTRIES, MAX_BOARDS, PLAYER_SPAWNS, COW_TYPES, WEAPON, REPAIR_TIME, REPAIR_RANGE,
+  MAP_HALF, SOLIDS, ENTRIES, MAX_BOARDS, PLAYER_SPAWNS, COW_TYPES, WEAPONS, START_WEAPONS, START_POINTS, WALL_BUYS, BUY_RANGE,
+  MELEE, GRENADE, POWERUP_TYPES, POWERUP_CHANCE, POWERUP_TIME, REPAIR_TIME, REPAIR_RANGE,
   resolveCircle, raySolids, raySphere, cowHitSpheres, insideHouse, heightAt, shoreZ, solidsNear, playerPassable, DOG_TYPES,
 } from '../shared/world.js';
 
@@ -142,9 +143,15 @@ export class Room {
     this.toSpawn = [];
     this.spawnTimer = 0;
     this.cows.clear();
+    this.nades = []; this.powerups = []; this.instakill = 0; this.doublePts = 0;
     this.boards = ENTRIES.map(() => MAX_BOARDS);
     this.vaulting = ENTRIES.map(() => 0);
     this.dogs = DOG_TYPES.map((d, i) => ({ id: i + 1, kind: d.kind, x: -4 + i * 3, z: 9, yaw: 0, hp: d.hp, state: 0, downT: 0, biteCd: 0, target: null, wander: Math.random() * 6 }));
+    this.nades = [];
+    this.powerups = [];
+    this.nextPowerId = 1;
+    this.instakill = 0;
+    this.doublePts = 0;
     this.playerField = null; this.playerAge = 99;
     this.entryField = null; this.entryAge = 99;
     let i = 0;
@@ -160,7 +167,7 @@ export class Room {
   }
 
   addPlayer(id, name, send, char = 'p1') {
-    const p = { id, name, send, char, score: 0, kills: 0, using: false, lastShot: 0 };
+    const p = { id, name, send, char, score: START_POINTS, kills: 0, using: false, lastShot: 0, lastMelee: 0, weapons: [...START_WEAPONS], cur: 0, grenades: GRENADE.perWave };
     this.respawn(p);
     if (this.phase === 'wave' && [...this.players.values()].some(o => !o.dead && !o.downed)) {
       p.dead = true; p.hp = 0;
@@ -192,45 +199,145 @@ export class Room {
     p.using = !!m.use;
   }
 
+  award(p, n) { p.score += n * (this.doublePts > 0 ? 2 : 1); }
+
+  // a shot from weapon m.w; shotguns send several pellet directions in m.ds
   onShoot(p, m) {
     if (p.downed || p.dead) return;
-    if (this.time - p.lastShot < WEAPON.fireInterval * 0.8) return;
+    const w = WEAPONS[m.w];
+    if (!w || !p.weapons.includes(m.w)) return;
+    if (this.time - p.lastShot < w.fireInterval * 0.8) return;
     p.lastShot = this.time;
-    if (!Array.isArray(m.o) || !Array.isArray(m.d)) return;
-    const o = m.o.slice(0, 3).map(Number), d0 = m.d.slice(0, 3).map(Number);
-    if (![...o, ...d0].every(Number.isFinite)) return;
-    if (Math.hypot(o[0] - p.x, o[2] - p.z) > 3) return;
-    const l = Math.hypot(...d0) || 1;
-    const d = d0.map(v => v / l);
+    p.cur = p.weapons.indexOf(m.w);
+    if (!Array.isArray(m.o)) return;
+    const o = m.o.slice(0, 3).map(Number);
+    if (!o.every(Number.isFinite) || Math.hypot(o[0] - p.x, o[2] - p.z) > 3) return;
+    const dirs = (Array.isArray(m.ds) ? m.ds : [m.d]).slice(0, w.pellets).filter(Array.isArray);
+    this.broadcastEvent({ t: 'fx', id: p.id, w: m.w, o, d: dirs[0] }, p.id);
+    for (const d0 of dirs) {
+      const dn = d0.slice(0, 3).map(Number);
+      if (!dn.every(Number.isFinite)) continue;
+      const l = Math.hypot(...dn) || 1;
+      this.hitscan(p, o, dn.map(v => v / l), w);
+    }
+  }
 
-    this.broadcastEvent({ t: 'fx', id: p.id, o, d }, p.id);
-
-    const wallDist = raySolids(o, d, WEAPON.range);
+  hitscan(p, o, d, w) {
+    const wallDist = raySolids(o, d, w.range);
     let best = null;
     for (const c of this.cows.values()) {
       if (c.state === 'dead') continue;
       const ox = c.x - o[0], oz = c.z - o[2];
-      if (ox * d[0] + oz * d[2] < -3 || ox * ox + oz * oz > WEAPON.range * WEAPON.range) continue;
-      for (const s of cowHitSpheres(c.type, c.x, c.z, c.yaw, c.y + heightAt(c.x, c.z))) {
-        const t = raySphere(o, d, s.x, s.y, s.z, s.r);
-        if (t >= 0 && t < wallDist && (!best || t < best.t)) best = { t, c, head: !!s.head };
+      if (ox * d[0] + oz * d[2] < -3 || ox * ox + oz * oz > w.range * w.range) continue;
+      for (const sp of cowHitSpheres(c.type, c.x, c.z, c.yaw, c.y + heightAt(c.x, c.z))) {
+        const t = raySphere(o, d, sp.x, sp.y, sp.z, sp.r);
+        if (t >= 0 && t < wallDist && (!best || t < best.t)) best = { t, c, head: !!sp.head };
       }
     }
     if (!best) return;
     const { c, head, t } = best;
-    c.hp -= WEAPON.damage * (head ? WEAPON.headMult : 1);
-    p.score += 10;
-    const hit = [o[0] + d[0] * t, o[1] + d[1] * t, o[2] + d[2] * t];
+    const falloff = w.pellets > 1 ? Math.max(0.35, 1 - t / w.range) : 1;
+    this.damageCow(p, c, w.damage * falloff * (head ? w.headMult : 1), head, [o[0] + d[0] * t, o[1] + d[1] * t, o[2] + d[2] * t], d);
+  }
+
+  damageCow(p, c, dmg, head, hit, d) {
+    if (c.state === 'dead') return;
+    c.hp -= this.instakill > 0 ? c.hp : dmg;
+    if (p) this.award(p, 10);
     let kill = false;
     if (c.hp <= 0) {
       kill = true;
       this.killCow(c);
-      p.kills += 1;
-      p.score += COW_TYPES[c.type].score + (head ? 50 : 0);
+      if (p) { p.kills += 1; this.award(p, COW_TYPES[c.type].score + (head ? 50 : 0)); }
+      if (Math.random() < POWERUP_CHANCE) this.dropPowerup(c.x, c.z);
     } else if (c.type !== 'bull' && c.state !== 'vault') {
       c.stagger = 0.22;
     }
-    this.broadcastEvent({ t: 'hit', cow: c.id, p: hit, d, head, kill, by: p.id });
+    this.broadcastEvent({ t: 'hit', cow: c.id, p: hit, d, head, kill, by: p ? p.id : 0 });
+  }
+
+  onMelee(p, m) {
+    if (p.downed || p.dead || this.time - p.lastMelee < MELEE.interval) return;
+    p.lastMelee = this.time;
+    const fx = -Math.sin(p.yaw), fz = -Math.cos(p.yaw);
+    let best = null, bd = MELEE.range;
+    for (const c of this.cows.values()) {
+      if (c.state === 'dead') continue;
+      const dx = c.x - p.x, dz = c.z - p.z, dist = Math.hypot(dx, dz) - COW_TYPES[c.type].radius * 0.6;
+      if (dist < bd && (dx * fx + dz * fz) / (Math.hypot(dx, dz) || 1) > 0.4) { bd = dist; best = c; }
+    }
+    this.broadcastEvent({ t: 'swing', id: p.id }, p.id);
+    if (best) this.damageCow(p, best, MELEE.damage, false, [best.x, p.y + 1.2, best.z], [fx, 0, fz]);
+  }
+
+  onNade(p, m) {
+    if (p.downed || p.dead || p.grenades <= 0) return;
+    const o = (m.o || []).slice(0, 3).map(Number), v = (m.v || []).slice(0, 3).map(Number);
+    if (![...o, ...v].every(Number.isFinite) || Math.hypot(o[0] - p.x, o[2] - p.z) > 3) return;
+    const vl = Math.hypot(...v), k = vl > 22 ? 22 / vl : 1;
+    p.grenades -= 1;
+    this.nades.push({ id: this.nextPowerId++, x: o[0], y: o[1], z: o[2], vx: v[0] * k, vy: v[1] * k, vz: v[2] * k, t: GRENADE.fuse, owner: p.id });
+  }
+
+  onBuy(p, m) {
+    if (p.downed || p.dead) return;
+    const st = WALL_BUYS[m.s | 0];
+    if (!st || Math.hypot(p.x - st.x, p.z - st.z) > BUY_RANGE + 0.5) return;
+    const owned = p.weapons.includes(st.weapon);
+    const cost = owned ? Math.round(st.cost / 2) : st.cost;
+    if (p.score < cost) { this.sendTo(p, { t: 'buyfail', cost }); return; }
+    p.score -= cost;
+    if (!owned) {
+      if (p.weapons.length < 2) p.weapons.push(st.weapon);
+      else p.weapons[Math.max(0, Math.min(1, m.slot | 0))] = st.weapon;
+    }
+    this.sendTo(p, { t: 'bought', w: st.weapon, weapons: p.weapons, ammo: owned });
+  }
+
+  dropPowerup(x, z) {
+    const type = POWERUP_TYPES[Math.floor(Math.random() * POWERUP_TYPES.length)];
+    this.powerups.push({ id: this.nextPowerId++, type, x, z, t: 25 });
+  }
+
+  updateExtras(dt, alive) {
+    this.instakill = Math.max(0, this.instakill - dt);
+    this.doublePts = Math.max(0, this.doublePts - dt);
+    for (let i = this.powerups.length - 1; i >= 0; i--) {
+      const pu = this.powerups[i];
+      pu.t -= dt;
+      const taker = alive.find(p => Math.hypot(p.x - pu.x, p.z - pu.z) < 1.8);
+      if (!taker && pu.t > 0) continue;
+      this.powerups.splice(i, 1);
+      if (!taker) continue;
+      if (pu.type === 'instakill') this.instakill = POWERUP_TIME;
+      if (pu.type === 'double') this.doublePts = POWERUP_TIME;
+      if (pu.type === 'nuke') {
+        for (const c of this.cows.values()) if (c.state !== 'dead') { this.killCow(c); }
+        for (const p of this.players.values()) this.award(p, 400);
+      }
+      if (pu.type === 'maxammo') for (const p of this.players.values()) p.grenades = Math.min(GRENADE.max, p.grenades + 1);
+      this.broadcastEvent({ t: 'powerup', type: pu.type, by: taker.name });
+    }
+    for (let i = this.nades.length - 1; i >= 0; i--) {
+      const n = this.nades[i];
+      n.t -= dt;
+      n.vy -= 18 * dt;
+      let nx = n.x + n.vx * dt, ny = n.y + n.vy * dt, nz = n.z + n.vz * dt;
+      const g = heightAt(nx, nz);
+      if (ny < g + 0.08) { ny = g + 0.08; n.vy = Math.abs(n.vy) * 0.35; n.vx *= 0.6; n.vz *= 0.6; }
+      const [rx, rz] = resolveCircle(nx, nz, 0.08, ny, 0.1);
+      if (rx !== nx || rz !== nz) { n.vx *= -0.4; n.vz *= -0.4; }
+      n.x = rx; n.y = ny; n.z = rz;
+      if (n.t > 0) continue;
+      this.nades.splice(i, 1);
+      const owner = this.players.get(n.owner);
+      for (const c of this.cows.values()) {
+        if (c.state === 'dead') continue;
+        const dist = Math.hypot(c.x - n.x, c.z - n.z);
+        if (dist < GRENADE.radius) this.damageCow(owner, c, GRENADE.damage * (1 - dist / GRENADE.radius * 0.7), false, [c.x, 1, c.z], [c.x - n.x, 0.3, c.z - n.z]);
+      }
+      this.broadcastEvent({ t: 'boom', p: [n.x, n.y, n.z] });
+    }
   }
 
   killCow(c) {
@@ -261,12 +368,13 @@ export class Room {
         let i = 0;
         for (const p of players) if (p.dead || p.downed) this.respawn(p, i++);
         for (const d of this.dogs) { d.hp = DOG_TYPES.find(t => t.kind === d.kind).hp; if (d.state === 3) d.state = 0; }
+        for (const p of players) p.grenades = Math.min(GRENADE.max, p.grenades + GRENADE.perWave);
         this.broadcastEvent({ t: 'waveclear', wave: this.wave });
       }
     } else if (this.phase === 'gameover') {
       this.timer -= dt;
       if (this.timer <= 0) {
-        for (const p of players) { p.score = 0; p.kills = 0; }
+        for (const p of players) { p.score = START_POINTS; p.kills = 0; p.weapons = [...START_WEAPONS]; p.cur = 0; p.grenades = GRENADE.perWave; }
         this.reset();
         this.broadcastEvent({ t: 'restart' });
       }
@@ -276,6 +384,7 @@ export class Room {
     this.updatePlayers(dt, players, alive);
     this.updateCows(dt, alive);
     this.updateDogs(dt, alive);
+    this.updateExtras(dt, alive);
     this.broadcastSnapshot();
   }
 
@@ -340,7 +449,7 @@ export class Room {
           p.revive += dt;
           if (p.revive >= REVIVE_TIME) {
             p.downed = false; p.hp = 50; p.revive = 0; p.lastHurt = this.time;
-            helper.score += 150;
+            this.award(helper, 150);
             this.broadcastEvent({ t: 'chat', msg: `${helper.name} revived ${p.name}` });
           }
         } else {
@@ -364,7 +473,7 @@ export class Room {
       if (p.repairT >= REPAIR_TIME) {
         p.repairT = 0;
         this.boards[e.id] += 1;
-        p.score += 10;
+        this.award(p, 10);
         this.entryAge = this.playerAge = 99;
         this.broadcastEvent({ t: 'board', e: e.id, n: this.boards[e.id], add: 1, by: p.id });
       }
@@ -632,12 +741,15 @@ export class Room {
       timer: Math.max(0, Math.ceil(this.timer)),
       left: this.toSpawn.length + [...this.cows.values()].filter(c => c.state !== 'dead').length,
       boards: this.boards,
+      pu: this.powerups.map(u => [u.id, u.type, r(u.x), r(u.z)]),
+      nd: this.nades.map(n => [n.id, r(n.x), r(n.y), r(n.z)]),
+      ik: Math.ceil(this.instakill), dp: Math.ceil(this.doublePts),
       dogs: this.dogs.map(d => [d.id, d.kind === 'little' ? 1 : 0, r(d.x), r(d.z), r(d.yaw), d.state]),
       players: [...this.players.values()].map(p => ({
         id: p.id, n: p.name, c: p.char, x: r(p.x), y: r(p.y), z: r(p.z), yaw: r(p.yaw), pitch: r(p.pitch),
         hp: Math.round(p.hp), dn: p.downed ? 1 : 0, dd: p.dead ? 1 : 0,
         rv: Math.round((p.revive / REVIVE_TIME) * 100), bl: Math.ceil(p.bleed), s: p.score, k: p.kills,
-        rp: Math.round((p.repairT / REPAIR_TIME) * 100),
+        rp: Math.round((p.repairT / REPAIR_TIME) * 100), w: p.weapons, cw: p.weapons[p.cur] || p.weapons[0], g: p.grenades,
       })),
       cows: [...this.cows.values()].map(c => [
         c.id, c.type === 'walker' ? 0 : c.type === 'runner' ? 1 : 2, r(c.x), r(c.z), r(c.yaw),

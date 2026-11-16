@@ -118,6 +118,20 @@ export class FX {
     if (this.pools.length > 60) { const o = this.pools.shift(); this.scene.remove(o.m); o.m.material.dispose(); }
   }
 
+  explosion(pos) {
+    const flash = new THREE.Sprite(this.flashMat);
+    flash.position.copy(pos).add(new THREE.Vector3(0, 0.6, 0));
+    flash.scale.setScalar(5);
+    this.scene.add(flash);
+    const light = this.flashLights[this.flashLightIdx++ % this.flashLights.length];
+    light.position.copy(flash.position); light.intensity = 400;
+    this.flashes.push({ s: flash, light, age: -0.12 });
+    this.spawn(60, pos.clone().add(new THREE.Vector3(0, 0.3, 0)), { spread: 2, up: 2.5, speed: 12, life: 1.4, size: 0.06, color: 0x3a3028, grav: 14, bounce: 0.3 });
+    this.spawn(30, pos.clone().add(new THREE.Vector3(0, 0.3, 0)), { spread: 2, up: 2, speed: 9, life: 0.5, size: 0.05, color: 0xffb040, grav: 4 });
+    for (let i = 0; i < 6; i++) this.puff(pos.clone().add(new THREE.Vector3((Math.random() - 0.5) * 2, 0.5 + Math.random() * 1.5, (Math.random() - 0.5) * 2)), 0x50463c, 4, 2.5);
+    this.pool(pos.x, pos.z, 2.4);
+  }
+
   muzzleFlash(pos) {
     const s = new THREE.Sprite(this.flashMat);
     s.position.copy(pos);

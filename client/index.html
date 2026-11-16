@@ -16,6 +16,8 @@
     <div id="damage"></div>
     <div id="downed-overlay"><div class="big">YOU'RE DOWN</div><div id="downed-sub"></div></div>
     <div id="wave-banner"></div>
+    <div id="scope"></div>
+    <div id="powerups"></div>
     <div id="top-left">
       <div id="wave-label">WAVE <b id="wave-num">0</b></div>
       <div id="wave-sub"></div>
@@ -27,7 +29,8 @@
       <div id="score">0</div>
     </div>
     <div id="bottom-right">
-      <div id="ammo"><b id="ammo-mag">30</b><span>/ ∞</span></div>
+      <div id="ammo"><b id="ammo-mag">30</b><span id="ammo-res">/ 210</span></div>
+      <div id="nades">● ●</div>
       <div id="weapon-name">RANCH RIFLE</div>
       <div id="reload-hint"></div>
     </div>
@@ -46,6 +49,7 @@
       <div id="char-picker"></div>
       <label>Graphics
         <select id="quality">
+          <option value="ultra">Ultra (strong gaming PC)</option>
           <option value="high">High (gaming PC / recent Mac)</option>
           <option value="medium">Medium (most laptops)</option>
           <option value="low">Low (older computers)</option>
@@ -58,6 +62,9 @@
         <div><kbd>Space</kbd> jump</div><div><kbd>Mouse</kbd> aim / shoot</div>
         <div><kbd>R</kbd> reload</div><div><kbd>E</kbd> (hold) revive</div>
         <div><kbd>F</kbd> flashlight</div><div><kbd>Tab</kbd> scores</div>
+        <div><kbd>1</kbd><kbd>2</kbd> switch gun</div><div><kbd>V</kbd> machete</div>
+        <div><kbd>G</kbd> grenade</div><div><kbd>C</kbd> crouch / slide</div>
+        <div><kbd>E</kbd> buy guns off walls</div><div><kbd>RMB</kbd> aim</div>
       </div>
       <div id="touch-note" class="hidden">Needs a keyboard and mouse for now. Phone controls are coming.</div>
     </div>
