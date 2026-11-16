@@ -35,8 +35,10 @@ export class LocalPlayer {
   teleport(x, y, z) { this.pos.set(x, y, z); this.vel.set(0, 0, 0); }
 
   update(dt, keys, { aiming, downed, canMove }) {
-    const fwd = (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0);
-    const side = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0);
+    let fwd = (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0);
+    let side = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0);
+    // analog stick (touch): axisX right, axisY down, each -1..1; a partial push walks slower
+    if (keys.axisX || keys.axisY) { fwd = -keys.axisY || 0; side = keys.axisX || 0; }
     this.sprinting = !!keys.ShiftLeft && fwd > 0 && !aiming && !downed && canMove && !this.crouching;
     let speed = downed ? 0 : this.sprinting ? 6.6 : this.crouching ? 2.2 : aiming ? 2.7 : 4.4;
     if (!canMove) speed = 0;
@@ -45,7 +47,7 @@ export class LocalPlayer {
     // camera looks down -Z at yaw 0
     let wx = -sin * fwd + cos * side, wz = -cos * fwd - sin * side;
     const wl = Math.hypot(wx, wz);
-    if (wl > 0) { wx = (wx / wl) * speed; wz = (wz / wl) * speed; }
+    if (wl > 0) { const k = Math.min(1, wl); wx = (wx / wl) * speed * k; wz = (wz / wl) * speed * k; }
     const accel = this.grounded ? 14 : 2.5;
     if (this.sliding > 0) { // momentum slide that bleeds off
       this.sliding -= dt;

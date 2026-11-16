@@ -20,8 +20,10 @@ import { Net } from './net.js';
 import { LocalPlayer } from './player.js';
 import { setAnisotropy } from './textures.js';
 import * as T from './textures.js';
+import { detectTouch, isPhone, TouchControls, enterFullscreen, getSensitivity, setSensitivity } from './touch.js';
 
 const $ = (id) => document.getElementById(id);
+const touchMode = detectTouch(); // phone / tablet: on-screen controls instead of pointer lock
 
 // ---------------------------------------------------------------- quality
 const PRESETS = {
@@ -32,7 +34,7 @@ const PRESETS = {
 };
 let qName = new URLSearchParams(location.search).get('q');
 try { qName = qName || localStorage.getItem('rd-quality'); } catch {}
-if (!PRESETS[qName]) qName = (navigator.hardwareConcurrency || 4) >= 8 ? 'high' : 'medium';
+if (!PRESETS[qName]) qName = touchMode ? (isPhone() ? 'low' : 'medium') : (navigator.hardwareConcurrency || 4) >= 8 ? 'high' : 'medium';
 const Q = PRESETS[qName];
 $('quality').value = qName;
 $('quality').onchange = (e) => {
@@ -205,7 +207,12 @@ for (const c of CHARACTERS) {
 try { nameInput.value = localStorage.getItem('rd-name') || ''; } catch {}
 const urlRoom = new URLSearchParams(location.search).get('room');
 if (urlRoom) roomInput.value = urlRoom;
-if (matchMedia('(pointer: coarse)').matches && !matchMedia('(any-pointer: fine)').matches) $('touch-note').classList.remove('hidden');
+if (touchMode) {
+  $('touch-menu').classList.remove('hidden');
+  const sens = $('touch-sens');
+  sens.value = getSensitivity();
+  sens.oninput = () => { setSensitivity(sens.value); if (touch) touch.sens = +sens.value; };
+}
 
 $('play').onclick = async () => {
   const name = nameInput.value.trim() || 'Rancher';
@@ -220,7 +227,8 @@ $('play').onclick = async () => {
     $('menu').classList.add('hidden');
     $('hud').classList.remove('hidden');
     playing = true;
-    lockPointer();
+    if (touchMode) { touch.show(true); enterFullscreen(); }
+    else lockPointer();
   } catch (e) {
     $('menu-status').textContent = e.message;
     $('play').disabled = false;
@@ -231,8 +239,24 @@ $('play').onclick = async () => {
 // ---------------------------------------------------------------- input
 function lockPointer() { renderer.domElement.requestPointerLock?.(); }
 const locked = () => document.pointerLockElement === renderer.domElement;
+// gameplay input is live: pointer locked on desktop, or simply in a game on touch screens
+const active = () => locked() || (touchMode && playing);
+const KEY_USE = touchMode ? '<kbd>USE</kbd>' : '<kbd>E</kbd>';
+const touch = touchMode ? new TouchControls({
+  keys,
+  fire(down) { mouseDown = down; if (!down) triggerHeld = false; },
+  toggleAim() { aiming = !aiming; },
+  reload: () => startReload(),
+  grenade: () => throwGrenade(),
+  melee: () => doMelee(),
+  swap: () => switchTo(1 - loadout.cur),
+  use(down) { keys.KeyE = down; if (down) tryBuy(); },
+  look(dx, dy) { lookDX += dx; lookDY += dy; },
+  flashlight() { flashlightOn = !flashlightOn; audio.click(); },
+  scores(show) { $('scoreboard').classList.toggle('show', show); if (show) renderScoreboard(); },
+}) : null;
 document.addEventListener('pointerlockchange', () => {
-  $('click-to-play').classList.toggle('hidden', locked());
+  $('click-to-play').classList.toggle('hidden', locked() || touchMode);
   if (!locked()) { mouseDown = false; aiming = false; for (const k in keys) keys[k] = false; }
 });
 renderer.domElement.addEventListener('mousedown', (e) => {
@@ -255,7 +279,7 @@ addEventListener('mousemove', (e) => {
 addEventListener('keydown', (e) => {
   if (!playing) return;
   if (e.code === 'Tab') { e.preventDefault(); $('scoreboard').classList.add('show'); renderScoreboard(); }
-  if (!locked()) return;
+  if (!active()) return;
   keys[e.code] = true;
   if (e.code === 'KeyR') startReload();
   if (e.code === 'Digit1') switchTo(0);
@@ -551,7 +575,7 @@ function updateHud(dt) {
   $('ammo-mag').classList.toggle('low', am.mag <= Math.ceil(w.mag * 0.25));
   $('weapon-name').textContent = w.name;
   $('nades').textContent = '● '.repeat(mySnap.g || 0).trim();
-  $('reload-hint').textContent = reloadT > 0 ? 'RELOADING' : am.mag === 0 && am.res === 0 ? 'NO AMMO' : am.mag <= Math.ceil(w.mag * 0.25) ? 'R  RELOAD' : '';
+  $('reload-hint').textContent = reloadT > 0 ? 'RELOADING' : am.mag === 0 && am.res === 0 ? 'NO AMMO' : am.mag <= Math.ceil(w.mag * 0.25) ? (touchMode ? 'RELOAD' : 'R  RELOAD') : '';
   $('powerups').innerHTML = (s.ik ? `<span class="pu ik">INSTA-KILL ${s.ik}</span>` : '') + (s.dp ? `<span class="pu dp">DOUBLE POINTS ${s.dp}</span>` : '');
   const spread = aiming ? 2 : 6 + Math.min(1, me.speed / 4) * 10 + weapon.recoil * 10;
   $('crosshair').style.setProperty('--spread', `${spread}px`);
@@ -565,7 +589,7 @@ function updateHud(dt) {
   if (mySnap.dn) {
     ov.classList.add('show');
     ov.querySelector('.big').textContent = "YOU'RE DOWN";
-    $('downed-sub').textContent = mySnap.rv > 0 ? `Being revived... ${mySnap.rv}%` : `Bleeding out in ${mySnap.bl}s. A teammate can hold E next to you to revive.`;
+    $('downed-sub').textContent = mySnap.rv > 0 ? `Being revived... ${mySnap.rv}%` : `Bleeding out in ${mySnap.bl}s. A teammate can hold ${touchMode ? 'USE' : 'E'} next to you to revive.`;
   } else if (mySnap.dd && s.phase !== 'gameover') {
     ov.classList.add('show');
     ov.querySelector('.big').textContent = 'SPECTATING';
@@ -577,21 +601,22 @@ function updateHud(dt) {
   if (alive() && view) {
     for (const [id, p] of view.players) {
       if (id !== net.id && p.dn && Math.hypot(p.x - me.pos.x, p.z - me.pos.z) < 2.6) {
-        prompt = p.rv > 0 ? `Reviving ${escapeHtml(p.n)}... ${p.rv}%` : `Hold <kbd>E</kbd> to revive ${escapeHtml(p.n)}`;
+        prompt = p.rv > 0 ? `Reviving ${escapeHtml(p.n)}... ${p.rv}%` : `Hold ${KEY_USE} to revive ${escapeHtml(p.n)}`;
         break;
       }
     }
     const bi = !prompt ? nearestBuy() : null;
     if (bi != null) {
       const b = WALL_BUYS[bi], owned = loadout.weapons.includes(b.weapon);
-      prompt = `Press <kbd>E</kbd> to ${owned ? 'buy ammo for' : 'buy'} ${WEAPONS[b.weapon].name} <b>$${owned ? Math.round(b.cost / 2) : b.cost}</b>`;
+      prompt = `${touchMode ? 'Tap' : 'Press'} ${KEY_USE} to ${owned ? 'buy ammo for' : 'buy'} ${WEAPONS[b.weapon].name} <b>$${owned ? Math.round(b.cost / 2) : b.cost}</b>`;
     }
     if (!prompt) {
       const e = nearestRepairable();
-      if (e) prompt = mySnap.rp > 0 ? `Rebuilding... ${'▮'.repeat(s.boards[e.id])}${'▯'.repeat(MAX_BOARDS - s.boards[e.id])}` : `Hold <kbd>E</kbd> to rebuild barricade`;
+      if (e) prompt = mySnap.rp > 0 ? `Rebuilding... ${'▮'.repeat(s.boards[e.id])}${'▯'.repeat(MAX_BOARDS - s.boards[e.id])}` : `Hold ${KEY_USE} to rebuild barricade`;
     }
   }
   $('revive-prompt').innerHTML = prompt;
+  touch?.update({ aiming, crouched: keys.KeyC, prompt: !!prompt, canSwap: loadout.weapons.length > 1, grenades: mySnap.g > 0, flashlight: flashlightOn });
 }
 
 function nearestRepairable() {
@@ -667,7 +692,7 @@ function stepLocal(dt) {
 
   const sens = 0.0022 * (aiming ? 0.6 : 1);
   if (!dead) me.look(lookDX, lookDY, sens);
-  me.update(dt, keys, { aiming, downed, canMove: locked() && !dead });
+  me.update(dt, keys, { aiming, downed, canMove: active() && !dead });
   if (keys.KeyC || keys.ControlLeft) { if (!me.crouchHeld) me.startCrouch(); me.crouchHeld = true; } else { me.crouchHeld = false; me.crouching = false; }
 
   // weapon + firing
@@ -677,7 +702,7 @@ function stepLocal(dt) {
   }
   // keep the loadout in sync with the server (e.g. after a restart)
   if (mySnap.w && mySnap.w.join() !== loadout.weapons.join()) { loadout.weapons = [...mySnap.w]; loadout.cur = Math.min(loadout.cur, loadout.weapons.length - 1); weapon.setGun(curId()); }
-  const canShoot = alive() && locked() && reloadT <= 0 && !me.sprinting && weapon.meleeT <= 0 && weapon.switchT <= 0;
+  const canShoot = alive() && active() && reloadT <= 0 && !me.sprinting && weapon.meleeT <= 0 && weapon.switchT <= 0;
   const am = ammo();
   if (mouseDown && canShoot && elapsed >= nextFire && am.mag > 0 && (W().auto || !triggerHeld)) fire(elapsed);
   else if (mouseDown && canShoot && am.mag === 0 && !triggerHeld) { startReload(); triggerHeld = true; }

@@ -49,7 +49,6 @@ kbd {
   display: inline-block; min-width: 22px; padding: 1px 6px; margin-right: 4px; text-align: center;
   border: 1px solid rgba(255, 255, 255, 0.35); border-bottom-width: 2px; border-radius: 4px; font-size: 12px;
 }
-#touch-note { margin-top: 14px; font-family: system-ui, sans-serif; font-size: 14px; color: #ffd27a; }
 
 /* ---------- HUD ---------- */
 #hud { position: fixed; inset: 0; pointer-events: none; z-index: 10; text-shadow: var(--shadow); }
