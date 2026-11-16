@@ -45,18 +45,81 @@ function materials() {
 const EYE_GEO = new THREE.SphereGeometry(0.035, 8, 6);
 
 // ---------------------------------------------------------------------------
-// Zombie hide shader. Patches a MeshStandardMaterial: all the zombie detail is driven by
-// the mesh's rest-pose position (metres, feet at y=0, nose toward +z), so it sticks to
-// the hide while the skeleton moves. Per-cow uniforms carry the hit flash, a pattern
-// seed and the soft-body offsets for the hump, dewlap and ears.
+// Zombie hide. All the zombie detail (mange, veins, pallor, grime, mud, a ragged ear) is
+// driven by the mesh's rest-pose position (metres, feet at y=0, nose toward +z), so it
+// sticks to the hide. It is baked ONCE at load into a few texture variants by rendering
+// the mesh in UV space, so in game the cows use a plain textured material: no noise is
+// evaluated per pixel per frame. Only the cheap soft-body wobble (hump, dewlap, ears)
+// and the hit flash stay in the live shader.
+const HIDE_NOISE = /* glsl */`
+float zh(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
+float zn(vec3 x) {
+  vec3 i = floor(x), f = fract(x); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(mix(zh(i), zh(i + vec3(1, 0, 0)), f.x), mix(zh(i + vec3(0, 1, 0)), zh(i + vec3(1, 1, 0)), f.x), f.y),
+             mix(mix(zh(i + vec3(0, 0, 1)), zh(i + vec3(1, 0, 1)), f.x), mix(zh(i + vec3(0, 1, 1)), zh(i + vec3(1, 1, 1)), f.x), f.y), f.z);
+}
+float zfbm(vec3 p) { return 0.55 * zn(p) + 0.3 * zn(p * 2.03 + 7.1) + 0.15 * zn(p * 4.1 + 3.3); }
+`;
+const BAKE_VERT = /* glsl */`
+uniform vec2 uOff;
+varying vec3 vObj;
+varying vec2 vUv;
+void main() { vObj = position; vUv = uv; gl_Position = vec4((uv + uOff) * 2.0 - 1.0, 0.0, 1.0); }
+`;
+const BAKE_FRAG = /* glsl */`
+uniform sampler2D uMap, uOrm;
+uniform vec3 uSeed;
+uniform float uRagged, uRough;
+varying vec3 vObj;
+varying vec2 vUv;
+${HIDE_NOISE}
+void main() {
+  vec3 col = texture2D(uMap, vUv).rgb; // sRGB texture: the GPU hands us linear colour
+  vec3 zp = vObj + uSeed;
+  // ragged notch out of one ear (alpha-tested away in game)
+  float alpha = 1.0;
+  if (uRagged > 0.5 && vObj.x < -0.27 && vObj.y > 1.24 && vObj.y < 1.6 && vObj.z > 1.36 && zn(zp * 9.0) > 0.58) alpha = 0.0;
+  // mange: bald, greyish-pink patches where the white coat has fallen out, with a darker rim
+  float m = zfbm(zp * 3.3) + 0.12 * zn(zp * 24.0);
+  float body = smoothstep(0.42, 0.62, vObj.y);
+  float mange = smoothstep(0.6, 0.64, m) * body;
+  float rim = smoothstep(0.53, 0.59, m) * (1.0 - mange) * body;
+  col *= 1.0 - 0.3 * rim;
+  col = mix(col, vec3(0.4, 0.3, 0.28) * (0.7 + 0.5 * zn(zp * 31.0)), mange * 0.9);
+  // sickly pallor: drained, faintly yellow-green
+  float l = dot(col, vec3(0.3, 0.59, 0.11));
+  col = mix(col, l * vec3(0.86, 0.95, 0.72), 0.5);
+  // grime and caked dust, darker toward the belly
+  col *= (0.62 + 0.42 * zfbm(zp * 1.6)) * (0.72 + 0.28 * smoothstep(0.55, 1.15, vObj.y));
+  // dark veins, thickest around the bald patches and up the neck and face
+  float v = abs(zn(zp * 10.0) - 0.5) + 0.35 * abs(zn(zp * 23.0) - 0.5);
+  float veins = (1.0 - smoothstep(0.0, 0.055, v)) * clamp(0.25 + 0.75 * smoothstep(0.85, 1.35, vObj.z) + mange, 0.0, 1.0)
+              * smoothstep(0.55, 0.85, vObj.y);
+  col = mix(col, vec3(0.14, 0.1, 0.18), veins * 0.75);
+  // mud: caked up the legs with a ragged line, splashes on the belly, wet near the hooves
+  float mh = 0.44 + 0.2 * zn(zp * 4.6);
+  float mud = 1.0 - smoothstep(mh - 0.07, mh + 0.05, vObj.y);
+  mud = max(mud, smoothstep(0.64, 0.72, zn(zp * 7.5)) * (1.0 - smoothstep(0.6, 1.05, vObj.y)));
+  float wet = 1.0 - smoothstep(0.04, 0.2, vObj.y);
+  vec3 mudCol = mix(vec3(0.1, 0.065, 0.04), vec3(0.2, 0.14, 0.08), zn(zp * 13.0)) * (1.0 - 0.4 * wet);
+  col = mix(col, mudCol, mud * 0.92);
+  if (uRough > 0.5) {
+    float r = 0.85 * texture2D(uOrm, vUv).g;
+    r = mix(r, 0.97, mange * 0.8);
+    r = mix(r, mix(0.9, 0.42, wet), mud);
+    gl_FragColor = vec4(0.0, r, 0.0, 1.0);
+  } else {
+    gl_FragColor = vec4(col, alpha);
+  }
+}
+`;
+
 const HIDE_VERT_HEAD = /* glsl */`
 uniform vec3 uHump, uDewlap;
 uniform vec2 uEars;
-varying vec3 vObj;
 `;
 const HIDE_VERT_BODY = /* glsl */`
 #include <begin_vertex>
-vObj = position;
 {
   vec3 p = position;
   // the hump over the shoulders and the loose dewlap under the neck wobble on springs
@@ -76,68 +139,50 @@ vObj = position;
   transformed.xy = piv + vec2(d.x * ca - d.y * sa, d.x * sa + d.y * ca);
 }
 `;
-const HIDE_FRAG_HEAD = /* glsl */`
-uniform float uFlash;
-uniform vec3 uSeed;
-varying vec3 vObj;
-float zh(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
-float zn(vec3 x) {
-  vec3 i = floor(x), f = fract(x); f = f * f * (3.0 - 2.0 * f);
-  return mix(mix(mix(zh(i), zh(i + vec3(1, 0, 0)), f.x), mix(zh(i + vec3(0, 1, 0)), zh(i + vec3(1, 1, 0)), f.x), f.y),
-             mix(mix(zh(i + vec3(0, 0, 1)), zh(i + vec3(1, 0, 1)), f.x), mix(zh(i + vec3(0, 1, 1)), zh(i + vec3(1, 1, 1)), f.x), f.y), f.z);
-}
-float zfbm(vec3 p) { return 0.55 * zn(p) + 0.3 * zn(p * 2.03 + 7.1) + 0.15 * zn(p * 4.1 + 3.3); }
-`;
-const HIDE_FRAG_COLOR = /* glsl */`
-#include <map_fragment>
-vec3 zp = vObj + uSeed;
-// ragged notch out of one ear
-if (uSeed.x > 9.0 && vObj.x < -0.27 && vObj.y > 1.24 && vObj.y < 1.6 && vObj.z > 1.36 && zn(zp * 9.0) > 0.58) discard;
-// mange: bald, greyish-pink patches where the white coat has fallen out
-float zMange = smoothstep(0.56, 0.6, zfbm(zp * 3.3) + 0.12 * zn(zp * 24.0)) * smoothstep(0.42, 0.62, vObj.y);
-vec3 zSkin = vec3(0.3, 0.21, 0.2) * (0.7 + 0.5 * zn(zp * 31.0));
-// a darker, rougher rim where the coat thins out around each bald patch
-float zRim = smoothstep(0.49, 0.55, zfbm(zp * 3.3) + 0.12 * zn(zp * 24.0)) * (1.0 - zMange) * smoothstep(0.42, 0.62, vObj.y);
-diffuseColor.rgb *= 1.0 - 0.3 * zRim;
-diffuseColor.rgb = mix(diffuseColor.rgb, zSkin, zMange * 0.95);
-// sickly pallor: drained, faintly yellow-green
-float zl = dot(diffuseColor.rgb, vec3(0.3, 0.59, 0.11));
-diffuseColor.rgb = mix(diffuseColor.rgb, zl * vec3(0.86, 0.95, 0.72), 0.5);
-// grime and caked dust
-diffuseColor.rgb *= (0.62 + 0.42 * zfbm(zp * 1.6)) * (0.72 + 0.28 * smoothstep(0.55, 1.15, vObj.y));
-// dark veins, thickest around the bald patches and up the neck and face
-float zv = abs(zn(zp * 10.0) - 0.5) + 0.35 * abs(zn(zp * 23.0) - 0.5);
-float zVeins = (1.0 - smoothstep(0.0, 0.055, zv)) * clamp(0.25 + 0.75 * smoothstep(0.85, 1.35, vObj.z) + zMange, 0.0, 1.0)
-             * smoothstep(0.55, 0.85, vObj.y);
-diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.14, 0.1, 0.18), zVeins * 0.75);
-// mud: caked up the legs with a ragged line, splashes on the belly, wet near the hooves
-float zmh = 0.44 + 0.2 * zn(zp * 4.6);
-float zMud = 1.0 - smoothstep(zmh - 0.07, zmh + 0.05, vObj.y);
-zMud = max(zMud, smoothstep(0.64, 0.72, zn(zp * 7.5)) * (1.0 - smoothstep(0.6, 1.05, vObj.y)));
-float zWet = 1.0 - smoothstep(0.04, 0.2, vObj.y);
-vec3 zMudCol = mix(vec3(0.1, 0.065, 0.04), vec3(0.2, 0.14, 0.08), zn(zp * 13.0)) * (1.0 - 0.4 * zWet);
-diffuseColor.rgb = mix(diffuseColor.rgb, zMudCol, zMud * 0.92);
-`;
-const HIDE_FRAG_ROUGH = /* glsl */`
-#include <roughnessmap_fragment>
-roughnessFactor = mix(roughnessFactor, 0.97, zMange * 0.8);
-roughnessFactor = mix(roughnessFactor, mix(0.9, 0.42, zWet), zMud);
-`;
-const HIDE_FRAG_EMIS = /* glsl */`
-#include <emissivemap_fragment>
-totalEmissiveRadiance += vec3(0.5, 0.03, 0.0) * uFlash + vec3(0.03, 0.055, 0.0) * zVeins;
-`;
 
 function zombieHide(mat, uniforms) {
   mat.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, uniforms);
     sh.vertexShader = HIDE_VERT_HEAD + sh.vertexShader.replace('#include <begin_vertex>', HIDE_VERT_BODY);
-    sh.fragmentShader = HIDE_FRAG_HEAD + sh.fragmentShader
-      .replace('#include <map_fragment>', HIDE_FRAG_COLOR)
-      .replace('#include <roughnessmap_fragment>', HIDE_FRAG_ROUGH)
-      .replace('#include <emissivemap_fragment>', HIDE_FRAG_EMIS);
+    sh.fragmentShader = 'uniform float uFlash;\n' + sh.fragmentShader.replace('#include <emissivemap_fragment>',
+      '#include <emissivemap_fragment>\ntotalEmissiveRadiance += vec3(0.5, 0.03, 0.0) * uFlash;');
   };
-  mat.customProgramCacheKey = () => 'zombie-hide-1'; // every cow shares one shader program
+  mat.customProgramCacheKey = () => 'zombie-hide-2'; // every cow shares one shader program
+}
+
+// Render the hide in UV space into a texture. Each pass is drawn nudged by a couple of
+// texels in 8 directions first, then centred, which pads the UV islands so mip-mapping
+// never pulls in the empty background along the seams.
+function bakeHide(renderer, geo, map, orm, seed, ragged, rough, size) {
+  const rt = new THREE.WebGLRenderTarget(size, size, {
+    generateMipmaps: true, minFilter: THREE.LinearMipmapLinearFilter, magFilter: THREE.LinearFilter,
+    colorSpace: rough ? THREE.NoColorSpace : THREE.SRGBColorSpace, depthBuffer: false,
+  });
+  const mat = new THREE.ShaderMaterial({
+    vertexShader: BAKE_VERT, fragmentShader: BAKE_FRAG, depthTest: false, depthWrite: false, side: THREE.DoubleSide,
+    uniforms: {
+      uMap: { value: map }, uOrm: { value: orm }, uSeed: { value: seed }, uRagged: { value: ragged ? 1 : 0 },
+      uRough: { value: rough ? 1 : 0 }, uOff: { value: new THREE.Vector2() },
+    },
+  });
+  const scene = new THREE.Scene(), cam = new THREE.Camera();
+  const mesh = new THREE.Mesh(geo, mat); mesh.frustumCulled = false;
+  scene.add(mesh);
+  const prevRT = renderer.getRenderTarget(), prevAuto = renderer.autoClear;
+  const prevClear = renderer.getClearColor(new THREE.Color()), prevAlpha = renderer.getClearAlpha();
+  renderer.setRenderTarget(rt);
+  renderer.setClearColor(0x000000, 0); renderer.clear();
+  renderer.autoClear = false;
+  const px = 2.5 / size;
+  for (const [dx, dy] of [[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1], [0, 0]]) {
+    mat.uniforms.uOff.value.set(dx * px, dy * px);
+    renderer.render(scene, cam);
+  }
+  renderer.autoClear = prevAuto;
+  renderer.setRenderTarget(prevRT);
+  renderer.setClearColor(prevClear, prevAlpha);
+  mat.dispose();
+  return rt.texture;
 }
 
 // ---------------------------------------------------------------------------
@@ -233,22 +278,39 @@ export function buildCowModel(type) {
 // ---------------------------------------------------------------------------
 // The real model
 let ASSET = null;
-export async function loadCowAsset() {
+const HIDE_VARIANTS = 3;
+export async function loadCowAsset(renderer) {
   try {
     const gltf = await new GLTFLoader().loadAsync('/assets/models/brahman/brahman.glb');
     const meta = await (await fetch('/assets/models/brahman/brahman.json')).json();
+    const hides = [];
     gltf.scene.traverse(o => {
       if (!o.isMesh) return;
       o.castShadow = true; o.receiveShadow = true;
       const m = o.material;
       if (m.map?.image) m.map = T.zombify(m.map.image);
       m.roughness = 0.85; m.metalness = 0;
+      if (!renderer || !m.map) return;
+      // a few differently-patterned zombie hides; every cow picks one at random
+      const size = Math.min(1024, renderer.capabilities.maxTextureSize);
+      for (let i = 0; i < HIDE_VARIANTS; i++) {
+        const seed = new THREE.Vector3(i * 7.31 + 0.4, i * 3.17 + 1.3, i * 5.53 + 2.1);
+        const map = bakeHide(renderer, o.geometry, m.map, m.roughnessMap || m.map, seed, i !== 1, false, size);
+        const rough = m.roughnessMap ? bakeHide(renderer, o.geometry, m.map, m.roughnessMap, seed, false, true, size / 2) : null;
+        hides.push({ map, rough });
+      }
     });
-    ASSET = { scene: gltf.scene, meta };
+    ASSET = { scene: gltf.scene, meta, hides };
   } catch (e) {
     console.warn('Brahman model failed to load; using the simple cow.', e);
   }
 }
+
+// The game camera's position, picked up as the cows are drawn (used to drop shadows and
+// fine motion on far-away cows).
+const CAM = new THREE.Vector3(0, 0, 0);
+let camSeen = false;
+function noteCamera(renderer, scene, camera) { if (camera.isPerspectiveCamera) { CAM.setFromMatrixPosition(camera.matrixWorld); camSeen = true; } }
 
 // Rig measurements (model metres, from the skeleton in brahman.glb)
 const HIP_Y = 1.061;               // hip/shoulder joint height
@@ -272,22 +334,29 @@ class BrahmanRig {
     this.model.scale.setScalar(s);
     this.body.add(this.model);
     this.uniforms = {
-      uFlash: { value: 0 }, uSeed: { value: new THREE.Vector3() },
+      uFlash: { value: 0 },
       uHump: { value: new THREE.Vector3() }, uDewlap: { value: new THREE.Vector3() }, uEars: { value: new THREE.Vector2() },
     };
-    const r = Math.random;
-    // x > 9 marks the cows with a ragged ear
-    this.uniforms.uSeed.value.set((r() < 0.5 ? 10 : 0) + r() * 3, r() * 10, r() * 10);
+    const hide = ASSET.hides.length ? ASSET.hides[Math.floor(Math.random() * ASSET.hides.length)] : null;
     this.mats = [];
+    this.meshes = [];
     this.model.traverse(o => {
       if (!o.isMesh) return;
       o.material = o.material.clone();
       o.material.color.set(TINT[type]);
+      if (hide) {
+        o.material.map = hide.map;
+        o.material.alphaTest = 0.5; // the ragged ear notch
+        if (hide.rough) { o.material.roughnessMap = hide.rough; o.material.roughness = 1; }
+        o.material.metalnessMap = null;
+      }
       zombieHide(o.material, this.uniforms);
       this.mats.push(o.material);
+      this.meshes.push(o);
       // a fixed bound around the animated cow, so off-screen cows are culled
       o.frustumCulled = true;
       o.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0.9, 0.2), 2.3);
+      o.onBeforeRender = noteCamera;
     });
     this.bones = {};
     this.model.traverse(o => { if (o.isBone) this.bones[o.name] = { bone: o, rest: o.quaternion.clone() }; });
@@ -317,6 +386,7 @@ class BrahmanRig {
     this.uniforms.uDewlap.value.copy(dewlap);
     this.uniforms.uEars.value.set(earL, earR);
   }
+  shadows(on) { for (const m of this.meshes) m.castShadow = on; }
   dispose() { for (const m of this.mats) m.dispose(); }
 }
 
@@ -339,6 +409,7 @@ class SimpleRig {
   }
   flash(v) { this.mat.emissive.setRGB(v * 0.6, 0, 0); }
   soft() {}
+  shadows() {}
   dispose() { this.mat.dispose(); }
 }
 
@@ -449,6 +520,19 @@ export class CowView {
     root.position.set(x, (y || 0) + heightAt(x, z), z);
     root.rotation.y = yaw;
 
+    // level of detail: far cows drop their shadow, skip the soft-body wobble, and pose
+    // every other frame (their position still updates every frame, so nothing stutters)
+    const far2 = camSeen ? root.position.distanceToSquared(CAM) : 0;
+    const shadowOn = far2 < 45 * 45;
+    if (shadowOn !== this.shadowOn) { this.rig.shadows(shadowOn); this.shadowOn = shadowOn; }
+    this.near = far2 < 30 * 30;
+    if (far2 > 55 * 55 && state === this.state) {
+      this.skipDt = (this.skipDt || 0) + dt;
+      if ((this.tick = (this.tick || 0) + 1) % 2) return;
+      dt = this.skipDt;
+    }
+    this.skipDt = 0;
+
     // state crossfade
     if (state !== this.state) { this.prevState = this.state; this.state = state; this.stateT = 0; if (state === 1) this.attackT = 0.4 * this.attackPeriod(); }
     this.stateT += dt;
@@ -496,6 +580,10 @@ export class CowView {
       rig.set(`leg_${LEGS[l][0]}_lo`, P[LEG + l * 2 + 1]);
     }
 
+    this.flashV = Math.max(0, this.flashV - dt * 6);
+    rig.flash(this.flashV);
+    if (!this.near) return;
+
     // soft tissue: the hump and dewlap lag behind body bounce and sway, ears flick
     const ay = (P[BY] - this.prevBody[0]) / Math.max(dt, 1e-3), ar = (P[ROLL] - this.prevBody[1]) / Math.max(dt, 1e-3);
     const accY = (ay - this.prevBodyV[0]) / Math.max(dt, 1e-3), accR = (ar - this.prevBodyV[1]) / Math.max(dt, 1e-3);
@@ -512,9 +600,6 @@ export class CowView {
     const droop = -0.15 * this.w[2]; // ears go limp in death
     const eL = this.ears[0].step(dt, droop + accY * 0.0008), eR = this.ears[1].step(dt, droop + accY * 0.0008);
     rig.soft(tmpHump.set(hx, hy, 0), tmpDew.set(dx, dy, dy * 0.3), eL, eR);
-
-    this.flashV = Math.max(0, this.flashV - dt * 6);
-    rig.flash(this.flashV);
   }
 
   // Advance the stride cycle at a cadence that matches the ground speed.

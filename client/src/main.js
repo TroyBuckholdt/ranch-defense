@@ -53,13 +53,15 @@ setAnisotropy(Math.min(8, renderer.capabilities.getMaxAnisotropy()));
 
 $('play').disabled = true;
 $('menu-status').textContent = 'Waking the herd...';
-await Promise.all([loadCowAsset(), loadDogAssets()]);
+await Promise.all([loadCowAsset(renderer), loadDogAssets()]);
 const world = await buildWorld(renderer, Q, (msg) => { $('menu-status').textContent = msg; });
 $('menu-status').textContent = '';
 $('play').disabled = false;
 const scene = world.scene;
 const camera = new THREE.PerspectiveCamera(74, innerWidth / innerHeight, 0.03, 1500);
 scene.add(camera);
+// compile the cow shader now, so the first wave doesn't hitch when the herd appears
+{ const warm = new CowView(-1, 'walker', scene); renderer.compile(scene, camera); warm.dispose(); }
 
 // flashlight (kept in the scene always; toggled by intensity to avoid shader recompiles)
 const flashlight = new THREE.SpotLight(0xfff1dc, 0, 40, 0.42, 0.45, 1.4);
@@ -81,8 +83,9 @@ const composer = new EffectComposer(renderer, rt);
 composer.addPass(new RenderPass(scene, camera));
 const sunPass = Q.rays ? new SunPass(Q.rays) : null;
 if (sunPass) composer.addPass(sunPass);
+let aoPass = null;
 if (Q.ao) {
-  const ao = new GTAOPass(scene, camera, innerWidth, innerHeight);
+  const ao = aoPass = new GTAOPass(scene, camera, innerWidth, innerHeight);
   ao.updateGtaoMaterial({ radius: 0.6, distanceExponent: 1.5, thickness: 1.2, scale: 1.0 });
   ao.blendIntensity = 0.85;
   // objects placed by custom vertex code (the travelling grass) can't go through AO's
@@ -144,6 +147,33 @@ addEventListener('resize', () => {
   grade.uniforms.uTexel.value.set(1 / (innerWidth * renderer.getPixelRatio()), 1 / (innerHeight * renderer.getPixelRatio()));
 });
 grade.uniforms.uTexel.value.set(1 / (innerWidth * renderer.getPixelRatio()), 1 / (innerHeight * renderer.getPixelRatio()));
+
+// ---------------------------------------------------------------- adaptive quality
+// Keeps the frame rate smooth on weaker GPUs: when frames run long it steps down render
+// resolution and the heaviest effects (AO, light shafts), and steps back up once frames
+// are steady again, waiting longer each time a step up didn't hold.
+const AQ_STEPS = [
+  { s: 1 }, { s: 0.87 }, { s: 0.75 }, { s: 0.75, ao: false }, { s: 0.65, ao: false },
+  { s: 0.65, ao: false, rays: false }, { s: 0.55, ao: false, rays: false },
+];
+const aq = { level: 0, avg: 1 / 60, cool: 3, steady: 0, upWait: 6, base: renderer.getPixelRatio(), off: new URLSearchParams(location.search).get('aq') === '0' };
+function adaptQuality(raw) {
+  if (aq.off || raw > 0.25) return; // tab was hidden or a hitch: ignore
+  aq.avg += (raw - aq.avg) * 0.08;
+  aq.cool -= raw;
+  aq.steady = aq.avg < 1 / 55 ? aq.steady + raw : 0;
+  let next = aq.level;
+  if (aq.cool <= 0 && aq.avg > 1 / 48 && aq.level < AQ_STEPS.length - 1) next++;
+  else if (aq.level > 0 && aq.steady > aq.upWait) { next--; aq.upWait = Math.min(120, aq.upWait * 2); }
+  if (next === aq.level) return;
+  aq.level = next; aq.cool = 1.5; aq.steady = 0;
+  const st = AQ_STEPS[next], pr = aq.base * st.s;
+  renderer.setPixelRatio(pr);
+  composer.setPixelRatio(pr);
+  if (aoPass) aoPass.enabled = st.ao !== false;
+  if (sunPass) sunPass.enabled = st.rays !== false;
+  grade.uniforms.uTexel.value.set(1 / (innerWidth * pr), 1 / (innerHeight * pr));
+}
 
 // ---------------------------------------------------------------- game state
 const audio = new Audio();
@@ -612,7 +642,9 @@ let elapsed = 0;
 function frame() {
   requestAnimationFrame(frame);
   clock.update();
-  const dt = Math.min(0.05, clock.getDelta());
+  const rawDt = clock.getDelta();
+  adaptQuality(rawDt);
+  const dt = Math.min(0.05, rawDt);
   elapsed += dt;
 
   if (playing) {
