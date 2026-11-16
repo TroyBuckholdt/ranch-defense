@@ -106,7 +106,10 @@ export class TouchControls {
     for (const el of root.querySelectorAll('.tbtn')) this.btn[el.dataset.act] = el;
     if (!canFullscreen() || isStandalone()) this.btn.full.classList.add('hidden');
     // iPhone in the Safari tab: explain how to get the whole screen
-    if (isIOS && !canFullscreen() && !isStandalone()) document.getElementById('ios-fs-hint')?.classList.remove('hidden');
+    if (isIOS && !canFullscreen() && !isStandalone()) {
+      document.getElementById('ios-fs-hint')?.classList.remove('hidden');
+      document.body.classList.add('ios-hint');
+    }
 
     const opt = { passive: false };
     root.addEventListener('touchstart', (e) => this.onStart(e), opt);
@@ -126,7 +129,11 @@ export class TouchControls {
       if (!this.visible || !this.wantFullscreen || isFullscreen() || e.target?.closest?.('.tb-full')) return;
       enterFullscreen();
     };
-    root.addEventListener(window.PointerEvent ? 'pointerup' : 'touchend', reclaim);
+    const upEvent = window.PointerEvent ? 'pointerup' : 'touchend';
+    root.addEventListener(upEvent, reclaim);
+    // in portrait the "turn sideways" cover takes the taps: one there also takes back full
+    // screen, which on Android turns the game sideways by itself (orientation lock)
+    rot.addEventListener(upEvent, reclaim);
     const fsChange = () => { this.updateFullBtn(); this.relayoutSoon(); };
     document.addEventListener('fullscreenchange', fsChange);
     document.addEventListener('webkitfullscreenchange', fsChange);
