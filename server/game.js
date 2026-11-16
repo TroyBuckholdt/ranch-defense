@@ -179,7 +179,7 @@ export class Room {
       p.dead = true; p.hp = 0;
     }
     this.players.set(id, p);
-    this.broadcastEvent({ t: 'chat', msg: `${name} joined the ranch` });
+    this.broadcastEvent({ t: 'chat', k: '{0} joined the ranch', a: [name], msg: `${name} joined the ranch` });
     return p;
   }
 
@@ -188,7 +188,7 @@ export class Room {
     if (!p) return;
     this.leaveVehicle(p, false);
     this.players.delete(id);
-    this.broadcastEvent({ t: 'chat', msg: `${p.name} left` });
+    this.broadcastEvent({ t: 'chat', k: '{0} left the ranch', a: [p.name], msg: `${p.name} left` });
     if (this.players.size === 0) {
       clearInterval(this.interval);
       this.onEmpty(this.code);
@@ -270,10 +270,13 @@ export class Room {
         if (Math.abs(c.x - v.x) > 6 || Math.abs(c.z - v.z) > 6) continue;
         const out = pushOutOfVehicle(v, v.def, c.x, c.z, r);
         if (!out) continue;
-        if (driver && sp > 3 && this.time > (c.ramAt || 0)) {
+        if (driver && sp > 2.5 && this.time > (c.ramAt || 0)) {
           c.ramAt = this.time + 0.7;
-          this.damageCow(driver, c, sp * 32, false, [c.x, 1, c.z], [fs, 0.2, fc]);
-          this.sendTo(driver, { t: 'ram', k: def.boss ? 0 : def.heavy ? 0.35 : 0.82 });
+          // anything short of a bull dies under the wheels at more than a crawl; bulls and
+          // Rafael take a heavy hit and stop the truck
+          const dmg = def.heavy ? sp * (def.boss ? 45 : 70) : sp > 4.5 ? c.hp + 1 : sp * 40;
+          this.damageCow(driver, c, dmg, false, [c.x, 1, c.z], [fs, 0.2, fc]);
+          this.sendTo(driver, { t: 'ram', k: def.boss ? 0 : def.heavy ? 0.35 : c.state === 'dead' ? 0.9 : 0.8 });
           if (!def.heavy) { out[0] += fs * 1.2; out[1] += fc * 1.2; }
         }
         const [nx, nz] = resolveCircle(out[0], out[1], r);
@@ -597,14 +600,14 @@ export class Room {
           if (p.revive >= REVIVE_TIME) {
             p.downed = false; p.hp = 50; p.revive = 0; p.lastHurt = this.time;
             this.award(helper, 150);
-            this.broadcastEvent({ t: 'chat', msg: `${helper.name} revived ${p.name}` });
+            this.broadcastEvent({ t: 'chat', k: '{0} revived {1}', a: [helper.name, p.name], msg: `${helper.name} revived ${p.name}` });
           }
         } else {
           p.revive = Math.max(0, p.revive - dt * 2);
         }
         if (p.bleed <= 0 && p.downed) {
           p.downed = false; p.dead = true;
-          this.broadcastEvent({ t: 'chat', msg: `${p.name} bled out` });
+          this.broadcastEvent({ t: 'chat', k: '{0} bled out', a: [p.name], msg: `${p.name} bled out` });
         }
       } else if (!p.dead && p.hp < 100 && this.time - p.lastHurt > 4) {
         p.hp = Math.min(100, p.hp + 25 * dt);
@@ -908,7 +911,7 @@ export class Room {
     if (d.hp <= 0 && d.state !== 3) {
       d.state = 3; d.downT = 20;
       const name = DOG_TYPES.find((t, i) => i === d.id - 1)?.name || 'The little dog';
-      this.broadcastEvent({ t: 'chat', msg: `${name} got knocked down by a cow! Back up in 20 seconds` });
+      this.broadcastEvent({ t: 'chat', k: '{0} got knocked down by a cow! Back up in 20 seconds', a: [name], msg: `${name} got knocked down by a cow! Back up in 20 seconds` });
     }
   }
 
@@ -923,7 +926,7 @@ export class Room {
       this.leaveVehicle(p, true);
       if (others.length) {
         p.downed = true; p.bleed = BLEEDOUT; p.revive = 0;
-        this.broadcastEvent({ t: 'chat', msg: `${p.name} is down! Hold E next to them to revive` });
+        this.broadcastEvent({ t: 'chat', k: '{0} is down! Hold E next to them to revive', a: [p.name], msg: `${p.name} is down! Hold E next to them to revive` });
       } else {
         p.dead = true;
       }
