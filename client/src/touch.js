@@ -142,7 +142,7 @@ export class TouchControls {
   }
 
   onStart(e) {
-    e.preventDefault();
+    if (e.cancelable) e.preventDefault();
     for (const t of e.changedTouches) {
       const el = document.elementFromPoint(t.clientX, t.clientY)?.closest?.('.tbtn');
       if (el && this.root.contains(el)) { this.press(t, el.dataset.act); continue; }
@@ -162,7 +162,7 @@ export class TouchControls {
   }
 
   onMove(e) {
-    e.preventDefault();
+    if (e.cancelable) e.preventDefault();
     for (const t of e.changedTouches) {
       const s = this.touches.get(t.identifier);
       if (!s) continue;
@@ -179,7 +179,7 @@ export class TouchControls {
   }
 
   onEnd(e) {
-    e.preventDefault();
+    if (e.cancelable) e.preventDefault();
     for (const t of e.changedTouches) {
       const s = this.touches.get(t.identifier);
       if (!s) continue;
