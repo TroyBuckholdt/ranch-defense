@@ -15,7 +15,7 @@ import { gltfLoader, texURL, isLowDetail } from './gltf.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import {
   HOUSE, HOUSE_WALLS, ENTRIES, FURNITURE, STRUCTURES, HAY_BALES, TREES, UNDERGROWTH, FENCE_SEGMENTS,
-  FENCE_HEIGHT, YARD, MAX_BOARDS, VERANDA, HEDGES, PENS, WALL_BUYS, WEAPONS, heightAt, shoreZ, SAND_WIDTH, trailDist, solidsNear, ROAD, ROAD_HALF, roadDist, VEHICLES as TRUCKS,
+  FENCE_HEIGHT, YARD, MAX_BOARDS, VERANDA, HEDGES, PENS, WALL_BUYS, WEAPONS, heightAt, shoreZ, SAND_WIDTH, trailDist, solidsNear, ROAD, ROAD_HALF, roadDist, VEHICLES as TRUCKS, STATIONS, stationBox,
 } from '../../shared/world.js';
 import * as T from './textures.js';
 
@@ -314,7 +314,7 @@ export async function buildWorld(renderer, Q = { shadows: 2048, grass: 26000 }, 
   });
 
   return {
-    trucks,
+    trucks, machineModel: models.machines,
     scene, sun, sunDir: sunDir.raw, lightDir: sunDir.clone(), boards: house.boards, grilles: house.grilles,
     update(dt, t, camPos) { for (const u of updaters) u(dt, t, camPos); },
   };
@@ -416,6 +416,7 @@ async function loadAllModels() {
     diningChair: 'house/diningchair.glb', bar: 'house/bar.glb', xchair: 'house/xchair.glb',
     f150: 'vehicles/f150.glb', chevy: 'vehicles/chevy.glb', boat: 'vehicles/boat.glb',
     trees: 'trees/trees.glb',   // tools/blender/make_trees.py
+    machines: 'machines/machines.glb',   // tools/blender/make_machines.py
   };
   const out = {};
   await Promise.all(Object.entries(names).map(async ([k, p]) => { out[k] = await loadModel(p); }));
@@ -1576,6 +1577,7 @@ function buildGrass(COUNT) {
     else if (PENS.some(p => Math.abs(x - p.x) < p.w / 2 + 0.6 && Math.abs(z - p.z) < p.d / 2 + 0.6)) d = 0;
     else if (STRUCTURES.some(st => st.kind !== 'veranda' && Math.abs(x - st.x) < st.w / 2 + 0.4 && Math.abs(z - st.z) < st.d / 2 + 0.4)) d = 0;
     else if (Math.abs(x) < 1.8 && z > 12.8 && z < 16.4) d = 0;
+    else if (STATIONS.some(m => { const b = stationBox(m); return Math.abs(x - b.x) < b.w / 2 + 0.3 && Math.abs(z - b.z) < b.d / 2 + 0.3; })) d = 0;
     else if (d > 0 && solidsNear(x, z, 1).some(b => b.h > 0.3 && Math.abs(x - b.x) < b.w / 2 + 0.15 && Math.abs(z - b.z) < b.d / 2 + 0.15)) d = 0;
     const yd = Math.max(YARD.minX - x, x - YARD.maxX, YARD.minZ - z, z - YARD.maxZ);
     data[k] = H(heightAt(x, z)); data[k + 1] = H(d); data[k + 2] = H(1 - smooth(-3, 2, yd)); data[k + 3] = H(1);

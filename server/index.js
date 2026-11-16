@@ -96,6 +96,11 @@ wss.on('connection', (ws) => {
     else if (m.t === 'nade') room.onNade(player, m);
     else if (m.t === 'buy') room.onBuy(player, m);
     else if (m.t === 'veh') room.onVehicle(player, m);
+    else if (m.t === 'power') room.onPower(player, m);
+    else if (m.t === 'perk') room.onPerk(player, m);
+    else if (m.t === 'box') room.onBox(player, m);
+    else if (m.t === 'pap') room.onPap(player, m);
+    else if (m.t === 'trap') room.onTrap(player, m);
     else if (m.t === 'switch') { if (player.weapons[m.slot | 0]) player.cur = m.slot | 0; }
     else if (m.t === 'ping') send(JSON.stringify({ t: 'pong', c: m.c }));
   });

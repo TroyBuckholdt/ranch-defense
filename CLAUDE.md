@@ -31,6 +31,18 @@ Update it when something here changes or a new standing preference comes up.
 - **Road**: white caliche road from the driveway out of the south gate to the beach.
 - **Language**: English / Español buttons on the start screen (`client/src/i18n.js`; Spanish
   is keyed by the English text; add new strings there).
+- **Call of Duty Zombies systems** (all in `shared/world.js` under "Zombies machinery"):
+  - Power switch: a generator behind the house. Perks and El Taller do nothing until it's on.
+  - Five perk coolers (four per player, lost when you go down): Bull Hide (250 health),
+    Second Wind (faster revives; solo it gets you back up once), Quick Hands (reload),
+    Double Tequila (fire rate and damage), Mustang (speed).
+  - Mystery box (950): random gun, never one you hold. After a few uses it can give a toy
+    cow instead, refund you and move to another of four spots. A beam of light marks it.
+  - El Taller (5000): upgrades the gun in your hands (double damage, bigger magazine,
+    Spanish name, purple-and-gold sheen).
+  - Coconut cannon: box-only wonder weapon, lobs exploding coconuts.
+  - Electric fence trap (1000) across the south gate.
+  - Power-ups: max ammo, insta-kill, double points, nuke, carpenter, fire sale.
 - Phone support: touch controls, full screen, Low graphics preset with `*.lo.glb` models.
 - **Scenery**: trees and palms are Blender-built models instanced across the map
   (`tools/blender/make_trees.py` -> `models/trees/trees.glb`). The ground shader tints each
@@ -49,9 +61,11 @@ Update it when something here changes or a new standing preference comes up.
 ## Testing
 - `npx vite build`, then `PORT=3000 node server/index.js`.
 - Sim tests (no browser): `node scripts/simtest.js`, `dogtest.js`, `entrytest.js`,
-  `weapontest.js`, `bosstest.js` (rounds 10 and 20), `drivetest.js` (trucks and road).
+  `weapontest.js`, `bosstest.js` (rounds 10 and 20), `drivetest.js` (trucks and road),
+  `zombiestest.js` (power, perks, box, El Taller, trap, coconut cannon, carpenter).
 - Server test switches: `RD_START_WAVE=20` starts at a later round;
-  `RD_FIRST_WAVE_DELAY=3000` keeps the cows away while looking around.
+  `RD_FIRST_WAVE_DELAY=3000` keeps the cows away while looking around;
+  `RD_START_POINTS=20000` gives everyone points to try the machines.
 - Browser checks: Playwright + headless Chromium works but renders under 1 fps (software
   GL). Use `?q=low&aq=0`, long timeouts, and `window.__rd` (exposes net, me, scene, camera,
   truckViews, driving...). `window.__rdShot = { pos, look }` pins the menu camera for stills.
@@ -70,6 +84,9 @@ Update it when something here changes or a new standing preference comes up.
   (add `--simplify true --texture-size 512` for the `.lo.glb` phone version).
 - Do not name a scratch script `inspect.py` (it shadows a standard module and crashes bpy).
 - Cycles on CPU renders quick previews; use them to check a model before putting it in game.
+- `gltf-transform optimize` strips texture coordinates from materials with no texture. If the
+  game paints a texture on later (the perk labels), give it a placeholder texture in Blender.
+- `tools/blender/make_machines.py` builds the machines and the coconut cannon.
 - Every `foo.glb` needs a `foo.lo.glb` beside it: Low graphics loads that name instead.
 - A set of High-quality stills takes about 3 minutes each here; check on Low first.
 

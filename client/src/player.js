@@ -34,13 +34,13 @@ export class LocalPlayer {
 
   teleport(x, y, z) { this.pos.set(x, y, z); this.vel.set(0, 0, 0); }
 
-  update(dt, keys, { aiming, downed, canMove }) {
+  update(dt, keys, { aiming, downed, canMove, speedMul = 1 }) {
     let fwd = (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0);
     let side = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0);
     // analog stick (touch): axisX right, axisY down, each -1..1; a partial push walks slower
     if (keys.axisX || keys.axisY) { fwd = -keys.axisY || 0; side = keys.axisX || 0; }
     this.sprinting = !!keys.ShiftLeft && fwd > 0 && !aiming && !downed && canMove && !this.crouching;
-    let speed = downed ? 0 : this.sprinting ? 6.6 : this.crouching ? 2.2 : aiming ? 2.7 : 4.4;
+    let speed = (downed ? 0 : this.sprinting ? 6.6 * speedMul : this.crouching ? 2.2 : aiming ? 2.7 : 4.4) * (speedMul > 1 ? 1.08 : 1);
     if (!canMove) speed = 0;
 
     const sin = Math.sin(this.yaw), cos = Math.cos(this.yaw);
