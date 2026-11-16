@@ -7,7 +7,7 @@ import { GTAOPass } from 'three/examples/jsm/postprocessing/GTAOPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { SunPass, ViewmodelPass } from './post.js';
 import {
-  ENTRIES, MAX_BOARDS, COW_TYPE_LIST, WEAPON, WEAPONS, START_WEAPONS, WALL_BUYS, BUY_RANGE, MELEE, REPAIR_RANGE, raySolids, raySphere, cowHitSpheres, insideHouse, heightAt, shoreZ, SAND_WIDTH,
+  ENTRIES, HOUSE, MAX_BOARDS, COW_TYPE_LIST, WEAPON, WEAPONS, START_WEAPONS, WALL_BUYS, BUY_RANGE, MELEE, REPAIR_RANGE, raySolids, raySphere, cowHitSpheres, insideHouse, heightAt, shoreZ, SAND_WIDTH,
 } from '../../shared/world.js';
 import { buildWorld } from './world.js';
 import { CowView, loadCowAsset } from './cow.js';
@@ -225,6 +225,7 @@ function adaptQuality(raw) {
 
 // ---------------------------------------------------------------- game state
 const audio = new Audio();
+audio.preload(); // sound effects download in the background now the ranch is in
 const fx = new FX(scene);
 const weapon = new Weapon(camera, vmScene, world.lightDir);
 let vmLight = 1;
@@ -258,7 +259,7 @@ let lookDX = 0, lookDY = 0;
 let hurtT = 0, shake = 0;
 let boardsShown = ENTRIES.map(() => MAX_BOARDS);
 let lastStateSend = 0;
-let mooTimer = 2, heartbeatT = 0;
+let mooTimer = 2, heartbeatT = 0, stepDist = 0;
 const keys = {};
 const tmpV = new THREE.Vector3(), tmpV2 = new THREE.Vector3();
 
@@ -548,14 +549,17 @@ function onEvent(m) {
     case 'wave':
       banner(`WAVE ${m.wave}`, `${m.count} zombie cows are coming for the house`);
       audio.stinger(false);
+      audio.music(true);
       break;
     case 'waveclear':
       banner(`WAVE ${m.wave} SURVIVED`, 'Fix the barricades. Hold E at a window.');
       audio.stinger(true);
+      audio.music(false);
       break;
     case 'gameover':
       banner('THE HERD GOT IN', `You held the ranch for ${m.wave - 1} wave${m.wave === 2 ? '' : 's'}. Restarting...`, 8000);
       audio.stinger(false);
+      audio.music(false);
       break;
     case 'restart':
       fx.clearPools();
@@ -626,6 +630,7 @@ function updateHud(dt) {
   const s = net.latest;
   if (!s || !mySnap) return;
   $('wave-num').textContent = s.wave;
+  if ((s.phase === 'wave') !== !!audio.musicOn) audio.music(s.phase === 'wave'); // e.g. joined mid-wave
   $('wave-sub').textContent = s.phase === 'intermission' ? `Next wave in ${s.timer}s`
     : s.phase === 'wave' ? `${s.left} cow${s.left === 1 ? '' : 's'} left` : 'Game over';
   $('hp-fill').style.width = `${mySnap.hp}%`;
@@ -756,7 +761,18 @@ function stepLocal(dt) {
 
   const sens = 0.0022 * (aiming ? 0.6 : 1);
   if (!dead) me.look(lookDX, lookDY, sens);
+  const px = me.pos.x, pz = me.pos.z;
   me.update(dt, keys, { aiming, downed, canMove: active() && !dead });
+  // footsteps: one every stride while on the ground (tile indoors and on the porch, grass outside)
+  if (me.grounded && !downed && !dead) {
+    stepDist += Math.hypot(me.pos.x - px, me.pos.z - pz);
+    const stride = me.sprinting ? 1.45 : me.crouching ? 0.7 : 1.0;
+    if (stepDist > stride) {
+      stepDist = 0;
+      const tile = insideHouse(me.pos.x, me.pos.z) || (Math.abs(me.pos.x - HOUSE.x) < HOUSE.w / 2 + 1 && me.pos.z > HOUSE.z && me.pos.z < HOUSE.z + HOUSE.d / 2 + 4.8);
+      if (!me.crouching) audio.step(tile);
+    }
+  } else stepDist = 0.6;
   if (keys.KeyC || keys.ControlLeft) { if (!me.crouchHeld) me.startCrouch(); me.crouchHeld = true; } else { me.crouchHeld = false; me.crouching = false; }
 
   // weapon + firing
@@ -811,6 +827,7 @@ function stepLocal(dt) {
   lookDX = lookDY = 0;
 
   audio.setListener(camera.position, tmpV.set(0, 0, -1).applyQuaternion(camera.quaternion));
+  audio.setEnv(insideHouse(me.pos.x, me.pos.z), shoreZ(me.pos.x) - me.pos.z);
 
   // low health heartbeat
   heartbeatT -= dt;
@@ -915,4 +932,4 @@ function ambientSounds(dt) {
 frame();
 
 // expose a little for automated testing / debugging
-window.__rd = { net, me, scene, camera, cowViews, renderer, CowView, DogView, Avatar, weapon, world, vmScene };
+window.__rd = { net, me, scene, camera, cowViews, renderer, CowView, DogView, Avatar, weapon, world, vmScene, audio };

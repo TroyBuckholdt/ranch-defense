@@ -14,7 +14,7 @@ import { gltfLoader, texURL, isLowDetail } from './gltf.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import {
   HOUSE, HOUSE_WALLS, ENTRIES, FURNITURE, STRUCTURES, HAY_BALES, TREES, UNDERGROWTH, FENCE_SEGMENTS,
-  FENCE_HEIGHT, MAX_BOARDS, VERANDA, HEDGES, PENS, WALL_BUYS, WEAPONS, heightAt, shoreZ, SAND_WIDTH, trailDist, solidsNear,
+  FENCE_HEIGHT, YARD, MAX_BOARDS, VERANDA, HEDGES, PENS, WALL_BUYS, WEAPONS, heightAt, shoreZ, SAND_WIDTH, trailDist, solidsNear,
 } from '../../shared/world.js';
 import * as T from './textures.js';
 
@@ -457,6 +457,11 @@ function buildTerrain() {
       roughnessFactor = mix(roughnessFactor, 0.22, (1.0 - smoothstep(0.0, 0.45, vWY)) * vSplat.z);`).replace('#include <map_fragment>', `
       vec2 tuv = vWXZ / 3.0;
       vec4 cg = texture2D(map, tuv) * vec4(0.82, 1.0, 0.62, 1.0);
+      // inside the yard fence: a mowed, watered lawn with faint mowing stripes
+      float yd = max(max(${YARD.minX.toFixed(1)} - vWXZ.x, vWXZ.x - ${YARD.maxX.toFixed(1)}), max(${YARD.minZ.toFixed(1)} - vWXZ.y, vWXZ.y - ${YARD.maxZ.toFixed(1)}));
+      float lawn = 1.0 - smoothstep(-3.0, 2.0, yd);
+      float stripe = smoothstep(0.35, 0.65, abs(fract(vWXZ.x / 7.0) - 0.5) * 2.0);
+      cg.rgb = mix(cg.rgb, texture2D(map, tuv * 1.7).rgb * vec3(0.6, 0.9, 0.4) * mix(0.93, 1.07, stripe), lawn);
       vec4 cj = texture2D(tJungle, tuv * 0.8) * vec4(0.8, 0.85, 0.7, 1.0);
       vec4 cs = texture2D(tSand, tuv * 0.9) * vec4(1.08, 1.02, 0.92, 1.0);
       vec4 ct = texture2D(tTrail, tuv);
@@ -1564,7 +1569,8 @@ function buildGrass(COUNT) {
     else if (STRUCTURES.some(st => st.kind !== 'veranda' && Math.abs(x - st.x) < st.w / 2 + 0.4 && Math.abs(z - st.z) < st.d / 2 + 0.4)) d = 0;
     else if (Math.abs(x) < 1.8 && z > 12.8 && z < 16.4) d = 0;
     else if (d > 0 && solidsNear(x, z, 1).some(b => b.h > 0.3 && Math.abs(x - b.x) < b.w / 2 + 0.15 && Math.abs(z - b.z) < b.d / 2 + 0.15)) d = 0;
-    data[k] = H(heightAt(x, z)); data[k + 1] = H(d); data[k + 2] = 0; data[k + 3] = H(1);
+    const yd = Math.max(YARD.minX - x, x - YARD.maxX, YARD.minZ - z, z - YARD.maxZ);
+    data[k] = H(heightAt(x, z)); data[k + 1] = H(d); data[k + 2] = H(1 - smooth(-3, 2, yd)); data[k + 3] = H(1);
   }
   const tex = new THREE.DataTexture(data, N, N, THREE.RGBAFormat, THREE.HalfFloatType);
   tex.magFilter = tex.minFilter = THREE.LinearFilter;
@@ -1590,7 +1596,7 @@ function buildGrass(COUNT) {
     Object.assign(sh.uniforms, uniforms);
     sh.vertexShader = `uniform float uTime; uniform sampler2D uTerrain;
 attribute vec2 aOffset; attribute vec3 aRand;
-varying float vGrassH; varying vec3 vGrassC;
+varying float vGrassH; varying vec3 vGrassC; varying float vLawn;
 ` + sh.vertexShader.replace('#include <begin_vertex>', `
       // nearest repetition of this tuft's world spot to the camera
       vec2 wxz = aOffset + ${T.toFixed(2)} * floor((cameraPosition.xz - aOffset) / ${T.toFixed(2)} + 0.5);
@@ -1599,17 +1605,20 @@ varying float vGrassH; varying vec3 vGrassC;
       float sc = step(aRand.x, tv.g) * (1.0 - smoothstep(${(R * 0.62).toFixed(1)}, ${R.toFixed(1)}, dcam)) * (0.7 + aRand.y * 0.7);
       float ang = aRand.z * 6.2832; float ca = cos(ang), sa = sin(ang);
       vec3 transformed = position * sc;
-      transformed.y *= 0.75 + aRand.x * 0.7;
+      // the yard is mowed short; the pasture beyond the fence grows long
+      transformed.y *= (0.75 + aRand.x * 0.7) * mix(1.0, 0.3, tv.b);
+      transformed.xz *= mix(1.0, 1.35, tv.b);
       transformed.xz = vec2(ca * transformed.x - sa * transformed.z, sa * transformed.x + ca * transformed.z);
       float sway = sin(uTime * 1.7 + wxz.x * 0.35 + wxz.y * 0.2) * 0.5 + sin(uTime * 3.1 + wxz.x * 0.9) * 0.2;
       transformed.x += sway * transformed.y * transformed.y * 0.9;
       transformed.z += sway * transformed.y * transformed.y * 0.3;
       transformed += vec3(wxz.x, tv.r - 0.02, wxz.y);
-      vGrassH = uv.y;
-      vGrassC = mix(vec3(0.62, 0.78, 0.36), vec3(0.95, 0.9, 0.5), aRand.y * aRand.y) * (0.75 + aRand.z * 0.4);`);
-    sh.fragmentShader = 'varying float vGrassH; varying vec3 vGrassC;\n' + sh.fragmentShader.replace('#include <color_fragment>', `
+      vGrassH = uv.y; vLawn = tv.b;
+      vGrassC = mix(vec3(0.62, 0.78, 0.36), vec3(0.95, 0.9, 0.5), aRand.y * aRand.y) * (0.75 + aRand.z * 0.4);
+      vGrassC = mix(vGrassC, vec3(0.5, 0.8, 0.34) * (0.8 + aRand.z * 0.3), tv.b);`);
+    sh.fragmentShader = 'varying float vGrassH; varying vec3 vGrassC; varying float vLawn;\n' + sh.fragmentShader.replace('#include <color_fragment>', `
       #include <color_fragment>
-      diffuseColor.rgb *= vGrassC * mix(0.36, 1.12, vGrassH);
+      diffuseColor.rgb *= vGrassC * mix(mix(0.36, 0.72, vLawn), 1.12, vGrassH);
       diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(1.25, 1.12, 0.7), smoothstep(0.7, 1.0, vGrassH) * 0.5);`);
   };
   const mesh = new THREE.Mesh(geo, mat);

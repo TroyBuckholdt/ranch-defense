@@ -1,9 +1,108 @@
-// All sound is synthesized with WebAudio so there are no files to download yet.
-// Real recordings (the actual cows on the ranch!) can be dropped in later.
+// Game audio. Recorded-style sound effects (assets/sfx: guns, reloads, zombie moos, the dogs,
+// footsteps, the ranch and the sea) load in the background after the ranch is ready; until a
+// clip has arrived, or if one fails, the synthesized WebAudio version below plays instead.
+const SFX = ['rifle', 'revolver', 'shotgun', 'hunting', 'lmg', 'magout', 'magin', 'bolt', 'shell', 'pump', 'dry',
+  'moo1', 'moo2', 'moorun', 'moobull', 'barkbig', 'barklittle', 'growl', 'yelp', 'impact', 'swish', 'explosion',
+  'boardtear', 'hammer', 'bang', 'cash', 'wave', 'step_grass', 'step_tile', 'amb_day', 'amb_sea', 'music_wave'];
+
 export class Audio {
   constructor() {
     this.ctx = null;
     this.listenerPos = [0, 0, 0];
+    this.raw = new Map();  // name -> ArrayBuffer (downloaded, not yet decoded)
+    this.buf = new Map();  // name -> AudioBuffer
+    this.env = { indoor: false, sea: 0 };
+    this.musicLevel = 0.32;
+  }
+
+  // download the clips (no AudioContext needed yet); decoded once start() has one
+  preload() {
+    if (this.preloading) return;
+    this.preloading = true;
+    for (const n of SFX) {
+      fetch(`/assets/sfx/${n}.mp3`).then(r => (r.ok ? r.arrayBuffer() : null)).then((ab) => {
+        if (!ab) return;
+        this.raw.set(n, ab);
+        if (this.ctx) this.decode(n);
+      }).catch(() => {});
+    }
+  }
+
+  decode(n) {
+    const ab = this.raw.get(n);
+    if (!ab) return;
+    this.raw.delete(n);
+    const done = (b) => {
+      this.buf.set(n, b);
+      if (n.startsWith('amb_')) this.startBeds();
+      if (n === 'music_wave' && this.musicOn) this.music(true);
+    };
+    try {
+      const p = this.ctx.decodeAudioData(ab, done, () => {});
+      if (p && p.catch) p.catch(() => {});
+    } catch {}
+  }
+
+  // play a clip; returns null if it isn't loaded so the caller can fall back to synthesis
+  play(name, { pos = null, gain = 1, rate = 1, ref = 4, start = 0, verb = false, vary = 0.04 } = {}) {
+    const b = this.buf.get(name);
+    if (!this.ctx || !b) return null;
+    const src = this.ctx.createBufferSource();
+    src.buffer = b;
+    src.playbackRate.value = rate * (1 + (Math.random() * 2 - 1) * vary);
+    const g = this.ctx.createGain();
+    g.gain.value = gain;
+    src.connect(g).connect(this.out(pos, ref));
+    if (verb) g.connect(this.verb);
+    src.start(this.ctx.currentTime + start);
+    return src;
+  }
+
+  // looping ranch and surf beds; the surf swells near the beach, everything is muffled indoors
+  startBeds() {
+    if (this.beds || !this.buf.has('amb_day') || !this.buf.has('amb_sea')) return;
+    const ctx = this.ctx;
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 18000;
+    lp.connect(this.master);
+    const bed = (name, gain) => {
+      const src = ctx.createBufferSource(); src.buffer = this.buf.get(name); src.loop = true;
+      src.loopStart = 0.03; src.loopEnd = src.buffer.duration - 0.03;
+      const g = ctx.createGain(); g.gain.value = gain;
+      src.connect(g).connect(lp); src.start(ctx.currentTime, Math.random() * src.buffer.duration * 0.9);
+      return g;
+    };
+    this.beds = { lp, day: bed('amb_day', 0.55), sea: bed('amb_sea', 0) };
+    if (this.synthAmb) this.synthAmb.gain.setTargetAtTime(0, ctx.currentTime, 1.5);
+  }
+
+  // called every frame: indoors muffles the outside, the surf follows distance to the shore
+  setEnv(indoor, shoreDist) {
+    if (!this.beds) return;
+    const t = this.ctx.currentTime;
+    this.beds.lp.frequency.setTargetAtTime(indoor ? 900 : 18000, t, 0.25);
+    const sea = Math.max(0, Math.min(1, 1 - (shoreDist - 6) / 70));
+    this.beds.sea.gain.setTargetAtTime(0.05 + sea * 0.85, t, 0.5);
+    this.beds.day.gain.setTargetAtTime(indoor ? 0.4 : 0.55 - sea * 0.25, t, 0.5);
+  }
+
+  // wave music: fades in when a wave starts, out when it's cleared (keeps its place in the loop)
+  music(on) {
+    this.musicOn = on;
+    if (!this.ctx) return;
+    const b = this.buf.get('music_wave');
+    if (!b) return; // still downloading: decode() starts it if a wave is on by then
+    if (!this.musicGain) {
+      this.musicGain = this.ctx.createGain(); this.musicGain.gain.value = 0;
+      this.musicGain.connect(this.master);
+      const src = this.ctx.createBufferSource(); src.buffer = b; src.loop = true;
+      src.connect(this.musicGain); src.start();
+    }
+    this.musicGain.gain.setTargetAtTime(on ? this.musicLevel : 0, this.ctx.currentTime, on ? 1.2 : 2.5);
+  }
+
+  step(tile, pos = null) {
+    if (!this.ctx) return;
+    this.play(tile ? 'step_tile' : 'step_grass', { pos, gain: tile ? 0.22 : 0.28, rate: 1, vary: 0.12, ref: 2 });
   }
 
   // must be called from a user gesture (the PLAY click)
@@ -24,6 +123,8 @@ export class Audio {
     this.verb.connect(this.verbGain).connect(this.master);
     this.noiseBuf = this.makeNoise(2);
     this.ambience();
+    for (const n of [...this.raw.keys()]) this.decode(n);
+    if (ctx.state === 'suspended') ctx.resume().catch(() => {});
   }
 
   makeNoise(sec) {
@@ -103,6 +204,12 @@ export class Audio {
 
   gunshot(pos = null, indoor = true, w = 'rifle') {
     if (!this.ctx) return;
+    const own = !pos;
+    if (this.play(this.buf.has(w) ? w : 'rifle', { pos, gain: own ? 0.95 : 1.2, ref: 10, verb: indoor, vary: 0.035 })) {
+      // a little extra low-end punch for your own gun
+      if (own) this.tone(this.master, { dur: 0.14, type: 'sine', freq: w === 'shotgun' ? 70 : 110, freqEnd: 40, gain: 0.55 });
+      return;
+    }
     const out = this.out(pos, 8);
     const P = { rifle: [1, 1, 150], revolver: [1.2, 1.3, 120], shotgun: [0.8, 2.0, 70], hunting: [1.4, 2.2, 90], lmg: [1, 1.2, 130] }[w] || [1, 1, 150];
     const crack = this.noise(out, { dur: 0.09 * P[0], type: 'highpass', freq: 1800, gain: 1.1 * P[0] });
@@ -115,11 +222,23 @@ export class Audio {
 
   click() {
     if (!this.ctx) return;
+    if (this.play('dry', { gain: 0.6, vary: 0.08 })) return;
     this.noise(this.master, { dur: 0.03, type: 'highpass', freq: 3500, gain: 0.5 });
   }
 
   reload(w = 'rifle') {
     if (!this.ctx) return;
+    if (this.buf.has('magin')) {
+      if (w === 'shotgun') {
+        for (let i = 0; i < 5; i++) this.play('shell', { gain: 0.55, start: 0.3 + i * 0.45, vary: 0.06 });
+        this.play('pump', { gain: 0.8, start: 2.6 });
+        return;
+      }
+      this.play('magout', { gain: 0.6, start: 0.25 });
+      this.play('magin', { gain: 0.7, start: 1.1 });
+      this.play('bolt', { gain: 0.6, start: 1.55 });
+      return;
+    }
     if (w === 'shotgun') { // shells one at a time, then a pump
       for (let i = 0; i < 5; i++) this.noise(this.master, { dur: 0.05, type: 'bandpass', freq: 1800, q: 4, gain: 0.6, start: 0.3 + i * 0.45 });
       this.noise(this.master, { dur: 0.12, type: 'bandpass', freq: 900, q: 2, gain: 0.9, start: 2.6 });
@@ -135,6 +254,10 @@ export class Audio {
   impact(pos, head) {
     if (!this.ctx) return;
     const out = this.out(pos, 3);
+    if (this.play('impact', { pos, gain: 0.7, ref: 3, vary: 0.1 })) {
+      if (head) this.noise(out, { dur: 0.08, type: 'bandpass', freq: 3000, q: 2, gain: 0.7 });
+      return;
+    }
     this.noise(out, { dur: 0.12, type: 'lowpass', freq: 900, gain: 1.2 });
     this.tone(out, { dur: 0.1, freq: 120, freqEnd: 60, gain: 0.6 });
     if (head) this.noise(out, { dur: 0.08, type: 'bandpass', freq: 3000, q: 2, gain: 0.9 });
@@ -148,6 +271,8 @@ export class Audio {
   // zombie moo: a sawtooth through vowel-ish formants with a sick wobble
   moo(pos, type = 'walker') {
     if (!this.ctx) return;
+    const clip = type === 'bull' ? 'moobull' : type === 'runner' ? 'moorun' : Math.random() < 0.5 ? 'moo1' : 'moo2';
+    if (this.play(clip, { pos, gain: type === 'bull' ? 1.1 : 0.8, ref: type === 'bull' ? 8 : 5, rate: type === 'walker' ? 0.92 + Math.random() * 0.16 : 1, vary: 0.05 })) return;
     const ctx = this.ctx, t = ctx.currentTime;
     const base = type === 'bull' ? 55 : type === 'runner' ? 120 : 85 + Math.random() * 25;
     const dur = type === 'runner' ? 0.6 : 1.1 + Math.random() * 0.7;
@@ -177,6 +302,11 @@ export class Audio {
   // dog bark: a short voiced burst through a mouth-like formant; little dog is higher
   bark(pos, little = false, growl = false) {
     if (!this.ctx) return;
+    if (growl ? this.play('growl', { pos, gain: 0.6, ref: 4, rate: little ? 1.3 : 1 })
+      : this.play(little ? 'barklittle' : 'barkbig', { pos, gain: 0.75, ref: little ? 3 : 5, vary: 0.08 })) {
+      if (!growl && Math.random() < 0.5) this.play(little ? 'barklittle' : 'barkbig', { pos, gain: 0.65, ref: little ? 3 : 5, start: 0.3 + Math.random() * 0.1, vary: 0.08 });
+      return;
+    }
     const out = this.out(pos, little ? 3 : 5);
     const base = little ? 520 : 260;
     const n = growl ? 1 : 1 + Math.floor(Math.random() * 2);
@@ -190,18 +320,21 @@ export class Audio {
 
   yelp(pos, little = false) {
     if (!this.ctx) return;
+    if (this.play('yelp', { pos, gain: 0.6, ref: 4, rate: little ? 1.2 : 0.95 })) return;
     const out = this.out(pos, 4);
     this.tone(out, { dur: 0.25, type: 'triangle', freq: little ? 900 : 600, freqEnd: little ? 1500 : 1000, gain: 0.3 });
   }
 
   swish(pos = null) {
     if (!this.ctx) return;
+    if (this.play('swish', { pos, gain: 0.5, ref: 3, vary: 0.1 })) return;
     this.noise(this.out(pos, 3), { dur: 0.22, type: 'bandpass', freq: 2500, freqEnd: 600, q: 1.5, gain: 0.5, attack: 0.04 });
   }
 
   explosion(pos) {
     if (!this.ctx) return;
     const out = this.out(pos, 15);
+    if (this.play('explosion', { pos, gain: 1.4, ref: 15 })) { this.tone(out, { dur: 0.8, freq: 60, freqEnd: 25, gain: 1.2 }); return; }
     this.noise(out, { dur: 1.6, type: 'lowpass', freq: 1200, freqEnd: 80, gain: 2.2, attack: 0.005 });
     this.tone(out, { dur: 0.8, freq: 70, freqEnd: 25, gain: 2.0 });
     this.noise(out, { dur: 0.15, type: 'highpass', freq: 2500, gain: 1.0 });
@@ -209,6 +342,7 @@ export class Audio {
 
   cash() {
     if (!this.ctx) return;
+    if (this.play('cash', { gain: 0.35, vary: 0.02 })) return;
     [880, 1320, 1760].forEach((f, i) => this.tone(this.master, { dur: 0.12, type: 'triangle', freq: f, gain: 0.12, start: i * 0.06 }));
   }
 
@@ -220,6 +354,7 @@ export class Audio {
 
   boardTear(pos) {
     if (!this.ctx) return;
+    if (this.play('boardtear', { pos, gain: 1.0, ref: 5, vary: 0.08 })) return;
     const out = this.out(pos, 5);
     this.noise(out, { dur: 0.25, type: 'bandpass', freq: 1200, q: 1.5, gain: 1.4 }); // crack
     this.noise(out, { dur: 0.4, type: 'lowpass', freq: 400, gain: 1.0, start: 0.05 }); // thud
@@ -228,6 +363,7 @@ export class Audio {
 
   hammer(pos) {
     if (!this.ctx) return;
+    if (this.play('hammer', { pos, gain: 0.6, ref: 3, vary: 0.05 })) return;
     const out = this.out(pos, 3);
     for (let i = 0; i < 3; i++) {
       this.tone(out, { dur: 0.08, type: 'triangle', freq: 1800 + Math.random() * 400, gain: 0.35, start: i * 0.13 });
@@ -237,6 +373,7 @@ export class Audio {
 
   bang(pos) { // cows thumping on walls
     if (!this.ctx) return;
+    if (this.play('bang', { pos, gain: 0.9, ref: 5, vary: 0.1 })) return;
     const out = this.out(pos, 5);
     this.noise(out, { dur: 0.3, type: 'lowpass', freq: 250, gain: 1.4 });
     this.tone(out, { dur: 0.25, freq: 70, freqEnd: 40, gain: 0.8 });
@@ -256,6 +393,7 @@ export class Audio {
 
   stinger(good) { // wave start / wave clear
     if (!this.ctx) return;
+    if (!good && this.play('wave', { gain: 0.8, vary: 0 })) return;
     const notes = good ? [392, 494, 587] : [110, 104, 98];
     notes.forEach((f, i) => this.tone(this.master, { dur: good ? 0.5 : 1.8, type: good ? 'triangle' : 'sawtooth', freq: f, gain: good ? 0.12 : 0.1, start: i * (good ? 0.12 : 0.02), attack: 0.02 }));
     if (!good) this.noise(this.master, { dur: 2.2, type: 'lowpass', freq: 180, gain: 0.5, attack: 0.3 });
@@ -263,6 +401,8 @@ export class Audio {
 
   ambience() {
     const ctx = this.ctx;
+    const amb = this.synthAmb = ctx.createGain();
+    amb.connect(this.master);
     // wind
     const src = ctx.createBufferSource(); src.buffer = this.noiseBuf; src.loop = true;
     const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 420;
@@ -270,12 +410,12 @@ export class Audio {
     const lfo = ctx.createOscillator(); lfo.frequency.value = 0.09;
     const lg = ctx.createGain(); lg.gain.value = 0.04;
     lfo.connect(lg).connect(g.gain);
-    src.connect(f).connect(g).connect(this.master);
+    src.connect(f).connect(g).connect(amb);
     src.start(); lfo.start();
-    // crickets
+    // crickets (until the recorded ranch bed takes over)
     const chirp = () => {
-      if (!this.ctx) return;
-      for (let i = 0; i < 3; i++) this.tone(this.master, { dur: 0.04, type: 'sine', freq: 4200 + Math.random() * 300, gain: 0.012, start: i * 0.07 });
+      if (!this.ctx || this.beds) return;
+      for (let i = 0; i < 3; i++) this.tone(amb, { dur: 0.04, type: 'sine', freq: 4200 + Math.random() * 300, gain: 0.012, start: i * 0.07 });
       setTimeout(chirp, 400 + Math.random() * 1600);
     };
     chirp();
