@@ -307,6 +307,57 @@ export class Audio {
     this.tone(out, { dur: 0.25, type: 'triangle', freq: little ? 900 : 600, freqEnd: little ? 1500 : 1000, gain: 0.3 });
   }
 
+  // Rafael's voice: the browser's own Spanish speech, pitched down and slowed to a drunk
+  // slur. Not every device has a Spanish voice; the subtitle is always shown either way.
+  say(text, volume = 1, slow = false) {
+    const synth = window.speechSynthesis;
+    if (!synth || !window.SpeechSynthesisUtterance) return;
+    try {
+      const voices = synth.getVoices();
+      const voice = voices.find(v => /^es[-_]MX/i.test(v.lang)) || voices.find(v => /^es[-_](US|419)/i.test(v.lang)) || voices.find(v => /^es/i.test(v.lang));
+      synth.cancel(); // he interrupts himself
+      const u = new SpeechSynthesisUtterance(text.replace(/[¡¿]/g, ''));
+      u.lang = voice?.lang || 'es-MX';
+      if (voice) u.voice = voice;
+      u.pitch = 0.25; u.rate = slow ? 0.6 : 0.82; u.volume = Math.max(0, Math.min(1, volume));
+      synth.speak(u);
+    } catch {}
+  }
+
+  // heavy footfall / body hitting the ground (the boss)
+  thud(pos, power = 1) {
+    if (!this.ctx) return;
+    const out = this.out(pos, 14);
+    this.tone(out, { dur: 0.35, freq: 70, freqEnd: 28, gain: 1.1 * power, attack: 0.004 });
+    this.noise(out, { dur: 0.22, type: 'lowpass', freq: 260, freqEnd: 60, gain: 0.9 * power, attack: 0.004 });
+  }
+
+  // a bottle bursting on the ground
+  smash(pos) {
+    if (!this.ctx) return;
+    const out = this.out(pos, 8);
+    this.noise(out, { dur: 0.09, type: 'highpass', freq: 3200, gain: 1.3, attack: 0.001 });
+    this.noise(out, { dur: 0.5, type: 'bandpass', freq: 6200, q: 2.5, gain: 0.7, attack: 0.002, start: 0.02 });
+    for (let i = 0; i < 5; i++) this.tone(out, { dur: 0.12 + Math.random() * 0.2, type: 'triangle', freq: 2400 + Math.random() * 4200, gain: 0.14, start: 0.03 + Math.random() * 0.25 });
+  }
+
+  // the giant's slurred bellow: the dog growl and the bull, slowed right down
+  bossRoar(pos) {
+    if (!this.ctx) return;
+    const a = this.play('growl', { pos, gain: 1.5, ref: 18, rate: 0.36, vary: 0.06 });
+    this.play('moo_bull', { pos, gain: 0.9, ref: 18, rate: 0.5, vary: 0.05, start: 0.15 });
+    if (!a) this.tone(this.out(pos, 18), { dur: 1.2, type: 'sawtooth', freq: 90, freqEnd: 55, gain: 0.6, attack: 0.1 });
+  }
+
+  // a far-off whoop from the locals as they come through the trees
+  shout(pos) {
+    if (!this.ctx) return;
+    const out = this.out(pos, 7);
+    const f = 380 + Math.random() * 160;
+    this.tone(out, { dur: 0.32, type: 'sawtooth', freq: f, freqEnd: f * (1.5 + Math.random() * 0.4), gain: 0.16, attack: 0.03 });
+    this.noise(out, { dur: 0.3, type: 'bandpass', freq: f * 3, q: 4, gain: 0.25, attack: 0.03 });
+  }
+
   swish(pos = null) {
     if (!this.ctx) return;
     if (this.play('swish', { pos, gain: 0.5, ref: 3, vary: 0.1 })) return;

@@ -174,3 +174,18 @@ kbd {
 #scope::after { width: 1px; height: 60vmin; transform: translate(-50%, -50%); }
 #scope.show { display: block; }
 #revive-prompt b { color: var(--accent); }
+
+/* boss health bar (round 20) */
+#boss-bar { position: absolute; top: 58px; left: 50%; transform: translateX(-50%); width: min(520px, 56vw); text-align: center; opacity: 0; transition: opacity .4s; pointer-events: none; }
+#boss-bar.show { opacity: 1; }
+#boss-bar span { font-weight: 800; letter-spacing: .28em; font-size: 14px; color: #ff6a55; text-shadow: 0 2px 6px #000; }
+#boss-bar > div { margin-top: 4px; height: 10px; background: rgba(0,0,0,.55); border: 1px solid rgba(255,255,255,.35); border-radius: 3px; overflow: hidden; }
+#boss-fill { height: 100%; width: 100%; background: linear-gradient(#e2412f, #9a1a10); transition: width .2s; }
+#boss-line { position: absolute; top: 98px; left: 50%; transform: translateX(-50%); width: min(760px, 86vw); text-align: center; opacity: 0; transition: opacity .3s; pointer-events: none; text-shadow: 0 2px 6px #000, 0 0 2px #000; }
+#boss-line.show { opacity: 1; }
+#boss-line b { display: block; font-size: 22px; color: #ffe9a8; font-style: italic; }
+#boss-line small { display: block; margin-top: 2px; font-size: 13px; opacity: .8; }
+body.touch #boss-bar { top: 40px; width: 40vw; }
+body.touch #boss-line { top: 72px; }
+body.touch #boss-line b { font-size: 15px; }
+body.touch #boss-line small { font-size: 11px; }
