@@ -20,7 +20,7 @@ import { Net } from './net.js';
 import { LocalPlayer } from './player.js';
 import { setAnisotropy } from './textures.js';
 import * as T from './textures.js';
-import { detectTouch, isPhone, TouchControls, enterFullscreen, getSensitivity, setSensitivity } from './touch.js';
+import { detectTouch, isPhone, TouchControls, getSensitivity, setSensitivity } from './touch.js';
 
 const $ = (id) => document.getElementById(id);
 const touchMode = detectTouch(); // phone / tablet: on-screen controls instead of pointer lock
@@ -251,13 +251,14 @@ $('play').onclick = async () => {
   $('play').disabled = true;
   $('menu-status').textContent = 'Connecting...';
   audio.start();
+  if (touchMode) touch.goFullscreen(); // right in the tap: full screen isn't allowed after an await
   try {
     await net.connect(name, room, myChar);
     history.replaceState(null, '', `?room=${encodeURIComponent(net.room)}`); // shareable invite link
     $('menu').classList.add('hidden');
     $('hud').classList.remove('hidden');
     playing = true;
-    if (touchMode) { touch.show(true); enterFullscreen(); }
+    if (touchMode) touch.show(true);
     else lockPointer();
   } catch (e) {
     $('menu-status').textContent = e.message;

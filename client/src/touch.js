@@ -25,16 +25,41 @@ export function getSensitivity() {
 }
 export function setSensitivity(v) { try { localStorage.setItem(SENS_KEY, String(v)); } catch {} }
 
-const canFullscreen = () => !!(document.documentElement.requestFullscreen || document.documentElement.webkitRequestFullscreen);
-const isFullscreen = () => !!(document.fullscreenElement || document.webkitFullscreenElement);
+// ---- full screen
+// Android / desktop Chrome, Firefox and iPad Safari can put the page itself in full screen.
+// iPhone Safari can't (only videos), so there the way to lose the browser bars is to add
+// the game to the home screen, which launches it as a full-screen app (see manifest.json).
+const docEl = document.documentElement;
+export const canFullscreen = () => !!((document.fullscreenEnabled || document.webkitFullscreenEnabled) && (docEl.requestFullscreen || docEl.webkitRequestFullscreen));
+export const isFullscreen = () => !!(document.fullscreenElement || document.webkitFullscreenElement);
+// launched from a home-screen icon: already has the whole screen
+export const isStandalone = () => matchMedia('(display-mode: fullscreen), (display-mode: standalone)').matches || navigator.standalone === true;
+export const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+// keep it sideways, but either way round: 'landscape' lets the phone flip 180 degrees
+const lockLandscape = () => { try { screen.orientation?.lock?.('landscape')?.catch(() => {}); } catch {} };
+// Must be called straight from a tap (finger-up) handler: browsers only allow full screen
+// as a direct response to the user, not after an await.
 export function enterFullscreen() {
-  const el = document.documentElement;
-  const p = (el.requestFullscreen || el.webkitRequestFullscreen)?.call(el, { navigationUI: 'hide' });
-  Promise.resolve(p).then(() => screen.orientation?.lock?.('landscape')).catch(() => {});
+  if (isFullscreen() || isStandalone()) { lockLandscape(); return; }
+  if (!canFullscreen()) return;
+  try {
+    const p = (docEl.requestFullscreen || docEl.webkitRequestFullscreen).call(docEl, { navigationUI: 'hide' });
+    Promise.resolve(p).then(lockLandscape, () => {});
+  } catch {}
 }
-function toggleFullscreen() {
-  if (isFullscreen()) (document.exitFullscreen || document.webkitExitFullscreen)?.call(document);
-  else enterFullscreen();
+function exitFullscreen() {
+  try { screen.orientation?.unlock?.(); } catch {}
+  try { (document.exitFullscreen || document.webkitExitFullscreen)?.call(document)?.catch?.(() => {}); } catch {}
+}
+
+// safe-area insets (notch, rounded corners, home bar) in px, read from CSS env()
+const safeProbe = document.createElement('div');
+safeProbe.style.cssText = 'position:fixed;left:0;top:0;width:0;height:0;visibility:hidden;pointer-events:none;'
+  + 'padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)';
+function safeArea() {
+  if (!safeProbe.isConnected) document.body.appendChild(safeProbe);
+  const cs = getComputedStyle(safeProbe);
+  return { t: parseFloat(cs.paddingTop) || 0, r: parseFloat(cs.paddingRight) || 0, b: parseFloat(cs.paddingBottom) || 0, l: parseFloat(cs.paddingLeft) || 0 };
 }
 
 // Buttons: [id, label, kind]. kind 'hold' gets down+up, 'tap' fires once on press.
@@ -79,7 +104,9 @@ export class TouchControls {
     this.knob = root.querySelector('.stick-knob');
     this.btn = {};
     for (const el of root.querySelectorAll('.tbtn')) this.btn[el.dataset.act] = el;
-    if (!canFullscreen()) this.btn.full.classList.add('hidden');
+    if (!canFullscreen() || isStandalone()) this.btn.full.classList.add('hidden');
+    // iPhone in the Safari tab: explain how to get the whole screen
+    if (isIOS && !canFullscreen() && !isStandalone()) document.getElementById('ios-fs-hint')?.classList.remove('hidden');
 
     const opt = { passive: false };
     root.addEventListener('touchstart', (e) => this.onStart(e), opt);
@@ -92,7 +119,41 @@ export class TouchControls {
     addEventListener('blur', () => this.releaseAll());
     document.addEventListener('visibilitychange', () => { if (document.hidden) this.releaseAll(); });
     addEventListener('resize', () => this.layout());
+    // Full screen that sticks: if it gets dropped (back gesture, notification, app switch),
+    // the next tap in the game takes it back. Finger-up is what browsers accept for this.
+    this.wantFullscreen = false;
+    const reclaim = (e) => {
+      if (!this.visible || !this.wantFullscreen || isFullscreen() || e.target?.closest?.('.tb-full')) return;
+      enterFullscreen();
+    };
+    root.addEventListener(window.PointerEvent ? 'pointerup' : 'touchend', reclaim);
+    const fsChange = () => { this.updateFullBtn(); this.relayoutSoon(); };
+    document.addEventListener('fullscreenchange', fsChange);
+    document.addEventListener('webkitfullscreenchange', fsChange);
+    // Flipping the phone: drop any touches (their coordinates just changed meaning), then lay
+    // out again once the browser has settled on the new size. iOS reports the old size for a
+    // moment after rotating, so the game's own resize handler gets nudged a couple of times.
+    const rotated = () => { this.releaseAll(); this.relayoutSoon(); };
+    screen.orientation?.addEventListener?.('change', rotated);
+    addEventListener('orientationchange', rotated);
+    window.visualViewport?.addEventListener('resize', () => this.layout());
     this.layout();
+  }
+
+  relayoutSoon() {
+    this.layout();
+    clearTimeout(this.relayT1); clearTimeout(this.relayT2);
+    this.relayT1 = setTimeout(() => dispatchEvent(new Event('resize')), 120);
+    this.relayT2 = setTimeout(() => dispatchEvent(new Event('resize')), 500);
+  }
+
+  // the full-screen button pulses while the game wants full screen but doesn't have it
+  updateFullBtn() { this.btn.full.classList.toggle('pulse', !!(this.visible && this.wantFullscreen && !isFullscreen())); }
+
+  // called from the PLAY tap
+  goFullscreen() {
+    this.wantFullscreen = canFullscreen() && !isStandalone();
+    enterFullscreen();
   }
 
   show(on) {
@@ -100,6 +161,7 @@ export class TouchControls {
     this.root.classList.toggle('hidden', !on);
     document.body.classList.toggle('in-game', on);
     if (!on) this.releaseAll();
+    this.updateFullBtn();
     this.layout();
   }
 
@@ -111,8 +173,9 @@ export class TouchControls {
     const gap = Math.max(8, b * 0.16);
     this.root.style.setProperty('--b', `${b}px`);
     this.root.style.setProperty('--fire', `${fire}px`);
-    const fx = Math.max(12, vmin * 0.04) + fire / 2; // fire centre, from the right edge
-    const fy = Math.max(10, vmin * 0.05) + fire / 2; // ... and from the bottom
+    const sa = this.safe = safeArea(); // keep thumbs clear of the notch, whichever side it's on
+    const fx = sa.r + Math.max(12, vmin * 0.04) + fire / 2; // fire centre, from the right edge
+    const fy = sa.b + Math.max(10, vmin * 0.05) + fire / 2; // ... and from the bottom
     const place = (id, ang, r, size = b) => {
       const a = ang * Math.PI / 180;
       const el = this.btn[id];
@@ -132,7 +195,7 @@ export class TouchControls {
     // stick resting spot (it follows the thumb once touched)
     this.stickR = Math.round(Math.min(70, Math.max(46, vmin * 0.15)));
     this.root.style.setProperty('--stick', `${this.stickR * 2}px`);
-    this.rest = { x: Math.max(16, vmin * 0.05) + this.stickR + 8, y: H - (Math.max(14, vmin * 0.06) + this.stickR + 8) };
+    this.rest = { x: sa.l + Math.max(16, vmin * 0.05) + this.stickR + 8, y: H - (sa.b + Math.max(14, vmin * 0.06) + this.stickR + 8) };
     if (this.stick.id == null) this.setStick(this.rest.x, this.rest.y, 0, 0);
   }
 
@@ -149,7 +212,7 @@ export class TouchControls {
       if (t.clientX < innerWidth * 0.45 && this.stick.id == null) {
         // floating stick: centre it under the thumb (kept on screen)
         const r = this.stickR;
-        const cx = Math.max(r + 4, Math.min(innerWidth * 0.45 - r, t.clientX));
+        const cx = Math.max(this.safe.l + r + 4, Math.min(innerWidth * 0.45 - r, t.clientX));
         const cy = Math.max(r + 4, Math.min(innerHeight - r - 4, t.clientY));
         Object.assign(this.stick, { id: t.identifier, cx, cy, x: 0, y: 0, sprint: false });
         this.base.classList.add('on');
@@ -238,7 +301,6 @@ export class TouchControls {
       case 'melee': api.melee(); break;
       case 'swap': api.swap(); break;
       case 'light': api.flashlight(); break;
-      case 'full': toggleFullscreen(); break;
     }
   }
 
@@ -249,6 +311,12 @@ export class TouchControls {
     if (act === 'jump') keys.Space = false;
     if (act === 'use') api.use(false);
     if (act === 'scores') api.scores(false);
+    // full screen toggles on finger-up: browsers refuse it on finger-down
+    if (act === 'full') {
+      if (isFullscreen()) { this.wantFullscreen = false; exitFullscreen(); }
+      else { this.wantFullscreen = true; enterFullscreen(); }
+      this.updateFullBtn();
+    }
   }
 
   releaseAll() {

@@ -6,6 +6,11 @@
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="theme-color" content="#000000" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Ranch Defense" />
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+  <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
   <title>Ranch Defense</title>
   <link rel="stylesheet" href="./style.css" />
 </head>
@@ -59,6 +64,7 @@
         </select>
       </label>
       <div id="touch-menu" class="hidden">
+        <div id="ios-fs-hint" class="touch-help hidden">On iPhone, Safari keeps its bars on screen. For true full screen: tap <b>Share</b>, then <b>Add to Home Screen</b>, and play from the new Ranch Defense icon.</div>
         <label id="touch-settings">Look sensitivity<input id="touch-sens" type="range" min="0.3" max="3" step="0.1" /></label>
       </div>
       <button id="play">PLAY</button>
