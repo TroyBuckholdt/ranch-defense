@@ -25,14 +25,27 @@ const $ = (id) => document.getElementById(id);
 
 // ---------------------------------------------------------------- quality
 const PRESETS = {
-  ultra: { pr: 2, shadows: 4096, msaa: 4, bloom: true, ao: true, rays: 64, grass: 60000 },
-  high: { pr: 1.5, shadows: 4096, msaa: 4, bloom: true, ao: true, rays: 40, grass: 30000 },
-  medium: { pr: 1, shadows: 2048, msaa: 2, bloom: true, ao: false, rays: 24, grass: 14000 },
-  low: { pr: 0.75, shadows: 0, msaa: 0, bloom: false, ao: false, rays: 0, grass: 4000 },
+  ultra: { pr: 2, shadows: 4096, msaa: 4, bloom: true, ao: true, rays: 48, grass: 50000, crowns: 2 },
+  high: { pr: 1.25, shadows: 4096, msaa: 4, bloom: true, ao: false, rays: 24, grass: 22000, crowns: 1 },
+  medium: { pr: 1, shadows: 2048, msaa: 2, bloom: true, ao: false, rays: 0, grass: 12000, crowns: 1 },
+  low: { pr: 0.75, shadows: 0, msaa: 0, bloom: false, ao: false, rays: 0, grass: 4000, crowns: 1 },
 };
+// Default by graphics chip: built-in laptop/phone graphics start on Medium/Low, only
+// dedicated gaming cards get High. (Players can always change it on the menu.)
+function guessQuality() {
+  const phone = matchMedia('(pointer: coarse)').matches;
+  try {
+    const gl = document.createElement('canvas').getContext('webgl2');
+    const ext = gl && gl.getExtension('WEBGL_debug_renderer_info');
+    const gpu = String(gl ? gl.getParameter(ext ? ext.UNMASKED_RENDERER_WEBGL : gl.RENDERER) : '');
+    if (phone || /Mali|Adreno|PowerVR|SwiftShader|llvmpipe|Software/i.test(gpu)) return 'low';
+    if (/RTX|GTX 1[0-9]{3}|GTX 9[6-9]0|RX ?[5-9][0-9]{2,3}|Radeon (Pro|VII)|Arc A[57]|Apple M[1-9] (Pro|Max|Ultra)/i.test(gpu)) return 'high';
+    return 'medium';
+  } catch { return phone ? 'low' : 'medium'; }
+}
 let qName = new URLSearchParams(location.search).get('q');
 try { qName = qName || localStorage.getItem('rd-quality'); } catch {}
-if (!PRESETS[qName]) qName = (navigator.hardwareConcurrency || 4) >= 8 ? 'high' : 'medium';
+if (!PRESETS[qName]) qName = guessQuality();
 const Q = PRESETS[qName];
 $('quality').value = qName;
 $('quality').onchange = (e) => {
@@ -136,13 +149,31 @@ const grade = new ShaderPass({
 });
 composer.addPass(grade);
 
-addEventListener('resize', () => {
+function resize() {
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);
+  composer.setPixelRatio(renderer.getPixelRatio());
   composer.setSize(innerWidth, innerHeight);
   grade.uniforms.uTexel.value.set(1 / (innerWidth * renderer.getPixelRatio()), 1 / (innerHeight * renderer.getPixelRatio()));
-});
+}
+addEventListener('resize', resize);
+
+// Dynamic resolution (what consoles do): if the frame rate sags, render fewer pixels until
+// it's smooth again, and creep back up when there's headroom. Checked every 2 seconds.
+const maxPR = Math.min(window.devicePixelRatio, Q.pr), minPR = Math.min(maxPR, 0.55);
+const dynRes = { pr: maxPR, frames: 0, t0: performance.now() };
+function updateDynamicResolution(now) {
+  dynRes.frames++;
+  const span = now - dynRes.t0;
+  if (span < 2000) return;
+  const fps = (dynRes.frames * 1000) / span;
+  dynRes.frames = 0; dynRes.t0 = now;
+  let pr = dynRes.pr;
+  if (fps < 45) pr = Math.max(minPR, pr * (fps < 30 ? 0.8 : 0.9));
+  else if (fps > 57) pr = Math.min(maxPR, pr + 0.08);
+  if (Math.abs(pr - dynRes.pr) > 0.01) { dynRes.pr = pr; renderer.setPixelRatio(pr); resize(); }
+}
 grade.uniforms.uTexel.value.set(1 / (innerWidth * renderer.getPixelRatio()), 1 / (innerHeight * renderer.getPixelRatio()));
 
 // ---------------------------------------------------------------- game state
@@ -229,7 +260,12 @@ $('play').onclick = async () => {
 [nameInput, roomInput].forEach(i => i.addEventListener('keydown', e => { if (e.key === 'Enter') $('play').click(); }));
 
 // ---------------------------------------------------------------- input
-function lockPointer() { renderer.domElement.requestPointerLock?.(); }
+function lockPointer() {
+  const el = renderer.domElement;
+  // raw mouse input where supported (no OS acceleration, avoids Chrome's jump bug)
+  try { const p = el.requestPointerLock?.({ unadjustedMovement: true }); if (p?.catch) p.catch(() => el.requestPointerLock?.()); }
+  catch { el.requestPointerLock?.(); }
+}
 const locked = () => document.pointerLockElement === renderer.domElement;
 document.addEventListener('pointerlockchange', () => {
   $('click-to-play').classList.toggle('hidden', locked());
@@ -248,8 +284,10 @@ let lockedAt = 0;
 document.addEventListener('pointerlockchange', () => { lockedAt = performance.now(); });
 addEventListener('mousemove', (e) => {
   if (!locked()) return;
-  // Chrome sometimes reports one huge jump right after locking the pointer; ignore spikes
-  if (performance.now() - lockedAt < 150 || Math.abs(e.movementX) > 250 || Math.abs(e.movementY) > 250) return;
+  // Chrome sometimes reports one bogus jump right after locking (or a rare huge spike);
+  // ignore only those. At low frame rates Chrome batches a whole frame of real motion into
+  // one event, so ordinary large movements must be kept or turning stalls.
+  if (performance.now() - lockedAt < 150 || Math.abs(e.movementX) > 900 || Math.abs(e.movementY) > 900) return;
   lookDX += e.movementX; lookDY += e.movementY;
 });
 addEventListener('keydown', (e) => {
@@ -613,6 +651,7 @@ function frame() {
   requestAnimationFrame(frame);
   clock.update();
   const dt = Math.min(0.05, clock.getDelta());
+  if (playing) updateDynamicResolution(performance.now());
   elapsed += dt;
 
   if (playing) {
