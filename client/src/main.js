@@ -7,7 +7,8 @@ import { GTAOPass } from 'three/examples/jsm/postprocessing/GTAOPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { SunPass, ViewmodelPass } from './post.js';
 import {
-  ENTRIES, HOUSE, MAX_BOARDS, COW_TYPE_LIST, COW_TYPES, LOCALS_WAVE, BOSS_WAVE, BOTTLE, VEHICLES, VEHICLE_SEATS, ENTER_RANGE, vehicleGap, pushOutOfVehicle, vehicleWorld, WEAPON, WEAPONS, START_WEAPONS, WALL_BUYS, BUY_RANGE, MELEE, REPAIR_RANGE, raySolids, raySphere, cowHitSpheres, insideHouse, heightAt, shoreZ, SAND_WIDTH,
+  ENTRIES, HOUSE, MAX_BOARDS, COW_TYPE_LIST, COW_TYPES, LOCALS_WAVE, BOSS_WAVE, BOTTLE, VEHICLES, VEHICLE_SEATS, ENTER_RANGE, vehicleGap, pushOutOfVehicle, vehicleWorld,
+  STATIONS, stationSpot, USE_RANGE, PERKS, PERK_MACHINES, MAX_PERKS, BOX, PAP, TRAP, weaponStats, WEAPON, WEAPONS, START_WEAPONS, WALL_BUYS, BUY_RANGE, MELEE, REPAIR_RANGE, raySolids, raySphere, cowHitSpheres, insideHouse, heightAt, shoreZ, SAND_WIDTH,
 } from '../../shared/world.js';
 import { buildWorld } from './world.js';
 import { CowView, loadCowAsset } from './cow.js';
@@ -15,6 +16,7 @@ import { HumanView, preloadHumans, bottleMesh } from './humanoid.js';
 import { tauntLine } from './taunts.js';
 import { tr, lang, translateDom } from './i18n.js';
 import { Driving, VehicleView } from './vehicle.js';
+import { Machines } from './machines.js';
 import { DogView, loadDogAssets } from './dog.js';
 import { Avatar, CHARACTERS, loadCharacter } from './avatar.js';
 import { Weapon } from './weapon.js';
@@ -29,7 +31,11 @@ import { detectTouch, isPhone, TouchControls, getSensitivity, setSensitivity } f
 
 const $ = (id) => document.getElementById(id);
 translateDom(); // English or Spanish, before anything else is shown
-const wname = (id) => tr(WEAPONS[id].name);
+const myUpg = (id) => !!mySnap?.up?.includes(id);
+const myPerks = () => mySnap?.pk || [];
+// a gun's name: its El Taller name once upgraded (those stay in Spanish), translated otherwise
+const wname = (id) => (myUpg(id) ? PAP.names[id] : tr(WEAPONS[id].name));
+const fullAmmo = (id) => { const st = weaponStats(id, myUpg(id)); return { mag: st.mag, res: st.reserve }; };
 const touchMode = detectTouch(); // phone / tablet: on-screen controls instead of pointer lock
 
 // ---------------------------------------------------------------- quality
@@ -251,6 +257,11 @@ const flyingBottles = [];
 const truckViews = new Map(world.trucks.map(t => [t.def.id, new VehicleView(t.def, t.model, scene)]));
 for (const v of truckViews.values()) v.apply({ ...v.def, speed: 0, steer: 0 }, 0);
 let ride = null, driving = null, camSwing = 0, camSwingIdle = 0, dustT = 0;
+const machines = new Machines(scene, world.machineModel, weapon);
+machines.onStrike = (p) => audio.hammer([p.x, 1.2, p.z]);
+const shellViews = new Map();
+const shellGeo = new THREE.SphereGeometry(0.13, 12, 10), shellMat = new THREE.MeshStandardMaterial({ color: 0x4e3218, roughness: 0.95 });
+let perkKey = '';
 const chase = { pos: new THREE.Vector3(), ready: false };
 let view = null;            // latest interpolated world
 let mySnap = null;          // my own state from the server
@@ -258,12 +269,12 @@ let playing = false;
 // loadout: two weapon slots, ammo tracked per gun
 const loadout = { weapons: [...START_WEAPONS], cur: 0, ammo: {} };
 const curId = () => loadout.weapons[loadout.cur] || 'rifle';
-const W = () => WEAPONS[curId()];
+const W = () => weaponStats(curId(), myUpg(curId()), myPerks());
 function ammo(id = curId()) {
-  if (!loadout.ammo[id]) loadout.ammo[id] = { mag: WEAPONS[id].mag, res: WEAPONS[id].reserve };
+  if (!loadout.ammo[id]) loadout.ammo[id] = fullAmmo(id);
   return loadout.ammo[id];
 }
-function refillAll() { for (const id of loadout.weapons) loadout.ammo[id] = { mag: WEAPONS[id].mag, res: WEAPONS[id].reserve }; }
+function refillAll() { for (const id of loadout.weapons) loadout.ammo[id] = fullAmmo(id); }
 let triggerHeld = false; // semi-auto guns need a fresh click per shot
 let reloadT = 0;
 let nextFire = 0;
@@ -411,7 +422,7 @@ function fire(time) {
 
   // predict hits locally for instant feedback (the server decides damage)
   const oa = [o.x, o.y, o.z];
-  dirs.forEach((dir, i) => {
+  if (!w.projectile) dirs.forEach((dir, i) => {
     const da = [dir.x, dir.y, dir.z];
     let dist = raySolids(oa, da, w.range), hitCow = null;
     if (view) for (const [id, c] of view.cows) {
@@ -426,9 +437,9 @@ function fire(time) {
     else if (dist < w.range - 1 && (i % 3 === 0)) fx.dust(hit, dir.clone().negate());
     if (i < 3 && Math.random() < 0.6) fx.tracer(weapon.muzzleWorld(tmpV), hit);
   });
-  fx.casing(weapon.ejectWorld(tmpV2), new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion));
+  if (!w.projectile) fx.casing(weapon.ejectWorld(tmpV2), new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion));
 
-  const heavy = curId() === 'shotgun' || curId() === 'hunting' ? 2.2 : curId() === 'revolver' ? 1.5 : 1;
+  const heavy = w.projectile || curId() === 'shotgun' || curId() === 'hunting' ? 2.2 : curId() === 'revolver' ? 1.5 : 1;
   weapon.kick(heavy);
   const kick = (aiming ? 0.006 : 0.011) * heavy * crouchK;
   me.recoil = Math.min(0.2, me.recoil + kick);
@@ -475,9 +486,61 @@ function useKey() {
   if (!alive()) return;
   if (ride) { net.send({ t: 'veh', a: 'out' }); return; }
   if (nearestBuy() != null) { tryBuy(); return; }
+  const st = nearestStation();
+  if (st) {
+    if (st.kind === 'power') net.send({ t: 'power' });
+    if (st.kind === 'perk') net.send({ t: 'perk', i: st.i });
+    if (st.kind === 'box') net.send({ t: 'box', slot: loadout.cur });
+    if (st.kind === 'pap') net.send({ t: 'pap', w: curId() });
+    if (st.kind === 'trap') net.send({ t: 'trap' });
+    return;
+  }
   const t = nearestTruck();
   if (t) net.send({ t: 'veh', a: 'in', id: t.id });
 }
+// the machine in front of me, if any (the box only where it currently is)
+function nearestStation() {
+  let best = null, bd = USE_RANGE;
+  const boxAt = net.latest?.bx?.[0] ?? 0;
+  for (const m of STATIONS) {
+    if (m.kind === 'box' && m.i !== boxAt) continue;
+    const [x, z] = stationSpot(m), d = Math.hypot(me.pos.x - x, me.pos.z - z);
+    if (d < bd) { bd = d; best = m; }
+  }
+  return best;
+}
+
+// what pressing E at a machine would do, for the prompt
+function stationPrompt(m, s) {
+  const press = tr(touchMode ? 'Tap' : 'Press'), cost = (c) => ` <b>$${c}</b>`;
+  if (m.kind === 'power') return s.pw ? '' : tr('{0} {1} to turn on the power', press, KEY_USE);
+  if (m.kind === 'perk') {
+    const def = PERKS[m.perk];
+    if (myPerks().includes(m.perk)) return tr('You have {0}', tr(def.name));
+    if (!s.pw) return tr('{0}: needs power', tr(def.name));
+    if (myPerks().length >= MAX_PERKS) return tr('You can only hold four perks');
+    return tr('{0} {1} to drink {2}', press, KEY_USE, tr(def.name)) + cost(def.cost);
+  }
+  if (m.kind === 'box') {
+    const [, st, w, , by] = s.bx;
+    if (st === 2 && by === net.id) return tr('{0} {1} to take {2}', press, KEY_USE, tr(WEAPONS[w].name));
+    if (st !== 0) return '';
+    return tr('{0} {1} for a random gun', press, KEY_USE) + cost(s.fs ? BOX.fireSaleCost : BOX.cost);
+  }
+  if (m.kind === 'pap') {
+    if (!s.pw) return tr('El Taller: needs power');
+    if (s.pp[0]) return s.pp[2] === net.id ? tr('Upgrading...') : tr("It's busy");
+    if (myUpg(curId())) return tr('That gun is already upgraded');
+    return tr('{0} {1} to upgrade {2}', press, KEY_USE, wname(curId())) + cost(PAP.cost);
+  }
+  if (m.kind === 'trap') {
+    if (s.tr[0] > 0) return tr('The fence is live');
+    if (s.tr[1] > 0) return tr('The fence is recharging: {0}s', s.tr[1]);
+    return tr('{0} {1} to electrify the gate', press, KEY_USE) + cost(TRAP.cost);
+  }
+  return '';
+}
+
 function nearestTruck() {
   let best = null, bd = ENTER_RANGE;
   for (const v of truckViews.values()) {
@@ -576,8 +639,7 @@ function onEvent(m) {
     case 'bought': {
       const had = loadout.weapons.includes(m.w);
       loadout.weapons = m.weapons;
-      if (had && m.ammo) loadout.ammo[m.w] = { mag: WEAPONS[m.w].mag, res: WEAPONS[m.w].reserve };
-      else loadout.ammo[m.w] = { mag: WEAPONS[m.w].mag, res: WEAPONS[m.w].reserve };
+      loadout.ammo[m.w] = fullAmmo(m.w);
       loadout.cur = Math.max(0, loadout.weapons.indexOf(m.w));
       weapon.setGun(m.w);
       audio.cash();
@@ -594,13 +656,14 @@ function onEvent(m) {
     case 'boom': {
       const p = new THREE.Vector3(...m.p);
       fx.explosion(p);
+      if (m.coco) fx.spawn(30, p, { spread: 2, up: 1.4, speed: 7, life: 1.2, size: 0.07, color: 0x5a3a1e, grav: 12, bounce: 0.3 }); // shell pieces
       audio.explosion(m.p);
       const d = p.distanceTo(me.pos);
       if (d < 25) shake = Math.min(1.5, shake + (25 - d) / 15);
       break;
     }
     case 'powerup': {
-      const label = tr({ maxammo: 'MAX AMMO', instakill: 'INSTA-KILL', double: 'DOUBLE POINTS', nuke: 'KABOOM' }[m.type]);
+      const label = tr({ maxammo: 'MAX AMMO', instakill: 'INSTA-KILL', double: 'DOUBLE POINTS', nuke: 'KABOOM', carpenter: 'CARPENTER', firesale: 'FIRE SALE' }[m.type]);
       banner(label, tr('picked up by {0}', escapeHtml(m.by)), 2500);
       audio.powerup(m.type);
       if (m.type === 'maxammo') refillAll();
@@ -612,7 +675,7 @@ function onEvent(m) {
       const from = av ? av.muzzleWorld(new THREE.Vector3()) : new THREE.Vector3(...m.o);
       fx.muzzleFlash(from);
       const dist = raySolids(m.o, m.d, WEAPON.range);
-      fx.tracer(from, new THREE.Vector3(...m.o).addScaledVector(new THREE.Vector3(...m.d), dist));
+      if (!WEAPONS[m.w]?.projectile) fx.tracer(from, new THREE.Vector3(...m.o).addScaledVector(new THREE.Vector3(...m.d), dist));
       audio.gunshot(m.o, insideHouse(m.o[0], m.o[2]), m.w);
       break;
     }
@@ -676,6 +739,39 @@ function onEvent(m) {
       if (d < 12) shake = Math.min(1.5, shake + (12 - d) / 14);
       break;
     }
+    case 'power':
+      banner(tr('THE POWER IS ON'), tr('{0} started the generator. Perks and El Taller are working.', escapeHtml(m.by)), 4000);
+      audio.powerOn();
+      break;
+    case 'perk': // I drank one
+      banner(tr(PERKS[m.perk].name), tr(PERKS[m.perk].desc), 2600);
+      audio.drink(true);
+      break;
+    case 'drink': { const a = avatars.get(m.id); audio.drink(false, a?.group.position.toArray()); break; }
+    case 'perks':
+      if (!m.perks.length) feed(tr('You lost your perks'));
+      break;
+    case 'denied':
+      feed(tr({ points: 'Not enough points (${0} needed)', power: 'Turn the power on first: the generator behind the house', have: 'You already have that perk', full: 'You can only hold four perks', busy: "It's busy", done: 'That gun is already upgraded' }[m.why] || '', m.cost));
+      audio.click();
+      break;
+    case 'box': {
+      const sp = BOX.spots[net.latest?.bx?.[0] ?? 0];
+      if (m.s === 'roll') audio.musicBox([sp.x, 1, sp.z]);
+      if (m.s === 'teddy') { feed(tr('The box is moving!')); audio.laugh([sp.x, 1, sp.z]); }
+      if (m.s === 'moved') feed(tr('The mystery box has moved. Look for the light.'));
+      break;
+    }
+    case 'pap':
+      if (m.s === 'done' && m.by === net.id) {
+        loadout.ammo[m.w] = fullAmmo(m.w);
+        banner(PAP.names[m.w], tr('Upgraded at El Taller'), 3000);
+        audio.powerup('double');
+      }
+      break;
+    case 'trap':
+      if (m.on) { feed(tr('{0} electrified the south gate', escapeHtml(m.by))); audio.zap([TRAP.zone.x, 1, TRAP.zone.z]); }
+      break;
     case 'ram': // my truck hit something alive: it costs speed
       if (driving) { driving.speed *= m.k; shake = Math.min(1.5, shake + 0.6); audio.thud([driving.x, 1, driving.z], 0.9); }
       break;
@@ -789,7 +885,13 @@ function updateHud(dt) {
   for (const c of s.cows) if (COW_TYPES[COW_TYPE_LIST[c[1]]].boss && c[6] !== 2) bossHp = c[5];
   $('boss-bar').classList.toggle('show', bossHp >= 0);
   if (bossHp >= 0) $('boss-fill').style.width = `${bossHp}%`;
-  $('hp-fill').style.width = `${mySnap.hp}%`;
+  $('hp-fill').style.width = `${(mySnap.hp / (mySnap.mh || 100)) * 100}%`;
+  const pk = myPerks().join();
+  if (pk !== perkKey) {
+    perkKey = pk;
+    $('perks').innerHTML = myPerks().map(id => `<span style="--c:${PERKS[id].color}" title="${escapeHtml(tr(PERKS[id].name))}">${escapeHtml(tr(PERKS[id].name).split(' ').map(w => w[0]).join(''))}</span>`).join('');
+  }
+  weapon.setUpgraded(mySnap.up || []);
   $('hp-fill').classList.toggle('low', mySnap.hp < 35);
   $('score').textContent = mySnap.s;
   const am = ammo(), w = W();
@@ -799,7 +901,7 @@ function updateHud(dt) {
   $('weapon-name').textContent = wname(curId());
   $('nades').textContent = '● '.repeat(mySnap.g || 0).trim();
   $('reload-hint').textContent = reloadT > 0 ? tr('RELOADING') : am.mag === 0 && am.res === 0 ? tr('NO AMMO') : am.mag <= Math.ceil(w.mag * 0.25) ? tr(touchMode ? 'RELOAD' : 'R  RELOAD') : '';
-  $('powerups').innerHTML = (s.ik ? `<span class="pu ik">${tr('INSTA-KILL')} ${s.ik}</span>` : '') + (s.dp ? `<span class="pu dp">${tr('DOUBLE POINTS')} ${s.dp}</span>` : '');
+  $('powerups').innerHTML = (s.ik ? `<span class="pu ik">${tr('INSTA-KILL')} ${s.ik}</span>` : '') + (s.dp ? `<span class="pu dp">${tr('DOUBLE POINTS')} ${s.dp}</span>` : '') + (s.fs ? `<span class="pu fs">${tr('FIRE SALE')} ${s.fs}</span>` : '');
   const spread = aiming ? 2 : 6 + Math.min(1, me.speed / 4) * 10 + weapon.recoil * 10;
   $('crosshair').style.setProperty('--spread', `${spread}px`);
   $('crosshair').style.opacity = aiming || driving ? 0 : 1;
@@ -811,8 +913,8 @@ function updateHud(dt) {
   const ov = $('downed-overlay');
   if (mySnap.dn) {
     ov.classList.add('show');
-    ov.querySelector('.big').textContent = tr("YOU'RE DOWN");
-    $('downed-sub').textContent = mySnap.rv > 0 ? tr('Being revived... {0}%', mySnap.rv) : tr('Bleeding out in {0}s. A teammate can hold {1} next to you to revive.', mySnap.bl, touchMode ? tr('USE') : 'E');
+    ov.querySelector('.big').textContent = mySnap.sr ? tr('SECOND WIND') : tr("YOU'RE DOWN");
+    $('downed-sub').textContent = mySnap.sr ? tr('Getting back up... {0}%', mySnap.rv) : mySnap.rv > 0 ? tr('Being revived... {0}%', mySnap.rv) : tr('Bleeding out in {0}s. A teammate can hold {1} next to you to revive.', mySnap.bl, touchMode ? tr('USE') : 'E');
   } else if (mySnap.dd && s.phase !== 'gameover') {
     ov.classList.add('show');
     ov.querySelector('.big').textContent = tr('SPECTATING');
@@ -833,6 +935,7 @@ function updateHud(dt) {
       prompt = driving ? `<b>${kmh} km/h</b> &nbsp; ${tr(touchMode ? 'stick to drive, JUMP handbrake,' : 'WASD drive, Space handbrake,')} ${tr('{0} get out', KEY_USE)}`
         : tr('{0} to get out', KEY_USE);
     }
+    if (!prompt) { const m = nearestStation(); if (m) prompt = stationPrompt(m, s); }
     const bi = !prompt ? nearestBuy() : null;
     if (bi != null) {
       const b = WALL_BUYS[bi], owned = loadout.weapons.includes(b.weapon);
@@ -915,6 +1018,7 @@ function frame() {
     if (k >= 1) { scene.remove(b.mesh); flyingBottles.splice(i, 1); }
   }
 
+  machines.update(net.latest, dt, elapsed, fx);
   fx.update(dt);
   world.update(dt, elapsed, camera.position);
   hurtT = Math.max(0, hurtT - dt * 2.2);
@@ -944,7 +1048,7 @@ function stepLocal(dt) {
     truckViews.get(ride.id).seatWorld(ride.seat, me.pos);
     me.vel.set(0, 0, 0); me.speed = 0; me.grounded = true; me.sprinting = false;
   } else {
-    me.update(dt, keys, { aiming, downed, canMove: active() && !dead });
+    me.update(dt, keys, { aiming, downed, canMove: active() && !dead, speedMul: myPerks().includes('stamin') ? 1.25 : 1 });
     // parked or passing trucks are solid
     for (const v of truckViews.values()) {
       if (me.pos.y - heightAt(me.pos.x, me.pos.z) > v.def.h - 0.3) continue;
@@ -1106,6 +1210,15 @@ function syncPickups(dt) {
     v.position.lerp(new THREE.Vector3(x, y, z), v.position.lengthSq() ? Math.min(1, dt * 15) : 1);
   }
   for (const [id, v] of nadeViews) if (!nseen.has(id)) { scene.remove(v); nadeViews.delete(id); }
+  const cseen = new Set();
+  for (const [id, x, y, z] of s.sh || []) { // coconuts in flight
+    cseen.add(id);
+    let v = shellViews.get(id);
+    if (!v) { v = new THREE.Mesh(shellGeo, shellMat); v.scale.set(1, 1.15, 1); scene.add(v); shellViews.set(id, v); v.position.set(x, y, z); }
+    v.position.lerp(tmpV.set(x, y, z), Math.min(1, dt * 20));
+    v.rotation.x += dt * 12;
+  }
+  for (const [id, v] of shellViews) if (!cseen.has(id)) { scene.remove(v); shellViews.delete(id); }
 }
 
 function syncBoards() {
@@ -1158,4 +1271,4 @@ function ambientSounds(dt) {
 frame();
 
 // expose a little for automated testing / debugging
-window.__rd = { net, me, scene, camera, cowViews, renderer, CowView, HumanView, DogView, Avatar, weapon, world, vmScene, audio, fx, keys, truckViews, get driving() { return driving; }, get ride() { return ride; } };
+window.__rd = { machines, net, me, scene, camera, cowViews, renderer, CowView, HumanView, DogView, Avatar, weapon, world, vmScene, audio, fx, keys, truckViews, get driving() { return driving; }, get ride() { return ride; } };

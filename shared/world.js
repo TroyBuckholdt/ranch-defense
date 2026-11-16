@@ -309,6 +309,85 @@ export const UNDERGROWTH = [];
   ]) TREES.push({ x, z, s, kind });
 })();
 
+// ---- Zombies machinery ---------------------------------------------------------
+// Everything you walk up to and press E at. (x, z) is where it stands on the floor;
+// (nx, nz) is the way its front faces, and the player stands in front of it.
+// Perks and the upgrade press stay dead until someone throws the generator's switch.
+export const POWER = { x: -20.5, z: -16, nx: 1, nz: 0, w: 1.7, d: 0.9 };
+
+// Perks: each player can hold four; going down loses them all.
+export const PERKS = {
+  jugg:   { name: 'BULL HIDE',      cost: 2500, color: '#c3271c', desc: 'Two and a half times the health' },
+  revive: { name: 'SECOND WIND',    cost: 1500, color: '#2f86d4', desc: 'Revive twice as fast. Alone, it gets you back up once' },
+  speed:  { name: 'QUICK HANDS',    cost: 3000, color: '#35a843', desc: 'Reload twice as fast' },
+  double: { name: 'DOUBLE TEQUILA', cost: 2000, color: '#e4b51e', desc: 'Shoot a third faster and hit a quarter harder' },
+  stamin: { name: 'MUSTANG',        cost: 2000, color: '#c0641c', desc: 'Run faster and sprint longer' },
+};
+export const PERK_LIST = Object.keys(PERKS);
+export const MAX_PERKS = 4;
+export const PERK_MACHINES = [
+  { perk: 'jugg',   x: -1.95, z: -6.45, nx: 0, nz: 1 },     // kitchen, against the back wall
+  { perk: 'revive', x: 10.4,  z: 0,     nx: -1, nz: 0 },    // dining room, east wall between the windows
+  { perk: 'speed',  x: 25.45, z: -18,   nx: -1, nz: 0 },    // against the bunkhouse
+  { perk: 'double', x: -31,   z: 25.45, nx: 0, nz: 1 },     // in front of the feed store
+  { perk: 'stamin', x: -12,   z: -27.0, nx: 0, nz: 1 },     // under the water tank
+].map(m => ({ ...m, w: 1.0, d: 0.8 }));
+
+// The mystery box: a random gun for 950. It sits in one spot until it has been used a few
+// times, then may come up with a stuffed toy cow instead: your points back, and it moves.
+export const BOX = {
+  cost: 950, fireSaleCost: 10, roll: 4.2, take: 12, minUses: 5, moveChance: 0.22,
+  spots: [
+    { x: -11, z: 20, nx: 0, nz: -1 },       // front lawn
+    { x: -6, z: -15.6, nx: 0, nz: 1 },      // behind the house
+    { x: 38, z: 6, nx: -1, nz: 0 },         // east lawn
+    { x: 15.5, z: 157, nx: -1, nz: 0 },     // down on the beach, by the road
+  ].map(m => ({ ...m, w: 1.4, d: 0.7 })),
+  // weight of each gun in the box (the coconut cannon only ever comes out of it)
+  pool: { shotgun: 3, hunting: 3, lmg: 2, rifle: 1, revolver: 1, coconut: 1 },
+};
+// "El Taller": pay to have the gun in your hands rebuilt: double damage, bigger magazine,
+// twice the spare ammo, and a new name.
+export const PAP = {
+  x: 31, z: -3.4, nx: 0, nz: 1, w: 1.6, d: 1.1, cost: 5000, time: 3.5,
+  names: { rifle: 'EL PATRÓN', revolver: 'EL JEFE', shotgun: 'LA MATAVACAS', hunting: 'OJO DE HALCÓN', lmg: 'LA MERA BESTIA', coconut: 'COCO LOCO' },
+};
+// The electric fence: a switch beside the south gate that electrifies the gateway for a
+// while. Anything that walks into it is fried. Players are safe.
+export const TRAP = {
+  cost: 1000, time: 25, cooldown: 45, damage: 400,  // damage per second
+  x: 12.5, z: 39.6, nx: -1, nz: 0, w: 0.4, d: 0.3,   // the switch, just inside the fence
+  zone: { x: 2, z: 42, w: 10.4, d: 3.4 },            // the gateway
+};
+export const USE_RANGE = 1.9;   // how near the front of a machine you must stand
+
+export const STATIONS = [
+  { kind: 'power', ...POWER },
+  ...PERK_MACHINES.map((m, i) => ({ kind: 'perk', i, ...m })),
+  ...BOX.spots.map((m, i) => ({ kind: 'box', i, ...m })),
+  { kind: 'pap', ...PAP },
+  { kind: 'trap', ...TRAP },
+];
+// where a player stands to use a station, and the box it occupies on the floor
+export const stationSpot = (m) => [m.x + m.nx * (m.d / 2 + 0.7), m.z + m.nz * (m.d / 2 + 0.7)];
+export const stationBox = (m) => (m.nx ? { x: m.x, z: m.z, w: m.d, d: m.w } : { x: m.x, z: m.z, w: m.w, d: m.d });
+
+// Effective stats of a gun: upgraded at El Taller, and with the holder's perks.
+export function weaponStats(id, upgraded = false, perks = []) {
+  const w = WEAPONS[id];
+  if (!w) return null;
+  const s = { ...w };
+  if (upgraded) {
+    s.damage *= 2; s.mag = Math.ceil(w.mag * 1.5); s.reserve = w.reserve * 2; s.fireInterval *= 0.9;
+    s.name = PAP.names[id] || w.name; s.upgraded = true;
+    if (w.projectile) s.projectile = { ...w.projectile, radius: w.projectile.radius * 1.3 };
+  }
+  if (perks.includes('double')) { s.fireInterval *= 0.75; s.damage *= 1.25; }
+  if (perks.includes('speed')) s.reload *= 0.5;
+  return s;
+}
+export const maxHealth = (perks = []) => (perks.includes('jugg') ? 250 : 100);
+
 // All solid boxes. `shoot: true` means bullets pass through (open doors/windows).
 export const SOLIDS = (() => {
   const out = [...HOUSE_WALLS, ...FURNITURE, ...STRUCTURES.filter(s => !s.open), ...HAY_BALES];
@@ -323,6 +402,8 @@ export const SOLIDS = (() => {
   }
   for (const t of TREES) { const w = (t.kind === 'palm' ? 0.55 : t.kind === 'giant' ? 1.6 : 0.9) * t.s; out.push({ kind: 'trunk', x: t.x, z: t.z, w, d: w, h: 40 }); }
   out.push(...VERANDA.rails, ...VERANDA.columns);
+  // (heights are from y = 0, so add the ground under the beach box)
+  for (const m of STATIONS) if (m.kind !== 'trap') out.push({ kind: 'machine', ...stationBox(m), h: Math.max(0, heightAt(m.x, m.z)) + (m.kind === 'box' ? 0.9 : 2.0) });
   return out;
 })();
 
@@ -545,6 +626,8 @@ export const WEAPONS = {
   shotgun:  { name: 'PUMP SHOTGUN',  damage: 24,  headMult: 2.0, fireInterval: 0.75,  auto: false, mag: 6,  reserve: 42,  reload: 3.0, pellets: 9, hip: 0.09,  ads: 0.06,  range: 60,  zoom: 62 },
   hunting:  { name: 'HUNTING RIFLE', damage: 220, headMult: 3.0, fireInterval: 1.1,   auto: false, mag: 5,  reserve: 35,  reload: 2.9, pellets: 1, hip: 0.05,  ads: 0.0,   range: 400, zoom: 28 },
   lmg:      { name: 'LA BESTIA LMG', damage: 42,  headMult: 3.0, fireInterval: 0.075, auto: true,  mag: 75, reserve: 300, reload: 4.5, pellets: 1, hip: 0.045, ads: 0.008, range: 300, zoom: 50 },
+  // the wonder weapon (mystery box only): lobs coconuts that burst on impact
+  coconut:  { name: 'COCONUT CANNON', damage: 650, headMult: 1.0, fireInterval: 0.85, auto: false, mag: 3, reserve: 24, reload: 2.6, pellets: 1, hip: 0.02, ads: 0.004, range: 120, zoom: 62, projectile: { speed: 40, gravity: 9, radius: 5.5 } },
 };
 export const WEAPON = WEAPONS.rifle; // kept for older code paths
 export const START_WEAPONS = ['rifle', 'revolver'];
@@ -560,7 +643,7 @@ export const BUY_RANGE = 2.2;
 
 export const MELEE = { damage: 150, range: 2.4, interval: 0.55 };
 export const GRENADE = { fuse: 2.2, radius: 7, damage: 480, perWave: 2, max: 4 };
-export const POWERUP_TYPES = ['maxammo', 'instakill', 'double', 'nuke'];
+export const POWERUP_TYPES = ['maxammo', 'instakill', 'double', 'nuke', 'carpenter', 'firesale'];
 export const POWERUP_CHANCE = 0.045;
 export const POWERUP_TIME = 30;
 export const REPAIR_TIME = 0.7;

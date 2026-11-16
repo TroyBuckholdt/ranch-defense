@@ -347,6 +347,49 @@ export class Audio {
     e.g.gain.setTargetAtTime(on ? 0.11 * gain : 0, t, 0.15);
   }
 
+  // the generator catching: a starter whine, a thump, then a hum that fades
+  powerOn() {
+    if (!this.ctx) return;
+    const o = this.master;
+    this.tone(o, { dur: 0.6, type: 'sawtooth', freq: 60, freqEnd: 180, gain: 0.25, attack: 0.05 });
+    this.noise(o, { dur: 0.25, type: 'lowpass', freq: 400, gain: 0.8, start: 0.55 });
+    this.tone(o, { dur: 2.4, type: 'square', freq: 55, gain: 0.08, start: 0.6, attack: 0.2 });
+    this.tone(o, { dur: 2.4, type: 'sine', freq: 110, gain: 0.12, start: 0.6, attack: 0.2 });
+  }
+
+  // a perk: cap off, glug glug, and (if it's mine) a little four-note jingle
+  drink(mine, pos = null) {
+    if (!this.ctx) return;
+    const o = this.out(pos, 4);
+    this.noise(o, { dur: 0.08, type: 'highpass', freq: 3000, gain: 0.5 });
+    for (let i = 0; i < 3; i++) this.tone(o, { dur: 0.12, type: 'sine', freq: 180, freqEnd: 120, gain: 0.35, start: 0.25 + i * 0.22 });
+    if (mine) [523, 659, 784, 1047].forEach((f, i) => this.tone(this.master, { dur: 0.25, type: 'triangle', freq: f, gain: 0.12, start: 1.0 + i * 0.13 }));
+  }
+
+  // the mystery box's music box, while the guns spin
+  musicBox(pos) {
+    if (!this.ctx) return;
+    const o = this.out(pos, 6);
+    const tune = [784, 659, 587, 659, 784, 880, 784, 659, 523, 587, 659, 587, 523, 494, 523];
+    tune.forEach((f, i) => { this.tone(o, { dur: 0.5, type: 'sine', freq: f, gain: 0.16, start: i * 0.27 }); this.tone(o, { dur: 0.3, type: 'sine', freq: f * 2, gain: 0.04, start: i * 0.27 }); });
+  }
+
+  // the toy cow's laugh when the box moves
+  laugh(pos) {
+    if (!this.ctx) return;
+    const o = this.out(pos, 8);
+    for (let i = 0; i < 5; i++) this.tone(o, { dur: 0.16, type: 'sawtooth', freq: 300 - i * 18, freqEnd: 220 - i * 15, gain: 0.18, start: i * 0.19, attack: 0.02 });
+    this.play('moo_b', { pos, gain: 0.6, rate: 1.6, start: 1.0 });
+  }
+
+  // the electric fence: crackling bursts
+  zap(pos) {
+    if (!this.ctx) return;
+    const o = this.out(pos, 10);
+    for (let i = 0; i < 12; i++) this.noise(o, { dur: 0.06 + Math.random() * 0.1, type: 'bandpass', freq: 2500 + Math.random() * 3000, q: 2, gain: 0.6, start: i * 0.09 + Math.random() * 0.05 });
+    this.tone(o, { dur: 1.3, type: 'sawtooth', freq: 120, gain: 0.08 });
+  }
+
   // heavy footfall / body hitting the ground (the boss)
   thud(pos, power = 1) {
     if (!this.ctx) return;

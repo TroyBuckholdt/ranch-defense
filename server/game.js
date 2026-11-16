@@ -12,6 +12,7 @@ import {
   MELEE, GRENADE, POWERUP_TYPES, POWERUP_CHANCE, POWERUP_TIME, REPAIR_TIME, REPAIR_RANGE,
   resolveCircle, raySolids, raySphere, cowHitSpheres, insideHouse, heightAt, shoreZ, solidsNear, playerPassable, DOG_TYPES, DOG_LEASH, BLANKET, COW_TYPE_LIST, LOCALS_WAVE, BOSS_WAVE, BOTTLE,
   VEHICLES, VEHICLE_SEATS, ENTER_RANGE, DRIVE, vehicleLocal, vehicleWorld, vehicleGap, pushOutOfVehicle,
+  POWER, PERKS, PERK_MACHINES, MAX_PERKS, BOX, PAP, TRAP, USE_RANGE, stationSpot, weaponStats, maxHealth,
 } from '../shared/world.js';
 
 const TICK = 1 / 20;
@@ -23,6 +24,7 @@ const REVIVE_TIME = 3;
 const VAULT_TIME = 1.1;
 const MAX_ALIVE_COWS = 40;
 const MAX_ALIVE_PEOPLE = 18;   // people are heavier to draw than cows
+const START_SCORE = +process.env.RD_START_POINTS || START_POINTS; // (for testing the machines)
 const START_WAVE = Math.max(1, parseInt(process.env.RD_START_WAVE || '1', 10) || 1); // for testing later rounds
 
 // ---- Path grid ------------------------------------------------------------
@@ -147,6 +149,10 @@ export class Room {
     this.spawnTimer = 0;
     this.cows.clear();
     this.nades = []; this.powerups = []; this.bottles = []; this.instakill = 0; this.doublePts = 0;
+    this.power = false; this.fireSale = 0; this.shells = [];
+    this.box = { spot: 0, state: 'idle', t: 0, weapon: null, by: 0, uses: 0, paid: 0 };
+    this.pap = { state: 'idle', t: 0, by: 0, weapon: null };
+    this.trap = { on: 0, cool: 0, by: 0 };
     this.vehicles = VEHICLES.map(d => ({ id: d.id, def: d, x: d.x, z: d.z, yaw: d.yaw, speed: 0, steer: 0, seats: [0, 0, 0, 0] }));
     for (const p of this.players.values()) { p.veh = 0; p.seat = 0; }
     this.boards = ENTRIES.map(() => MAX_BOARDS);
@@ -168,12 +174,12 @@ export class Room {
     const [sx, sz] = PLAYER_SPAWNS[idx % PLAYER_SPAWNS.length];
     Object.assign(p, {
       x: sx, y: 0, z: sz, yaw: Math.PI, pitch: 0,
-      hp: 100, downed: false, dead: false, bleed: 0, revive: 0, lastHurt: -99, repairT: 0,
+      hp: maxHealth(p.perks), downed: false, dead: false, bleed: 0, revive: 0, lastHurt: -99, repairT: 0, selfRevive: false,
     });
   }
 
   addPlayer(id, name, send, char = 'p1') {
-    const p = { id, name, send, char, score: START_POINTS, kills: 0, using: false, lastShot: 0, lastMelee: 0, weapons: [...START_WEAPONS], cur: 0, grenades: GRENADE.perWave };
+    const p = { id, name, send, char, score: START_SCORE, kills: 0, using: false, lastShot: 0, lastMelee: 0, weapons: [...START_WEAPONS], cur: 0, grenades: GRENADE.perWave, perks: [], upg: [] };
     this.respawn(p);
     if (this.phase === 'wave' && [...this.players.values()].some(o => !o.dead && !o.downed)) {
       p.dead = true; p.hp = 0;
@@ -285,13 +291,177 @@ export class Room {
     }
   }
 
+  stats(p, id) { return weaponStats(id, p.upg.includes(id), p.perks); }
+
+  // within reach of a machine's front?
+  near(p, m) { const [x, z] = stationSpot(m); return Math.hypot(p.x - x, p.z - z) < USE_RANGE + 0.6; }
+  deny(p, why, cost = 0) { this.sendTo(p, { t: 'denied', why, cost }); }
+  pay(p, cost) { if (p.score < cost) { this.deny(p, 'points', cost); return false; } p.score -= cost; return true; }
+
+  // ---- the generator ----
+  onPower(p) {
+    if (p.downed || p.dead || this.power || !this.near(p, POWER)) return;
+    this.power = true;
+    this.broadcastEvent({ t: 'power', by: p.name });
+  }
+
+  // ---- perk machines ----
+  onPerk(p, m) {
+    const mc = PERK_MACHINES[m.i | 0];
+    if (!mc || p.downed || p.dead || !this.near(p, mc)) return;
+    const def = PERKS[mc.perk];
+    if (!this.power) return this.deny(p, 'power');
+    if (p.perks.includes(mc.perk)) return this.deny(p, 'have');
+    if (p.perks.length >= MAX_PERKS) return this.deny(p, 'full');
+    if (!this.pay(p, def.cost)) return;
+    p.perks.push(mc.perk);
+    if (mc.perk === 'jugg') p.hp = maxHealth(p.perks);
+    this.sendTo(p, { t: 'perk', perk: mc.perk });
+    this.broadcastEvent({ t: 'drink', id: p.id, perk: mc.perk }, p.id);
+  }
+
+  // ---- the mystery box ----
+  onBox(p, m) {
+    const b = this.box, spot = BOX.spots[b.spot];
+    if (p.downed || p.dead || !this.near(p, spot)) return;
+    if (b.state === 'ready' && b.by === p.id) { // take the gun
+      this.giveWeapon(p, b.weapon, m.slot);
+      this.sendTo(p, { t: 'bought', w: b.weapon, weapons: p.weapons, ammo: false, box: true });
+      b.state = 'idle'; b.weapon = null; b.by = 0;
+      return;
+    }
+    if (b.state !== 'idle') return;
+    const cost = this.fireSale > 0 ? BOX.fireSaleCost : BOX.cost;
+    if (!this.pay(p, cost)) return;
+    b.uses++; b.paid = cost; b.by = p.id; b.state = 'rolling'; b.t = BOX.roll;
+    if (this.fireSale <= 0 && b.uses > BOX.minUses && Math.random() < BOX.moveChance) b.weapon = 'teddy';
+    else { // a gun you don't already have, weighted
+      const pool = Object.entries(BOX.pool).filter(([id]) => !p.weapons.includes(id));
+      let r = Math.random() * pool.reduce((a, [, wt]) => a + wt, 0);
+      b.weapon = pool.find(([, wt]) => (r -= wt) < 0)?.[0] || pool[0][0];
+    }
+    this.broadcastEvent({ t: 'box', s: 'roll', by: p.id });
+  }
+
+  giveWeapon(p, id, slot) {
+    if (p.weapons.includes(id)) return;
+    if (p.weapons.length < 2) p.weapons.push(id);
+    else p.weapons[Math.max(0, Math.min(1, slot | 0))] = id;
+    p.upg = p.upg.filter(w => p.weapons.includes(w)); // a gun you put down loses its upgrade
+    p.cur = p.weapons.indexOf(id);
+  }
+
+  updateBox(dt) {
+    const b = this.box;
+    if (b.state === 'idle') return;
+    b.t -= dt;
+    if (b.t > 0) return;
+    if (b.state === 'rolling' && b.weapon === 'teddy') { // the toy cow: money back, and it moves
+      const p = this.players.get(b.by);
+      if (p) p.score += b.paid;
+      b.state = 'moving'; b.t = 3.5;
+      this.broadcastEvent({ t: 'box', s: 'teddy', by: b.by });
+    } else if (b.state === 'rolling') { b.state = 'ready'; b.t = BOX.take; }
+    else if (b.state === 'moving') {
+      const others = BOX.spots.map((_, i) => i).filter(i => i !== b.spot);
+      b.spot = others[Math.floor(Math.random() * others.length)];
+      b.uses = 0; b.state = 'idle'; b.weapon = null; b.by = 0;
+      this.broadcastEvent({ t: 'box', s: 'moved', spot: b.spot });
+    } else { b.state = 'idle'; b.weapon = null; b.by = 0; }   // nobody took it
+  }
+
+  // ---- El Taller: upgrade the gun in your hands ----
+  onPap(p, m) {
+    const w = m.w, pp = this.pap;
+    if (p.downed || p.dead || !this.near(p, PAP) || !p.weapons.includes(w)) return;
+    if (!this.power) return this.deny(p, 'power');
+    if (pp.state !== 'idle') return this.deny(p, 'busy');
+    if (p.upg.includes(w)) return this.deny(p, 'done');
+    if (!this.pay(p, PAP.cost)) return;
+    Object.assign(pp, { state: 'working', t: PAP.time, by: p.id, weapon: w });
+    this.broadcastEvent({ t: 'pap', s: 'start', by: p.id, w });
+  }
+
+  updatePap(dt) {
+    const pp = this.pap;
+    if (pp.state !== 'working' || (pp.t -= dt) > 0) return;
+    const p = this.players.get(pp.by);
+    if (p && p.weapons.includes(pp.weapon) && !p.upg.includes(pp.weapon)) {
+      p.upg.push(pp.weapon);
+      this.broadcastEvent({ t: 'pap', s: 'done', by: p.id, w: pp.weapon });
+    }
+    pp.state = 'idle'; pp.by = 0; pp.weapon = null;
+  }
+
+  // ---- the electric fence ----
+  onTrap(p) {
+    const tr = this.trap;
+    if (p.downed || p.dead || !this.near(p, TRAP)) return;
+    if (tr.on > 0 || tr.cool > 0) return this.deny(p, 'busy');
+    if (!this.pay(p, TRAP.cost)) return;
+    tr.on = TRAP.time; tr.by = p.id;
+    this.broadcastEvent({ t: 'trap', on: true, by: p.name });
+  }
+
+  updateTrap(dt) {
+    const tr = this.trap, z = TRAP.zone;
+    if (tr.on <= 0) { tr.cool = Math.max(0, tr.cool - dt); return; }
+    tr.on -= dt;
+    if (tr.on <= 0) { tr.cool = TRAP.cooldown; this.broadcastEvent({ t: 'trap', on: false }); }
+    for (const c of this.cows.values()) {
+      if (c.state === 'dead' || Math.abs(c.x - z.x) > z.w / 2 || Math.abs(c.z - z.z) > z.d / 2) continue;
+      const def = COW_TYPES[c.type];
+      c.hp -= TRAP.damage * dt * (def.boss ? 0.25 : 1);
+      if (!def.heavy) c.stagger = 0.15;
+      if (c.hp > 0) continue;
+      this.killCow(c);
+      const by = this.players.get(tr.by);
+      if (by) by.kills += 1;
+      this.broadcastEvent({ t: 'hit', cow: c.id, p: [c.x, 1, c.z], d: [0, 1, 0], head: false, kill: true, by: 0 });
+    }
+  }
+
+  // ---- coconuts in flight ----
+  updateShells(dt) {
+    for (let i = this.shells.length - 1; i >= 0; i--) {
+      const sh = this.shells[i];
+      let hit = false;
+      for (let k = 0; k < 2 && !hit; k++) {   // two substeps: they are quick
+        const h = dt / 2;
+        sh.vy -= sh.g * h;
+        const o = [sh.x, sh.y, sh.z], step = [sh.vx * h, sh.vy * h, sh.vz * h], len = Math.hypot(...step);
+        const dir = step.map(v => v / len);
+        const wall = raySolids(o, dir, len);
+        if (wall < len) { sh.x += dir[0] * wall; sh.y += dir[1] * wall; sh.z += dir[2] * wall; hit = true; break; }
+        sh.x += step[0]; sh.y += step[1]; sh.z += step[2];
+        if (sh.y < heightAt(sh.x, sh.z) + 0.1) hit = true;
+        for (const c of this.cows.values()) {
+          if (hit || c.state === 'dead' || Math.abs(c.x - sh.x) > 8 || Math.abs(c.z - sh.z) > 8) continue;
+          for (const sp of cowHitSpheres(c.type, c.x, c.z, c.yaw, c.y + heightAt(c.x, c.z))) {
+            if (Math.hypot(sp.x - sh.x, sp.y - sh.y, sp.z - sh.z) < sp.r + 0.2) { hit = true; break; }
+          }
+        }
+      }
+      sh.t -= dt;
+      if (!hit && sh.t > 0) continue;
+      this.shells.splice(i, 1);
+      const owner = this.players.get(sh.owner);
+      for (const c of this.cows.values()) {
+        if (c.state === 'dead') continue;
+        const dist = Math.hypot(c.x - sh.x, c.z - sh.z);
+        if (dist < sh.r) this.damageCow(owner, c, sh.dmg * (1 - (dist / sh.r) * 0.6), false, [c.x, 1, c.z], [c.x - sh.x, 0.4, c.z - sh.z]);
+      }
+      this.broadcastEvent({ t: 'boom', p: [sh.x, sh.y, sh.z], coco: true });
+    }
+  }
+
   award(p, n) { p.score += n * (this.doublePts > 0 ? 2 : 1); }
 
   // a shot from weapon m.w; shotguns send several pellet directions in m.ds
   onShoot(p, m) {
     if (p.downed || p.dead || (p.veh && p.seat === 0)) return; // hands on the wheel
-    const w = WEAPONS[m.w];
-    if (!w || !p.weapons.includes(m.w)) return;
+    if (!WEAPONS[m.w] || !p.weapons.includes(m.w)) return;
+    const w = this.stats(p, m.w);
     if (this.time - p.lastShot < w.fireInterval * 0.8) return;
     p.lastShot = this.time;
     p.cur = p.weapons.indexOf(m.w);
@@ -300,6 +470,14 @@ export class Room {
     if (!o.every(Number.isFinite) || Math.hypot(o[0] - p.x, o[2] - p.z) > 3) return;
     const dirs = (Array.isArray(m.ds) ? m.ds : [m.d]).slice(0, w.pellets).filter(Array.isArray);
     this.broadcastEvent({ t: 'fx', id: p.id, w: m.w, o, d: dirs[0] }, p.id);
+    if (w.projectile) { // a coconut, lobbed: it bursts on whatever it hits
+      const d = (dirs[0] || []).slice(0, 3).map(Number);
+      const l = Math.hypot(...d);
+      if (!d.every(Number.isFinite) || !l) return;
+      const v = w.projectile.speed / l;
+      this.shells.push({ id: this.nextPowerId++, x: o[0], y: o[1], z: o[2], vx: d[0] * v, vy: d[1] * v, vz: d[2] * v, t: 3, owner: p.id, dmg: w.damage, r: w.projectile.radius, g: w.projectile.gravity });
+      return;
+    }
     for (const d0 of dirs) {
       const dn = d0.slice(0, 3).map(Number);
       if (!dn.every(Number.isFinite)) continue;
@@ -376,10 +554,7 @@ export class Room {
     const cost = owned ? Math.round(st.cost / 2) : st.cost;
     if (p.score < cost) { this.sendTo(p, { t: 'buyfail', cost }); return; }
     p.score -= cost;
-    if (!owned) {
-      if (p.weapons.length < 2) p.weapons.push(st.weapon);
-      else p.weapons[Math.max(0, Math.min(1, m.slot | 0))] = st.weapon;
-    }
+    if (!owned) this.giveWeapon(p, st.weapon, m.slot);
     this.sendTo(p, { t: 'bought', w: st.weapon, weapons: p.weapons, ammo: owned });
   }
 
@@ -391,6 +566,7 @@ export class Room {
   updateExtras(dt, alive) {
     this.instakill = Math.max(0, this.instakill - dt);
     this.doublePts = Math.max(0, this.doublePts - dt);
+    this.fireSale = Math.max(0, this.fireSale - dt);
     for (let i = this.powerups.length - 1; i >= 0; i--) {
       const pu = this.powerups[i];
       pu.t -= dt;
@@ -407,6 +583,12 @@ export class Room {
         for (const p of this.players.values()) this.award(p, 400);
       }
       if (pu.type === 'maxammo') for (const p of this.players.values()) p.grenades = Math.min(GRENADE.max, p.grenades + 1);
+      if (pu.type === 'carpenter') { // every barricade back up, and points for it
+        this.boards = this.boards.map(() => MAX_BOARDS);
+        this.entryAge = this.playerAge = 99;
+        for (const p of this.players.values()) this.award(p, 200);
+      }
+      if (pu.type === 'firesale') this.fireSale = POWERUP_TIME; // the box costs 10 and stays put
       this.broadcastEvent({ t: 'powerup', type: pu.type, by: taker.name });
     }
     for (let i = this.nades.length - 1; i >= 0; i--) {
@@ -490,7 +672,8 @@ export class Room {
       this.timer -= dt;
       if (this.timer <= 0 && players.length) this.startWave();
     } else if (this.phase === 'wave') {
-      if (players.length && alive.length === 0) {
+      // (someone getting back up on their own still counts)
+      if (players.length && !players.some(p => !p.dead && (!p.downed || p.selfRevive))) {
         this.phase = 'gameover';
         this.timer = GAMEOVER_TIME;
         this.broadcastEvent({ t: 'gameover', wave: this.wave });
@@ -506,7 +689,7 @@ export class Room {
     } else if (this.phase === 'gameover') {
       this.timer -= dt;
       if (this.timer <= 0) {
-        for (const p of players) { p.score = START_POINTS; p.kills = 0; p.weapons = [...START_WEAPONS]; p.cur = 0; p.grenades = GRENADE.perWave; }
+        for (const p of players) { p.score = START_SCORE; p.kills = 0; p.weapons = [...START_WEAPONS]; p.cur = 0; p.grenades = GRENADE.perWave; p.perks = []; p.upg = []; }
         this.reset();
         this.broadcastEvent({ t: 'restart' });
       }
@@ -518,6 +701,7 @@ export class Room {
     this.updateDogs(dt, alive);
     this.updateVehicles(dt);
     this.updateExtras(dt, alive);
+    this.updateBox(dt); this.updatePap(dt); this.updateTrap(dt); this.updateShells(dt);
     this.updateBottles(dt);
     this.broadcastSnapshot();
   }
@@ -593,10 +777,16 @@ export class Room {
     for (const p of players) {
       if (p.downed) {
         p.bleed -= dt;
-        const helper = alive.find(a => a.using && Math.hypot(a.x - p.x, a.z - p.z) < 2.6);
-        if (helper) {
+        const helper = p.selfRevive ? null : alive.find(a => a.using && Math.hypot(a.x - p.x, a.z - p.z) < 2.6);
+        if (p.selfRevive) { // Second Wind, alone: back up on your own in four seconds
+          p.revive += dt * REVIVE_TIME / 4;
+          if (p.revive >= REVIVE_TIME) {
+            p.downed = false; p.selfRevive = false; p.hp = 50; p.revive = 0; p.lastHurt = this.time;
+            this.broadcastEvent({ t: 'chat', k: '{0} got back up', a: [p.name], msg: `${p.name} got back up` });
+          }
+        } else if (helper) {
           helper.reviving = true;
-          p.revive += dt;
+          p.revive += dt * (helper.perks.includes('revive') ? 2 : 1);
           if (p.revive >= REVIVE_TIME) {
             p.downed = false; p.hp = 50; p.revive = 0; p.lastHurt = this.time;
             this.award(helper, 150);
@@ -605,12 +795,12 @@ export class Room {
         } else {
           p.revive = Math.max(0, p.revive - dt * 2);
         }
-        if (p.bleed <= 0 && p.downed) {
+        if (p.bleed <= 0 && p.downed && !p.selfRevive) {
           p.downed = false; p.dead = true;
           this.broadcastEvent({ t: 'chat', k: '{0} bled out', a: [p.name], msg: `${p.name} bled out` });
         }
-      } else if (!p.dead && p.hp < 100 && this.time - p.lastHurt > 4) {
-        p.hp = Math.min(100, p.hp + 25 * dt);
+      } else if (!p.dead && p.hp < maxHealth(p.perks) && this.time - p.lastHurt > 4) {
+        p.hp = Math.min(maxHealth(p.perks), p.hp + 25 * dt * (p.perks.includes('jugg') ? 2 : 1));
       }
     }
     for (const p of alive) {
@@ -924,6 +1114,14 @@ export class Room {
       p.hp = 0;
       const others = [...this.players.values()].filter(o => o !== p && !o.dead && !o.downed);
       this.leaveVehicle(p, true);
+      const secondWind = p.perks.includes('revive');
+      p.perks = []; // going down costs you every perk
+      if (!others.length && secondWind) {
+        p.downed = true; p.selfRevive = true; p.bleed = BLEEDOUT; p.revive = 0;
+        this.sendTo(p, { t: 'perks', perks: [] });
+        return;
+      }
+      this.sendTo(p, { t: 'perks', perks: [] });
       if (others.length) {
         p.downed = true; p.bleed = BLEEDOUT; p.revive = 0;
         this.broadcastEvent({ t: 'chat', k: '{0} is down! Hold E next to them to revive', a: [p.name], msg: `${p.name} is down! Hold E next to them to revive` });
@@ -955,13 +1153,18 @@ export class Room {
       pu: this.powerups.map(u => [u.id, u.type, r(u.x), r(u.z)]),
       nd: this.nades.map(n => [n.id, r(n.x), r(n.y), r(n.z)]),
       ik: Math.ceil(this.instakill), dp: Math.ceil(this.doublePts),
+      pw: this.power ? 1 : 0, fs: Math.ceil(this.fireSale),
+      bx: [this.box.spot, ['idle', 'rolling', 'ready', 'moving'].indexOf(this.box.state), this.box.weapon, r(this.box.t), this.box.by],
+      pp: [this.pap.state === 'working' ? 1 : 0, r(this.pap.t), this.pap.by, this.pap.weapon],
+      tr: [Math.ceil(this.trap.on), Math.ceil(this.trap.cool)],
+      sh: this.shells.map(c => [c.id, r(c.x), r(c.y), r(c.z)]),
       veh: this.vehicles.map(v => [v.id, r(v.x), r(v.z), r(v.yaw), r(v.speed), r(v.steer), ...v.seats]),
       dogs: this.dogs.map(d => [d.id, d.kind === 'little' ? 1 : 0, r(d.x), r(d.z), r(d.yaw), d.state]),
       players: [...this.players.values()].map(p => ({
         id: p.id, n: p.name, c: p.char, x: r(p.x), y: r(p.y), z: r(p.z), yaw: r(p.yaw), pitch: r(p.pitch),
-        hp: Math.round(p.hp), dn: p.downed ? 1 : 0, dd: p.dead ? 1 : 0,
+        hp: Math.round(p.hp), dn: p.downed ? 1 : 0, sr: p.selfRevive ? 1 : 0, dd: p.dead ? 1 : 0,
         rv: Math.round((p.revive / REVIVE_TIME) * 100), bl: Math.ceil(p.bleed), s: p.score, k: p.kills,
-        rp: Math.round((p.repairT / REPAIR_TIME) * 100), rd: p.veh ? p.seat + 1 : 0, w: p.weapons, cw: p.weapons[p.cur] || p.weapons[0], g: p.grenades,
+        rp: Math.round((p.repairT / REPAIR_TIME) * 100), rd: p.veh ? p.seat + 1 : 0, pk: p.perks, up: p.upg, mh: maxHealth(p.perks), w: p.weapons, cw: p.weapons[p.cur] || p.weapons[0], g: p.grenades,
       })),
       cows: [...this.cows.values()].map(c => [
         c.id, COW_TYPE_LIST.indexOf(c.type), r(c.x), r(c.z), r(c.yaw),

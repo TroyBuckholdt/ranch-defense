@@ -549,8 +549,8 @@ export function buySign(name, cost) {
 // Floating power-up icon
 export function powerIcon(type) {
   const [c, g] = canvas(256);
-  const col = { maxammo: '#7cff6b', instakill: '#ff5050', double: '#ffd84a', nuke: '#ffa040' }[type];
-  const label = { maxammo: 'AMMO', instakill: 'SKULL', double: 'x2', nuke: 'NUKE' }[type];
+  const col = { maxammo: '#7cff6b', instakill: '#ff5050', double: '#ffd84a', nuke: '#ffa040', carpenter: '#5ab4ff', firesale: '#ff6ad5' }[type];
+  const label = { maxammo: 'AMMO', instakill: 'SKULL', double: 'x2', nuke: 'NUKE', carpenter: 'FIX', firesale: 'SALE' }[type];
   const gr = g.createRadialGradient(128, 128, 10, 128, 128, 128);
   gr.addColorStop(0, col); gr.addColorStop(0.45, col + 'aa'); gr.addColorStop(1, col + '00');
   g.fillStyle = gr; g.fillRect(0, 0, 256, 256);

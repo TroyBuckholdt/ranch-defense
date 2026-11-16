@@ -5,6 +5,7 @@
 // own scene, drawn on top of the world (see ViewmodelPass) and lit by their own lights.
 import * as THREE from 'three';
 import { gltfLoader } from './gltf.js';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import * as T from './textures.js';
 
 // Real-world fit for each generated model: overall length (m), where the trigger hand sits
@@ -16,6 +17,7 @@ const GUN_FIT = {
   shotgun:  { len: 1.04, grip: 0.34, fore: 0.68, sight: 0.03, adsZ: -0.24, hip: [0.14, -0.095, -0.32] },
   hunting:  { len: 1.12, grip: 0.33, fore: 0.62, sight: 0.075, scope: true, adsZ: -0.2, hip: [0.14, -0.1, -0.32] },
   lmg:      { len: 1.12, grip: 0.31, fore: 0.6, sight: 0.075, adsZ: -0.26, hip: [0.15, -0.11, -0.34] },
+  coconut:  { len: 0.97, grip: 0.3, fore: 0.68, sight: 0.09, adsZ: -0.3, hip: [0.15, -0.12, -0.36] },   // tools/blender/make_machines.py
 };
 // Arms: where each hand grips (gun space: origin at the trigger on the bore line, -Z toward
 // the muzzle, +X the gun's right side), which way the forearm runs back toward the elbow,
@@ -112,6 +114,15 @@ const BUILDERS = {
     hands(g, -0.36);
     return { g, muzzle: -0.96, mag, ads: new THREE.Vector3(0, -0.092, -0.17), scope: true };
   },
+  coconut() {
+    const g = new THREE.Group();
+    const pvc = new THREE.MeshStandardMaterial({ color: 0xe6e3d6, roughness: 0.45 });
+    part(tube(0.046, 0.046, 0.58), pvc, 0, 0, -0.42, g, HALF);
+    part(tube(0.075, 0.075, 0.3), pvc, 0, 0, 0.1, g, HALF);
+    const mag = part(new THREE.SphereGeometry(0.06, 10, 8), new THREE.MeshStandardMaterial({ color: 0x5a3a1e, roughness: 0.9 }), 0, 0, -0.66, g);
+    hands(g, -0.4);
+    return { g, muzzle: -0.72, mag, ads: new THREE.Vector3(0, -0.1, -0.3) };
+  },
   lmg() {
     const g = new THREE.Group();
     part(box(0.09, 0.12, 0.48), polymer, 0, 0, 0, g);
@@ -141,11 +152,14 @@ function machete() {
 }
 
 function singleMesh(scene) {
-  let mesh = null;
+  const meshes = [];
   scene.updateMatrixWorld(true);
-  scene.traverse(o => { if (o.isMesh && !mesh) mesh = o; });
-  const geo = mesh.geometry.clone().applyMatrix4(mesh.matrixWorld);
-  return { geo, mat: mesh.material };
+  scene.traverse(o => { if (o.isMesh) meshes.push(o); });
+  const geos = meshes.map(m => m.geometry.clone().applyMatrix4(m.matrixWorld));
+  if (meshes.length === 1) return { geo: geos[0], mat: meshes[0].material };
+  // several parts (one per material, e.g. the Blender-built coconut cannon): one geometry
+  // with a material group per part
+  return { geo: mergeGeometries(geos, true), mat: meshes.map(m => m.material) };
 }
 
 // Size of the cross-section at one end of the Z axis.
@@ -255,9 +269,29 @@ function placeArm(arm, fit, at) {
   return g;
 }
 
+function camoMaterial(src, time) {
+  const m = src.clone();
+  m.onBeforeCompile = (sh) => {
+    sh.uniforms.uCamoT = time;
+    sh.vertexShader = 'varying vec3 vCamoP;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvCamoP = position;');
+    sh.fragmentShader = 'uniform float uCamoT; varying vec3 vCamoP;\n' + sh.fragmentShader.replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+      {
+        float w = sin(vCamoP.z * 38.0 - uCamoT * 3.0 + sin(vCamoP.y * 60.0) * 1.5) * 0.5 + 0.5;
+        float band = smoothstep(0.82, 1.0, w);
+        vec3 tint = mix(vec3(0.38, 0.12, 0.85), vec3(1.0, 0.75, 0.25), smoothstep(0.3, 0.9, sin(vCamoP.z * 9.0 + uCamoT) * 0.5 + 0.5));
+        diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * tint * 1.6, 0.55);
+        totalEmissiveRadiance += tint * band * 0.9;
+      }`);
+  };
+  m.customProgramCacheKey = () => 'gun-camo';
+  return m;
+}
+
 function tuneGunMaterial(m) {
-  m.envMapIntensity = 1.0;
-  if (m.normalScale) m.normalScale.set(1.2, 1.2);
+  for (const x of [].concat(m)) {
+    x.envMapIntensity = 1.0;
+    if (x.normalScale) x.normalScale.set(1.2, 1.2);
+  }
 }
 
 export class Weapon {
@@ -327,7 +361,39 @@ export class Weapon {
     this.reloadT = 0; this.reloadDur = 1;
     this.aim = 0;
     this.switchT = 0; this.meleeT = 0; this.throwT = 0;
+    this.worldGeo = {};
+    this.camo = new Set();
+    this.camoTime = { value: 0 };
     this.setGun('rifle', true);
+  }
+
+  // A copy of a gun for the world (the mystery box prize, the gun on El Taller's press),
+  // once its model has loaded. Centred, muzzle along -Z.
+  worldGun(id) {
+    const w = this.worldGeo[id];
+    if (!w) return null;
+    const m = new THREE.Mesh(w.geo, w.mat);
+    w.geo.computeBoundingBox();
+    const c = w.geo.boundingBox.getCenter(new THREE.Vector3());
+    m.position.copy(c).negate();
+    const g = new THREE.Group(); g.add(m);
+    return g;
+  }
+
+  // Upgraded guns get a moving purple-and-gold sheen (El Taller's work).
+  setUpgraded(ids) {
+    const want = new Set(ids);
+    for (const [id, b] of Object.entries(this.guns)) {
+      const on = want.has(id);
+      if (on === this.camo.has(id) && !b.camoStale) continue;
+      b.camoStale = false;
+      if (on) this.camo.add(id); else this.camo.delete(id);
+      const meshes = b.gunMeshes || [];
+      for (const m of meshes) {
+        const plain = m.userData.plain || (m.userData.plain = m.material);
+        m.material = !on ? plain : Array.isArray(plain) ? plain.map(x => camoMaterial(x, this.camoTime)) : camoMaterial(plain, this.camoTime);
+      }
+    }
   }
 
   setGun(id, instant = false) {
@@ -355,6 +421,7 @@ export class Weapon {
   throwNade() { this.throwT = 0.5; }
 
   update(dt, { aiming, moveSpeed, sprinting, lookDX, lookDY, time, grounded }) {
+    this.camoTime.value = time;
     this.aim += ((aiming ? 1 : 0) - this.aim) * Math.min(1, dt * 14);
     const a = this.aim;
     this.sway.x += (-lookDX * 0.0006 - this.sway.x) * Math.min(1, dt * 10);
@@ -438,6 +505,8 @@ export class Weapon {
     Object.keys(GUN_FIT).forEach((id, i) => {
       try { this.fitGun(id, guns[i], armR, armL); } catch (e) { console.warn('gun model failed', id, e); }
     });
+    for (const b of Object.values(this.guns)) b.camoStale = true;
+    this.setUpgraded([...this.camo]);
     this.setGun(this.id, true);
   }
 
@@ -457,6 +526,7 @@ export class Weapon {
     geo.computeBoundingBox();
     geo.computeBoundingSphere();
     tuneGunMaterial(mat);
+    this.worldGeo[id] = { geo, mat };
 
     const model = new THREE.Group();
     let mag;
@@ -469,6 +539,7 @@ export class Weapon {
       }
     }
     if (!mag) { model.add(new THREE.Mesh(geo, mat)); mag = new THREE.Object3D(); model.add(mag); }
+    b.gunMeshes = model.children.filter(c => c.isMesh);
 
     // gloved arms
     const fore = f.fore != null ? -(f.fore - f.grip) * f.len : null;
