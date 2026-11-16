@@ -32,6 +32,9 @@ Update it when something here changes or a new standing preference comes up.
 - **Language**: English / Español buttons on the start screen (`client/src/i18n.js`; Spanish
   is keyed by the English text; add new strings there).
 - Phone support: touch controls, full screen, Low graphics preset with `*.lo.glb` models.
+- **Scenery**: trees and palms are Blender-built models instanced across the map
+  (`tools/blender/make_trees.py` -> `models/trees/trees.glb`). The ground shader tints each
+  layer separately (pasture, leaf litter, sand, road); keep the terrain material white.
 
 ## Where things are
 - `shared/world.js`: map layout, collision, enemy types (`COW_TYPES`), weapons, `VEHICLES`,
@@ -67,6 +70,8 @@ Update it when something here changes or a new standing preference comes up.
   (add `--simplify true --texture-size 512` for the `.lo.glb` phone version).
 - Do not name a scratch script `inspect.py` (it shadows a standard module and crashes bpy).
 - Cycles on CPU renders quick previews; use them to check a model before putting it in game.
+- Every `foo.glb` needs a `foo.lo.glb` beside it: Low graphics loads that name instead.
+- A set of High-quality stills takes about 3 minutes each here; check on Low first.
 
 ## Things that could not be done from a cloud session
 - Background removal models (`rembg`) could not be installed; Rafa's picker photo was cut
