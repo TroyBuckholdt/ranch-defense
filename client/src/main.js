@@ -13,6 +13,7 @@ import { buildWorld } from './world.js';
 import { CowView, loadCowAsset } from './cow.js';
 import { HumanView, preloadHumans, bottleMesh } from './humanoid.js';
 import { tauntLine } from './taunts.js';
+import { tr, lang, translateDom } from './i18n.js';
 import { Driving, VehicleView } from './vehicle.js';
 import { DogView, loadDogAssets } from './dog.js';
 import { Avatar, CHARACTERS, loadCharacter } from './avatar.js';
@@ -27,6 +28,8 @@ import * as T from './textures.js';
 import { detectTouch, isPhone, TouchControls, getSensitivity, setSensitivity } from './touch.js';
 
 const $ = (id) => document.getElementById(id);
+translateDom(); // English or Spanish, before anything else is shown
+const wname = (id) => tr(WEAPONS[id].name);
 const touchMode = detectTouch(); // phone / tablet: on-screen controls instead of pointer lock
 
 // ---------------------------------------------------------------- quality
@@ -97,7 +100,7 @@ if (urlRoom) roomInput.value = urlRoom;
 $('play').disabled = true;
 // loading readout: what's happening plus how many of the files have arrived
 let loadMsg = 'Waking the herd...', loadPct = 0, loading = true;
-const showLoad = () => { if (loading) $('menu-status').textContent = `${loadMsg} ${loadPct}%`; };
+const showLoad = () => { if (loading) $('menu-status').textContent = `${tr(loadMsg)} ${loadPct}%`; };
 THREE.DefaultLoadingManager.onProgress = (url, done, total) => { loadPct = Math.max(loadPct, Math.min(99, Math.round((done / total) * 100))); showLoad(); };
 showLoad();
 await Promise.all([loadCowAsset(renderer), loadDogAssets()]);
@@ -280,11 +283,11 @@ if (touchMode) {
 }
 
 $('play').onclick = async () => {
-  const name = nameInput.value.trim() || 'Rancher';
+  const name = nameInput.value.trim() || tr('Rancher');
   const room = roomInput.value.trim() || 'ranch';
   try { localStorage.setItem('rd-name', name); } catch {}
   $('play').disabled = true;
-  $('menu-status').textContent = 'Connecting...';
+  $('menu-status').textContent = tr('Connecting...');
   audio.start();
   if (touchMode) touch.goFullscreen(); // right in the tap: full screen isn't allowed after an await
   try {
@@ -296,7 +299,7 @@ $('play').onclick = async () => {
     if (touchMode) touch.show(true);
     else lockPointer();
   } catch (e) {
-    $('menu-status').textContent = e.message;
+    $('menu-status').textContent = tr(e.message);
     $('play').disabled = false;
   }
 };
@@ -312,7 +315,7 @@ function lockPointer() {
 const locked = () => document.pointerLockElement === renderer.domElement;
 // gameplay input is live: pointer locked on desktop, or simply in a game on touch screens
 const active = () => locked() || (touchMode && playing);
-const KEY_USE = touchMode ? '<kbd>USE</kbd>' : '<kbd>E</kbd>';
+const KEY_USE = touchMode ? `<kbd>${tr('USE')}</kbd>` : '<kbd>E</kbd>';
 const touch = touchMode ? new TouchControls({
   keys,
   fire(down) { mouseDown = down; if (!down) triggerHeld = false; },
@@ -577,11 +580,11 @@ function onEvent(m) {
       loadout.cur = Math.max(0, loadout.weapons.indexOf(m.w));
       weapon.setGun(m.w);
       audio.cash();
-      feed(m.ammo ? `Ammo refilled: ${WEAPONS[m.w].name}` : `Bought ${WEAPONS[m.w].name}`);
+      feed(m.ammo ? tr('Ammo refilled: {0}', wname(m.w)) : tr('Bought {0}', wname(m.w)));
       break;
     }
     case 'buyfail':
-      feed(`Not enough points ($${m.cost} needed)`);
+      feed(tr('Not enough points (${0} needed)', m.cost));
       audio.click();
       break;
     case 'swing':
@@ -596,8 +599,8 @@ function onEvent(m) {
       break;
     }
     case 'powerup': {
-      const label = { maxammo: 'MAX AMMO', instakill: 'INSTA-KILL', double: 'DOUBLE POINTS', nuke: 'KABOOM' }[m.type];
-      banner(label, `picked up by ${escapeHtml(m.by)}`, 2500);
+      const label = tr({ maxammo: 'MAX AMMO', instakill: 'INSTA-KILL', double: 'DOUBLE POINTS', nuke: 'KABOOM' }[m.type]);
+      banner(label, tr('picked up by {0}', escapeHtml(m.by)), 2500);
       audio.powerup(m.type);
       if (m.type === 'maxammo') refillAll();
       if (m.type === 'nuke') { hurtT = 0; shake = 1; }
@@ -643,7 +646,7 @@ function onEvent(m) {
     case 'taunt': { // Rafael mouthing off: subtitle under his health bar, and a slurred voice
       const [es, en] = tauntLine(m.k, m.i);
       const el = $('boss-line');
-      el.innerHTML = `<b>${escapeHtml(es)}</b><small>${escapeHtml(en)}</small>`;
+      el.innerHTML = `<b>${escapeHtml(es)}</b>${lang === 'es' ? '' : `<small>${escapeHtml(en)}</small>`}`; // he only speaks Spanish; English players get the gloss
       el.classList.add('show');
       clearTimeout(tauntTimer);
       tauntTimer = setTimeout(() => el.classList.remove('show'), m.k === 'death' ? 6000 : 4200);
@@ -680,9 +683,9 @@ function onEvent(m) {
       audio.hurt();
       break;
     case 'wave':
-      if (m.kind === 'boss') { banner(`WAVE ${m.wave}: RAFAEL`, "He's huge, he's drunk, and he's throwing bottles. Keep moving.", 6000); preloadHumans(); }
-      else if (m.kind === 'locals') { banner(`WAVE ${m.wave}: THE LOCALS`, `${m.count} locals with machetes are coming instead of the herd`, 5000); preloadHumans(['local']); }
-      else banner(`WAVE ${m.wave}`, `${m.count} zombie cows are coming for the house`);
+      if (m.kind === 'boss') { banner(tr('WAVE {0}: RAFAEL', m.wave), tr("He's huge, he's drunk, and he's throwing bottles. Keep moving."), 6000); preloadHumans(); }
+      else if (m.kind === 'locals') { banner(tr('WAVE {0}: THE LOCALS', m.wave), tr('{0} locals with machetes are coming instead of the herd', m.count), 5000); preloadHumans(['local']); }
+      else banner(tr('WAVE {0}', m.wave), tr('{0} zombie cows are coming for the house', m.count));
       // have the people-enemies downloaded before the rounds that need them
       if (m.wave >= LOCALS_WAVE - 2 && m.wave < BOSS_WAVE) preloadHumans(['local']);
       if (m.wave >= BOSS_WAVE - 2 && m.wave < BOSS_WAVE) preloadHumans();
@@ -690,13 +693,13 @@ function onEvent(m) {
       audio.music(true);
       break;
     case 'waveclear':
-      banner(`WAVE ${m.wave} SURVIVED`, 'Fix the barricades. Hold E at a window.');
+      banner(tr('WAVE {0} SURVIVED', m.wave), tr('Fix the barricades. Hold {0} at a window.', touchMode ? tr('USE') : 'E'));
       audio.stinger(true);
       audio.music(false);
       break;
     case 'gameover':
       for (const b of flyingBottles.splice(0)) scene.remove(b.mesh);
-      banner('THE HERD GOT IN', `You held the ranch for ${m.wave - 1} wave${m.wave === 2 ? '' : 's'}. Restarting...`, 8000);
+      banner(tr('THE HERD GOT IN'), m.wave === 2 ? tr('You held the ranch for 1 wave. Restarting...') : tr('You held the ranch for {0} waves. Restarting...', m.wave - 1), 8000);
       audio.stinger(false);
       audio.music(false);
       break;
@@ -706,10 +709,10 @@ function onEvent(m) {
       loadout.weapons = [...START_WEAPONS]; loadout.cur = 0; loadout.ammo = {}; weapon.setGun('rifle');
       break;
     case 'chat':
-      feed(m.msg);
+      feed(m.k ? tr(m.k, ...(m.a || [])) : m.msg);
       break;
     case 'disconnected':
-      feed('Lost connection to the server. Refresh to rejoin.');
+      feed(tr('Lost connection to the server. Refresh to rejoin.'));
       break;
   }
 }
@@ -760,17 +763,17 @@ function renderScoreboard() {
   const s = net.latest;
   if (!s) return;
   const rows = [...s.players].sort((a, b) => b.s - a.s).map(p =>
-    `<tr class="${p.id === net.id ? 'me' : ''}"><td>${escapeHtml(p.n)}${p.dn ? ' (down)' : p.dd ? ' (out)' : ''}</td><td>${p.k}</td><td>${p.s}</td></tr>`).join('');
-  $('scoreboard').innerHTML = `<div style="margin-bottom:8px;opacity:.7">Room <b>${escapeHtml(net.room)}</b> · invite link: ${escapeHtml(location.href)}</div>
-    <table><tr><th>Player</th><th>Kills</th><th>Score</th></tr>${rows}</table>`;
+    `<tr class="${p.id === net.id ? 'me' : ''}"><td>${escapeHtml(p.n)}${p.dn ? ' ' + tr('(down)') : p.dd ? ' ' + tr('(out)') : ''}</td><td>${p.k}</td><td>${p.s}</td></tr>`).join('');
+  $('scoreboard').innerHTML = `<div style="margin-bottom:8px;opacity:.7">${tr('Room')} <b>${escapeHtml(net.room)}</b> · ${tr('invite link:')} ${escapeHtml(location.href)}</div>
+    <table><tr><th>${tr('Player')}</th><th>${tr('Kills')}</th><th>${tr('Score')}</th></tr>${rows}</table>`;
 }
 const escapeHtml = (s) => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 // what the round's enemies are called in the counter under the wave number
 function leftWord(wave, n) {
-  if (wave === LOCALS_WAVE) return n === 1 ? 'local' : 'locals';
-  if (wave === BOSS_WAVE) return n === 1 ? 'enemy' : 'enemies';
-  return n === 1 ? 'cow' : 'cows';
+  if (wave === LOCALS_WAVE) return tr(n === 1 ? 'local' : 'locals');
+  if (wave === BOSS_WAVE) return tr(n === 1 ? 'enemy' : 'enemies');
+  return tr(n === 1 ? 'cow' : 'cows');
 }
 
 function updateHud(dt) {
@@ -778,8 +781,8 @@ function updateHud(dt) {
   if (!s || !mySnap) return;
   $('wave-num').textContent = s.wave;
   if ((s.phase === 'wave') !== !!audio.musicOn) audio.music(s.phase === 'wave'); // e.g. joined mid-wave
-  $('wave-sub').textContent = s.phase === 'intermission' ? `Next wave in ${s.timer}s`
-    : s.phase === 'wave' ? `${s.left} ${leftWord(s.wave, s.left)} left` : 'Game over';
+  $('wave-sub').textContent = s.phase === 'intermission' ? tr('Next wave in {0}s', s.timer)
+    : s.phase === 'wave' ? tr('{0} left', `${s.left} ${leftWord(s.wave, s.left)}`) : tr('Game over');
   // boss health bar
   let bossHp = -1;
   for (const c of s.cows) if (COW_TYPES[COW_TYPE_LIST[c[1]]].boss && c[6] !== 2) bossHp = c[5];
@@ -792,10 +795,10 @@ function updateHud(dt) {
   $('ammo-mag').textContent = reloadT > 0 ? '--' : am.mag;
   $('ammo-res').textContent = `/ ${am.res}`;
   $('ammo-mag').classList.toggle('low', am.mag <= Math.ceil(w.mag * 0.25));
-  $('weapon-name').textContent = w.name;
+  $('weapon-name').textContent = wname(curId());
   $('nades').textContent = '● '.repeat(mySnap.g || 0).trim();
-  $('reload-hint').textContent = reloadT > 0 ? 'RELOADING' : am.mag === 0 && am.res === 0 ? 'NO AMMO' : am.mag <= Math.ceil(w.mag * 0.25) ? (touchMode ? 'RELOAD' : 'R  RELOAD') : '';
-  $('powerups').innerHTML = (s.ik ? `<span class="pu ik">INSTA-KILL ${s.ik}</span>` : '') + (s.dp ? `<span class="pu dp">DOUBLE POINTS ${s.dp}</span>` : '');
+  $('reload-hint').textContent = reloadT > 0 ? tr('RELOADING') : am.mag === 0 && am.res === 0 ? tr('NO AMMO') : am.mag <= Math.ceil(w.mag * 0.25) ? tr(touchMode ? 'RELOAD' : 'R  RELOAD') : '';
+  $('powerups').innerHTML = (s.ik ? `<span class="pu ik">${tr('INSTA-KILL')} ${s.ik}</span>` : '') + (s.dp ? `<span class="pu dp">${tr('DOUBLE POINTS')} ${s.dp}</span>` : '');
   const spread = aiming ? 2 : 6 + Math.min(1, me.speed / 4) * 10 + weapon.recoil * 10;
   $('crosshair').style.setProperty('--spread', `${spread}px`);
   $('crosshair').style.opacity = aiming || driving ? 0 : 1;
@@ -807,12 +810,12 @@ function updateHud(dt) {
   const ov = $('downed-overlay');
   if (mySnap.dn) {
     ov.classList.add('show');
-    ov.querySelector('.big').textContent = "YOU'RE DOWN";
-    $('downed-sub').textContent = mySnap.rv > 0 ? `Being revived... ${mySnap.rv}%` : `Bleeding out in ${mySnap.bl}s. A teammate can hold ${touchMode ? 'USE' : 'E'} next to you to revive.`;
+    ov.querySelector('.big').textContent = tr("YOU'RE DOWN");
+    $('downed-sub').textContent = mySnap.rv > 0 ? tr('Being revived... {0}%', mySnap.rv) : tr('Bleeding out in {0}s. A teammate can hold {1} next to you to revive.', mySnap.bl, touchMode ? tr('USE') : 'E');
   } else if (mySnap.dd && s.phase !== 'gameover') {
     ov.classList.add('show');
-    ov.querySelector('.big').textContent = 'SPECTATING';
-    $('downed-sub').textContent = 'You come back when this wave is cleared.';
+    ov.querySelector('.big').textContent = tr('SPECTATING');
+    $('downed-sub').textContent = tr('You come back when this wave is cleared.');
   } else ov.classList.remove('show');
 
   // context prompt: revive > repair
@@ -820,27 +823,27 @@ function updateHud(dt) {
   if (alive() && view) {
     for (const [id, p] of view.players) {
       if (id !== net.id && p.dn && Math.hypot(p.x - me.pos.x, p.z - me.pos.z) < 2.6) {
-        prompt = p.rv > 0 ? `Reviving ${escapeHtml(p.n)}... ${p.rv}%` : `Hold ${KEY_USE} to revive ${escapeHtml(p.n)}`;
+        prompt = p.rv > 0 ? tr('Reviving {0}... {1}%', escapeHtml(p.n), p.rv) : tr('Hold {0} to revive {1}', KEY_USE, escapeHtml(p.n));
         break;
       }
     }
     if (ride) {
       const kmh = driving ? Math.round(Math.abs(driving.speed) * 3.6) : 0;
-      prompt = driving ? `<b>${kmh} km/h</b> &nbsp; ${touchMode ? 'stick to drive, JUMP handbrake,' : 'WASD drive, Space handbrake,'} ${KEY_USE} get out`
-        : `${KEY_USE} to get out`;
+      prompt = driving ? `<b>${kmh} km/h</b> &nbsp; ${tr(touchMode ? 'stick to drive, JUMP handbrake,' : 'WASD drive, Space handbrake,')} ${tr('{0} get out', KEY_USE)}`
+        : tr('{0} to get out', KEY_USE);
     }
     const bi = !prompt ? nearestBuy() : null;
     if (bi != null) {
       const b = WALL_BUYS[bi], owned = loadout.weapons.includes(b.weapon);
-      prompt = `${touchMode ? 'Tap' : 'Press'} ${KEY_USE} to ${owned ? 'buy ammo for' : 'buy'} ${WEAPONS[b.weapon].name} <b>$${owned ? Math.round(b.cost / 2) : b.cost}</b>`;
+      prompt = `${tr(owned ? '{0} {1} to buy ammo for {2}' : '{0} {1} to buy {2}', tr(touchMode ? 'Tap' : 'Press'), KEY_USE, wname(b.weapon))} <b>$${owned ? Math.round(b.cost / 2) : b.cost}</b>`;
     }
     if (!prompt) {
       const t = nearestTruck();
-      if (t) prompt = `${touchMode ? 'Tap' : 'Press'} ${KEY_USE} to ${t.free === 0 ? 'drive' : t.free === 1 ? 'ride in' : 'ride in the back of'} the ${t.name}`;
+      if (t) prompt = tr(t.free === 0 ? '{0} {1} to drive the {2}' : t.free === 1 ? '{0} {1} to ride in the {2}' : '{0} {1} to ride in the back of the {2}', tr(touchMode ? 'Tap' : 'Press'), KEY_USE, t.name);
     }
     if (!prompt) {
       const e = nearestRepairable();
-      if (e) prompt = mySnap.rp > 0 ? `Rebuilding... ${'▮'.repeat(s.boards[e.id])}${'▯'.repeat(MAX_BOARDS - s.boards[e.id])}` : `Hold ${KEY_USE} to rebuild barricade`;
+      if (e) prompt = mySnap.rp > 0 ? `${tr('Rebuilding...')} ${'▮'.repeat(s.boards[e.id])}${'▯'.repeat(MAX_BOARDS - s.boards[e.id])}` : tr('Hold {0} to rebuild barricade', KEY_USE);
     }
   }
   $('revive-prompt').innerHTML = prompt;

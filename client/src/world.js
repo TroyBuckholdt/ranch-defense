@@ -9,6 +9,7 @@
 //  - Models (Poly Haven, CC0): rocking chairs, sofa, dining table, crates, potted plants,
 //    ferns and shrubs (simplified for the jungle).
 import * as THREE from 'three';
+import { tr } from './i18n.js';
 import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import { gltfLoader, texURL, isLowDetail } from './gltf.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
@@ -924,7 +925,7 @@ function buildVeranda(models) {
 // Wall-buy station: a chalk sign with the gun's name and price, lit by a small lamp.
 function buildBuySign(b) {
   const g = new THREE.Group();
-  const sign = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 0.55), new THREE.MeshStandardMaterial({ map: T.buySign(WEAPONS[b.weapon].name, b.cost), roughness: 0.8, emissive: 0xffffff, emissiveIntensity: 0.12, emissiveMap: T.buySign(WEAPONS[b.weapon].name, b.cost) }));
+  const sign = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 0.55), new THREE.MeshStandardMaterial({ map: T.buySign(tr(WEAPONS[b.weapon].name), b.cost), roughness: 0.8, emissive: 0xffffff, emissiveIntensity: 0.12, emissiveMap: T.buySign(tr(WEAPONS[b.weapon].name), b.cost) }));
   sign.position.set(0, 1.55, 0);
   g.add(sign);
   const lamp = new THREE.PointLight(0xffd8a0, 2.5, 4, 2);

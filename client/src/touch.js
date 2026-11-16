@@ -1,6 +1,7 @@
 // Phone / tablet controls: a floating move stick on the left, drag-to-look on the right,
 // and a thumb arc of buttons around a big fire button. main.js only sees a few callbacks.
 import './touch.css';
+import { tr } from './i18n.js';
 
 const params = new URLSearchParams(location.search);
 
@@ -93,11 +94,11 @@ export class TouchControls {
     root.className = 'hidden';
     root.innerHTML = `
       <div class="stick-base"><div class="stick-knob"></div></div>
-      ${BUTTONS.map(([id, label]) => `<div class="tbtn tb-${id}" data-act="${id}"><span>${label}</span></div>`).join('')}`;
+      ${BUTTONS.map(([id, label]) => `<div class="tbtn tb-${id}" data-act="${id}"><span>${tr(label)}</span></div>`).join('')}`;
     document.body.appendChild(root);
     const rot = document.createElement('div');
     rot.id = 'rotate-prompt';
-    rot.innerHTML = '<div class="phone-icon"></div><div>Turn your phone sideways to play</div>';
+    rot.innerHTML = `<div class="phone-icon"></div><div>${tr('Turn your phone sideways to play')}</div>`;
     document.body.appendChild(rot);
 
     this.base = root.querySelector('.stick-base');

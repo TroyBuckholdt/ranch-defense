@@ -107,9 +107,11 @@ body.touch .menu-card { max-height: none; overflow: visible; margin: auto 0; }
   /* touch + landscape: two columns so PLAY fits on screen without scrolling */
   body.touch .menu-card {
     width: min(860px, 100%); display: grid; column-gap: 22px; row-gap: 0; align-items: start; grid-template-columns: 1fr 1fr;
-    grid-template-areas: "title title" "tag tag" "hint hint" "name plabel" "room chars" "gfx chars" "sens play" "status help";
+    grid-template-areas: "lang lang" "title title" "tag tag" "hint hint" "name plabel" "room chars" "gfx chars" "sens play" "status help";
   }
   body.touch .menu-left, body.touch .menu-right { display: contents; }
+  body.touch #lang { grid-area: lang; margin-bottom: 2px; }
+  body.touch #lang button { padding: 3px 12px; font-size: 13px; }
   body.touch .menu-card h1 { grid-area: title; font-size: 34px; }
   body.touch .menu-card h1 br { display: none; }
   body.touch .menu-card h1 span { margin-left: 0.25em; }
