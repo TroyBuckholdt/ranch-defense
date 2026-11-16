@@ -621,6 +621,25 @@ function buildHouse(updaters, models) {
     box(alongX ? wpiece.w : 0.03, 0.45, alongX ? 0.03 : wpiece.d, std({ color: 0xa89a88, roughness: 1 }), wpiece.x + nx * (half + 0.015), 0.22, wpiece.z + nz * (half + 0.015), group);
   }
 
+  // the wide arched opening between the living and dining rooms, like the photo
+  {
+    const w = 4.2, y0 = 2.55, rise = 0.55;
+    const sh = new THREE.Shape();
+    sh.moveTo(-w / 2, y0); sh.lineTo(-w / 2, wallH); sh.lineTo(w / 2, wallH); sh.lineTo(w / 2, y0);
+    sh.quadraticCurveTo(0, y0 + rise * 2, -w / 2, y0);
+    const g = new THREE.ExtrudeGeometry(sh, { depth: 0.2, bevelEnabled: true, bevelSize: 0.02, bevelThickness: 0.02, bevelSegments: 1, curveSegments: 28 });
+    g.translate(0, 0, -0.1);
+    { const uv = g.attributes.uv; for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) / 2.4, uv.getY(i) / 2.4); }
+    const arch = new THREE.Mesh(g, M.stuccoIn);
+    arch.rotation.y = Math.PI / 2; arch.position.set(-3, 0, 0);
+    arch.castShadow = arch.receiveShadow = true;
+    group.add(arch);
+    for (const sz of [-1, 1]) { // plaster pilasters framing the opening
+      const p = worldBox(0.3, y0, 0.22, M.stuccoIn, 2.4); p.position.set(-3, y0 / 2, sz * (w / 2 + 0.03)); group.add(p);
+      const cap = worldBox(0.36, 0.1, 0.3, M.stuccoIn, 2.4); cap.position.set(-3, y0 + 0.02, sz * (w / 2 + 0.03)); group.add(cap);
+    }
+  }
+
   const boards = [], grilles = [];
   for (const e of ENTRIES) {
     const alongX = e.nx === 0;
