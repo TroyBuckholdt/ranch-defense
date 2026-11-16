@@ -918,10 +918,14 @@ function ambientSounds(dt) {
   if (!view) return;
   mooTimer -= dt;
   if (mooTimer <= 0) {
-    mooTimer = 0.7 + Math.random() * 1.6;
     const live = [...view.cows.entries()].filter(([, c]) => c[3] !== 2);
+    // a moo every few seconds, a little more often with a big herd; nearer cows speak up more
+    mooTimer = (2.2 + Math.random() * 3) / (1 + Math.min(live.length, 12) / 12);
     if (live.length) {
-      const [, c] = live[Math.floor(Math.random() * live.length)];
+      const pick = () => live[Math.floor(Math.random() * live.length)][1];
+      const a = pick(), b = pick();
+      const d2 = (c) => (c[0] - me.pos.x) ** 2 + (c[1] - me.pos.z) ** 2;
+      const c = d2(a) < d2(b) ? a : b;
       audio.moo([c[0], 1.4, c[1]], COW_TYPE_LIST[c[5]]);
       // cows tearing at a window also bang on it
       if (c[3] === 3 && Math.random() < 0.6) audio.bang([c[0], 1.2, c[1]]);
