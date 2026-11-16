@@ -131,7 +131,8 @@ export class Avatar {
       this.speed += (Math.min(v, 9) - this.speed) * Math.min(1, dt * 8);
     }
     this.last = [s.x, s.z];
-    g.position.set(s.x, s.y, s.z);
+    if (s.rd) this.speed = 0; // riding in a truck: carried, not walking
+    g.position.set(s.x, s.y - (s.rd && s.rd < 3 ? 0.5 : 0), s.z); // sat down in the cab
     g.rotation.y = s.yaw + Math.PI; // camera yaw faces -Z; models face +Z
     g.visible = !s.dd;
     this.pitch += ((s.pitch || 0) - this.pitch) * Math.min(1, dt * 12);

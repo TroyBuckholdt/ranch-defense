@@ -45,6 +45,7 @@ export class Net {
     s.cowMap = new Map(s.cows.map(c => [c[0], c]));
     s.playerMap = new Map(s.players.map(p => [p.id, p]));
     s.dogMap = new Map((s.dogs || []).map(d => [d[0], d]));
+    s.vehMap = new Map((s.veh || []).map(v => [v[0], v]));
     this.buf.push(s);
     if (this.buf.length > 30) this.buf.shift();
     this.latest = s;
@@ -81,7 +82,14 @@ export class Net {
       const da = a.dogMap?.get(db[0]);
       dogs.set(db[0], da ? [lerp(da[2], db[2], k), lerp(da[3], db[3], k), lerpAngle(da[4], db[4], k), db[5], db[1]] : [db[2], db[3], db[4], db[5], db[1]]);
     }
-    return { cows, players, dogs };
+    const veh = new Map();
+    for (const vb of b.veh || []) {
+      const va = a.vehMap?.get(vb[0]);
+      veh.set(vb[0], va
+        ? { x: lerp(va[1], vb[1], k), z: lerp(va[2], vb[2], k), yaw: lerpAngle(va[3], vb[3], k), speed: lerp(va[4], vb[4], k), steer: lerp(va[5], vb[5], k) }
+        : { x: vb[1], z: vb[2], yaw: vb[3], speed: vb[4], steer: vb[5] });
+    }
+    return { cows, players, dogs, veh };
   }
 }
 

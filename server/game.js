@@ -11,11 +11,12 @@ import {
   MAP_HALF, SOLIDS, ENTRIES, MAX_BOARDS, PLAYER_SPAWNS, COW_TYPES, WEAPONS, START_WEAPONS, START_POINTS, WALL_BUYS, BUY_RANGE,
   MELEE, GRENADE, POWERUP_TYPES, POWERUP_CHANCE, POWERUP_TIME, REPAIR_TIME, REPAIR_RANGE,
   resolveCircle, raySolids, raySphere, cowHitSpheres, insideHouse, heightAt, shoreZ, solidsNear, playerPassable, DOG_TYPES, DOG_LEASH, BLANKET, COW_TYPE_LIST, LOCALS_WAVE, BOSS_WAVE, BOTTLE,
+  VEHICLES, VEHICLE_SEATS, ENTER_RANGE, DRIVE, vehicleLocal, vehicleWorld, vehicleGap, pushOutOfVehicle,
 } from '../shared/world.js';
 
 const TICK = 1 / 20;
 const INTERMISSION = 15;
-const FIRST_WAVE_DELAY = 10;
+const FIRST_WAVE_DELAY = +process.env.RD_FIRST_WAVE_DELAY || 10; // (override to look around in peace when testing)
 const GAMEOVER_TIME = 9;
 const BLEEDOUT = 30;
 const REVIVE_TIME = 3;
@@ -146,6 +147,8 @@ export class Room {
     this.spawnTimer = 0;
     this.cows.clear();
     this.nades = []; this.powerups = []; this.bottles = []; this.instakill = 0; this.doublePts = 0;
+    this.vehicles = VEHICLES.map(d => ({ id: d.id, def: d, x: d.x, z: d.z, yaw: d.yaw, speed: 0, steer: 0, seats: [0, 0, 0, 0] }));
+    for (const p of this.players.values()) { p.veh = 0; p.seat = 0; }
     this.boards = ENTRIES.map(() => MAX_BOARDS);
     this.vaulting = ENTRIES.map(() => 0);
     this.dogs = DOG_TYPES.map((d, i) => ({ id: i + 1, kind: d.kind, x: -4 + i * 3, z: 9, yaw: 0, hp: d.hp, state: 0, downT: 0, biteCd: 0, target: null, wander: Math.random() * 6 }));
@@ -161,6 +164,7 @@ export class Room {
   }
 
   respawn(p, idx = this.players.size) {
+    this.leaveVehicle(p, false);
     const [sx, sz] = PLAYER_SPAWNS[idx % PLAYER_SPAWNS.length];
     Object.assign(p, {
       x: sx, y: 0, z: sz, yaw: Math.PI, pitch: 0,
@@ -182,6 +186,7 @@ export class Room {
   removePlayer(id) {
     const p = this.players.get(id);
     if (!p) return;
+    this.leaveVehicle(p, false);
     this.players.delete(id);
     this.broadcastEvent({ t: 'chat', msg: `${p.name} left` });
     if (this.players.size === 0) {
@@ -195,17 +200,93 @@ export class Room {
     if (p.downed || p.dead) { p.using = false; return; }
     const nx = +m.p?.[0], ny = +m.p?.[1], nz = +m.p?.[2];
     if (![nx, ny, nz].every(Number.isFinite)) return;
-    if (Math.hypot(nx - p.x, nz - p.z) < 6) { p.x = nx; p.y = ny; p.z = nz; }
     p.yaw = +m.yaw || 0;
+    if (p.veh) { // riding: the truck carries them (and the driver's client steers the truck)
+      p.pitch = +m.pitch || 0; p.using = false;
+      const v = this.vehicles.find(o => o.id === p.veh);
+      if (v && p.seat === 0 && Array.isArray(m.v)) {
+        const [vx, vz, vyaw, vsp, vst] = m.v.map(Number);
+        if ([vx, vz, vyaw, vsp].every(Number.isFinite) && Math.hypot(vx - v.x, vz - v.z) < 5) {
+          v.x = vx; v.z = vz; v.yaw = vyaw; v.speed = Math.max(-DRIVE.reverse - 2, Math.min(DRIVE.max + 2, vsp)); v.steer = Math.max(-1, Math.min(1, vst || 0));
+        }
+      }
+      return;
+    }
+    if (Math.hypot(nx - p.x, nz - p.z) < 6) { p.x = nx; p.y = ny; p.z = nz; }
     p.pitch = +m.pitch || 0;
     p.using = !!m.use;
+  }
+
+  // ---- the trucks ----
+  onVehicle(p, m) {
+    if (m.a === 'out') { this.leaveVehicle(p, true); return; }
+    if (p.downed || p.dead || p.veh) return;
+    const v = this.vehicles.find(o => o.id === (m.id | 0));
+    if (!v || vehicleGap(v, v.def, p.x, p.z) > ENTER_RANGE + 0.6) return;
+    const seat = v.seats.indexOf(0);       // first free seat: the wheel if nobody has it
+    if (seat < 0) return;
+    v.seats[seat] = p.id; p.veh = v.id; p.seat = seat;
+    this.seatPlayer(v, p);
+  }
+
+  seatPlayer(v, p) {
+    const [l, f, h] = VEHICLE_SEATS[p.seat];
+    [p.x, p.z] = vehicleWorld(v, l, f);
+    p.y = heightAt(p.x, p.z) + h;
+  }
+
+  leaveVehicle(p, stepOut) {
+    if (!p.veh || !this.vehicles) { p.veh = 0; return; }
+    const v = this.vehicles.find(o => o.id === p.veh);
+    p.veh = 0;
+    if (!v) return;
+    const seat = v.seats.indexOf(p.id);
+    if (seat >= 0) v.seats[seat] = 0;
+    if (seat === 0) { v.speed = 0; v.steer = 0; }
+    if (!stepOut) return;
+    // step out on their own side, clear of the bodywork and of any wall
+    const [l, f] = VEHICLE_SEATS[Math.max(0, seat)];
+    const side = Math.sign(l) * (v.def.w / 2 + 0.85);
+    let [x, z] = vehicleWorld(v, side, seat >= 2 ? -v.def.l / 2 - 0.85 : f);
+    [x, z] = resolveCircle(x, z, 0.4, 0, 0.45, playerPassable);
+    p.x = x; p.z = z; p.y = heightAt(x, z);
+  }
+
+  // Riders move with their truck. A moving truck bowls cows over (and loses speed doing it);
+  // nothing alive is allowed to end up standing inside one.
+  updateVehicles(dt) {
+    for (const v of this.vehicles) {
+      for (let i = 0; i < v.seats.length; i++) {
+        const p = v.seats[i] && this.players.get(v.seats[i]);
+        if (!p || p.downed || p.dead) { if (p) this.leaveVehicle(p, true); else v.seats[i] = 0; continue; }
+        this.seatPlayer(v, p);
+      }
+      const driver = this.players.get(v.seats[0]);
+      if (!driver) v.speed = 0;
+      const sp = Math.abs(v.speed), fs = Math.sin(v.yaw) * Math.sign(v.speed || 1), fc = Math.cos(v.yaw) * Math.sign(v.speed || 1);
+      for (const c of this.cows.values()) {
+        if (c.state === 'dead' || c.state === 'vault') continue;
+        const def = COW_TYPES[c.type], r = Math.min(1, def.radius) * 0.6;
+        if (Math.abs(c.x - v.x) > 6 || Math.abs(c.z - v.z) > 6) continue;
+        const out = pushOutOfVehicle(v, v.def, c.x, c.z, r);
+        if (!out) continue;
+        if (driver && sp > 3 && this.time > (c.ramAt || 0)) {
+          c.ramAt = this.time + 0.7;
+          this.damageCow(driver, c, sp * 32, false, [c.x, 1, c.z], [fs, 0.2, fc]);
+          this.sendTo(driver, { t: 'ram', k: def.boss ? 0 : def.heavy ? 0.35 : 0.82 });
+          if (!def.heavy) { out[0] += fs * 1.2; out[1] += fc * 1.2; }
+        }
+        const [nx, nz] = resolveCircle(out[0], out[1], r);
+        if (insideHouse(nx, nz) === insideHouse(c.x, c.z)) { c.x = nx; c.z = nz; }
+      }
+    }
   }
 
   award(p, n) { p.score += n * (this.doublePts > 0 ? 2 : 1); }
 
   // a shot from weapon m.w; shotguns send several pellet directions in m.ds
   onShoot(p, m) {
-    if (p.downed || p.dead) return;
+    if (p.downed || p.dead || (p.veh && p.seat === 0)) return; // hands on the wheel
     const w = WEAPONS[m.w];
     if (!w || !p.weapons.includes(m.w)) return;
     if (this.time - p.lastShot < w.fireInterval * 0.8) return;
@@ -432,6 +513,7 @@ export class Room {
     this.updatePlayers(dt, players, alive);
     this.updateCows(dt, alive);
     this.updateDogs(dt, alive);
+    this.updateVehicles(dt);
     this.updateExtras(dt, alive);
     this.updateBottles(dt);
     this.broadcastSnapshot();
@@ -838,6 +920,7 @@ export class Room {
     if (p.hp <= 0) {
       p.hp = 0;
       const others = [...this.players.values()].filter(o => o !== p && !o.dead && !o.downed);
+      this.leaveVehicle(p, true);
       if (others.length) {
         p.downed = true; p.bleed = BLEEDOUT; p.revive = 0;
         this.broadcastEvent({ t: 'chat', msg: `${p.name} is down! Hold E next to them to revive` });
@@ -869,12 +952,13 @@ export class Room {
       pu: this.powerups.map(u => [u.id, u.type, r(u.x), r(u.z)]),
       nd: this.nades.map(n => [n.id, r(n.x), r(n.y), r(n.z)]),
       ik: Math.ceil(this.instakill), dp: Math.ceil(this.doublePts),
+      veh: this.vehicles.map(v => [v.id, r(v.x), r(v.z), r(v.yaw), r(v.speed), r(v.steer), ...v.seats]),
       dogs: this.dogs.map(d => [d.id, d.kind === 'little' ? 1 : 0, r(d.x), r(d.z), r(d.yaw), d.state]),
       players: [...this.players.values()].map(p => ({
         id: p.id, n: p.name, c: p.char, x: r(p.x), y: r(p.y), z: r(p.z), yaw: r(p.yaw), pitch: r(p.pitch),
         hp: Math.round(p.hp), dn: p.downed ? 1 : 0, dd: p.dead ? 1 : 0,
         rv: Math.round((p.revive / REVIVE_TIME) * 100), bl: Math.ceil(p.bleed), s: p.score, k: p.kills,
-        rp: Math.round((p.repairT / REPAIR_TIME) * 100), w: p.weapons, cw: p.weapons[p.cur] || p.weapons[0], g: p.grenades,
+        rp: Math.round((p.repairT / REPAIR_TIME) * 100), rd: p.veh ? p.seat + 1 : 0, w: p.weapons, cw: p.weapons[p.cur] || p.weapons[0], g: p.grenades,
       })),
       cows: [...this.cows.values()].map(c => [
         c.id, COW_TYPE_LIST.indexOf(c.type), r(c.x), r(c.z), r(c.yaw),

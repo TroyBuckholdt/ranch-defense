@@ -7,12 +7,13 @@ import { GTAOPass } from 'three/examples/jsm/postprocessing/GTAOPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { SunPass, ViewmodelPass } from './post.js';
 import {
-  ENTRIES, HOUSE, MAX_BOARDS, COW_TYPE_LIST, COW_TYPES, LOCALS_WAVE, BOSS_WAVE, BOTTLE, WEAPON, WEAPONS, START_WEAPONS, WALL_BUYS, BUY_RANGE, MELEE, REPAIR_RANGE, raySolids, raySphere, cowHitSpheres, insideHouse, heightAt, shoreZ, SAND_WIDTH,
+  ENTRIES, HOUSE, MAX_BOARDS, COW_TYPE_LIST, COW_TYPES, LOCALS_WAVE, BOSS_WAVE, BOTTLE, VEHICLES, VEHICLE_SEATS, ENTER_RANGE, vehicleGap, pushOutOfVehicle, vehicleWorld, WEAPON, WEAPONS, START_WEAPONS, WALL_BUYS, BUY_RANGE, MELEE, REPAIR_RANGE, raySolids, raySphere, cowHitSpheres, insideHouse, heightAt, shoreZ, SAND_WIDTH,
 } from '../../shared/world.js';
 import { buildWorld } from './world.js';
 import { CowView, loadCowAsset } from './cow.js';
 import { HumanView, preloadHumans, bottleMesh } from './humanoid.js';
 import { tauntLine } from './taunts.js';
+import { Driving, VehicleView } from './vehicle.js';
 import { DogView, loadDogAssets } from './dog.js';
 import { Avatar, CHARACTERS, loadCharacter } from './avatar.js';
 import { Weapon } from './weapon.js';
@@ -242,6 +243,11 @@ const pickupViews = new Map(); // power-ups on the ground
 const nadeViews = new Map();
 const flyingPlanks = [];
 const flyingBottles = [];
+// the trucks: one view each; `ride` is the truck and seat I'm in, `driving` my own simulation of it
+const truckViews = new Map(world.trucks.map(t => [t.def.id, new VehicleView(t.def, t.model, scene)]));
+for (const v of truckViews.values()) v.apply({ ...v.def, speed: 0, steer: 0 }, 0);
+let ride = null, driving = null, camSwing = 0, camSwingIdle = 0, dustT = 0;
+const chase = { pos: new THREE.Vector3(), ready: false };
 let view = null;            // latest interpolated world
 let mySnap = null;          // my own state from the server
 let playing = false;
@@ -315,7 +321,7 @@ const touch = touchMode ? new TouchControls({
   grenade: () => throwGrenade(),
   melee: () => doMelee(),
   swap: () => switchTo(1 - loadout.cur),
-  use(down) { keys.KeyE = down; if (down) tryBuy(); },
+  use(down) { keys.KeyE = down; if (down) useKey(); },
   look(dx, dy) { lookDX += dx; lookDY += dy; },
   flashlight() { flashlightOn = !flashlightOn; audio.click(); },
   scores(show) { $('scoreboard').classList.toggle('show', show); if (show) renderScoreboard(); },
@@ -353,7 +359,7 @@ addEventListener('keydown', (e) => {
   if (e.code === 'Digit2') switchTo(1);
   if (e.code === 'KeyV') doMelee();
   if (e.code === 'KeyG') throwGrenade();
-  if (e.code === 'KeyE') tryBuy();
+  if (e.code === 'KeyE') useKey();
   if (e.code === 'KeyF') { flashlightOn = !flashlightOn; audio.click(); }
 });
 addEventListener('keyup', (e) => {
@@ -431,7 +437,7 @@ function fire(time) {
 const r3 = (v) => Math.round(v * 1000) / 1000;
 
 function doMelee() {
-  if (!alive() || weapon.meleeT > 0) return;
+  if (!alive() || weapon.meleeT > 0 || driving) return;
   weapon.melee();
   audio.swish();
   net.send({ t: 'melee' });
@@ -439,7 +445,7 @@ function doMelee() {
 }
 
 function throwGrenade() {
-  if (!alive() || !mySnap || mySnap.g <= 0 || weapon.throwT > 0) return;
+  if (!alive() || !mySnap || mySnap.g <= 0 || weapon.throwT > 0 || driving) return;
   weapon.throwNade();
   const o = camera.getWorldPosition(new THREE.Vector3());
   const d = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
@@ -457,6 +463,94 @@ function tryBuy() {
   const i = nearestBuy();
   if (i == null || !alive()) return;
   net.send({ t: 'buy', s: i, slot: loadout.cur });
+}
+
+// ---------------------------------------------------------------- trucks
+// E: buy from a wall if one is in reach, otherwise get into (or out of) a truck
+function useKey() {
+  if (!alive()) return;
+  if (ride) { net.send({ t: 'veh', a: 'out' }); return; }
+  if (nearestBuy() != null) { tryBuy(); return; }
+  const t = nearestTruck();
+  if (t) net.send({ t: 'veh', a: 'in', id: t.id });
+}
+function nearestTruck() {
+  let best = null, bd = ENTER_RANGE;
+  for (const v of truckViews.values()) {
+    const d = vehicleGap(v, v.def, me.pos.x, me.pos.z);
+    if (d < bd) { bd = d; best = v.def; }
+  }
+  if (!best) return null;
+  const seats = net.latest?.vehMap?.get(best.id)?.slice(6) || [0, 0, 0, 0];
+  return seats.includes(0) ? { ...best, free: seats.indexOf(0) } : null;
+}
+
+// Where every truck is this frame: mine from my own driving, the rest from the server.
+function syncTrucks(dt) {
+  const s = net.latest;
+  if (!s?.veh) return;
+  // which truck am I in, if any?
+  let now = null;
+  for (const v of s.veh) { const seat = v.slice(6).indexOf(net.id); if (seat >= 0) now = { id: v[0], seat }; }
+  if (now && (!ride || ride.id !== now.id || ride.seat !== now.seat)) {
+    ride = now;
+    const v = s.vehMap.get(now.id);
+    driving = now.seat === 0 ? new Driving({ x: v[1], z: v[2], yaw: v[3] }) : null;
+    chase.ready = false; camSwing = 0;
+    aiming = false; mouseDown = false;
+    audio.click();
+  } else if (!now && ride) { // got out (or was thrown out): the server says where I'm standing
+    ride = null; driving = null;
+    if (mySnap) { me.teleport(mySnap.x, mySnap.y, mySnap.z); }
+    audio.click();
+  }
+  for (const [id, view_] of truckViews) {
+    if (driving && ride.id === id) { view_.apply(driving, dt); continue; }
+    const v = view?.veh?.get(id);
+    if (v) view_.apply(v, dt);
+  }
+}
+
+// The driver: W/S (or the stick) for throttle and brake/reverse, A/D to steer, Space handbrake.
+function stepDriving(dt) {
+  const v = truckViews.get(ride.id);
+  let throttle = (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0);
+  let steer = (keys.KeyA || keys.ArrowLeft ? 1 : 0) - (keys.KeyD || keys.ArrowRight ? 1 : 0);
+  if (keys.axisX || keys.axisY) { throttle = -keys.axisY || 0; steer = -keys.axisX || 0; }
+  if (!active()) throttle = steer = 0;
+  const bump = driving.step(dt, { throttle, steer, handbrake: !!keys.Space });
+  if (bump > 2) { audio.thud([driving.x, 1, driving.z], Math.min(1, bump / 9)); shake = Math.min(1.2, shake + bump / 12); }
+  // dust off the back wheels on dirt and sand
+  dustT -= dt * Math.abs(driving.speed);
+  if (dustT < 0 && Math.abs(driving.speed) > 4) {
+    dustT = 2.2;
+    const [dx, dz] = vehicleWorld(driving, (Math.random() - 0.5) * 1.6, -2.4 * Math.sign(driving.speed));
+    fx.puff(new THREE.Vector3(dx, heightAt(dx, dz) + 0.25, dz), 0xcfc4ae, 1.6 + Math.abs(driving.speed) * 0.08, 1.1);
+  }
+  v.seatWorld(0, me.pos);
+  me.vel.set(Math.sin(driving.yaw) * driving.speed, 0, Math.cos(driving.yaw) * driving.speed);
+  me.speed = 0; me.grounded = true; me.sprinting = false;
+  // mouse swings the chase camera round; it drifts back behind the truck when left alone
+  camSwing -= lookDX * 0.0022;
+  camSwingIdle = lookDX ? 0 : camSwingIdle + dt;
+  if (camSwingIdle > 1.2) camSwing -= camSwing * Math.min(1, dt * 2.5);
+  camSwing = Math.max(-2.6, Math.min(2.6, camSwing));
+  const a = driving.yaw + camSwing + (driving.speed < -1 && Math.abs(camSwing) < 0.1 ? 0 : 0);
+  const back = 7.4 + Math.abs(driving.speed) * 0.12, up = 3.1;
+  const target = tmpV.set(driving.x, v.y + 1.5, driving.z);
+  const want = tmpV2.set(driving.x - Math.sin(a) * back, v.y + up, driving.z - Math.cos(a) * back);
+  // don't let a wall or a tree come between the camera and the truck
+  const dir = want.clone().sub(target), len = dir.length(); dir.divideScalar(len);
+  const clear = raySolids([target.x, target.y, target.z], [dir.x, dir.y, dir.z], len);
+  if (clear < len) want.copy(target).addScaledVector(dir, Math.max(1.5, clear - 0.4));
+  want.y = Math.max(want.y, heightAt(want.x, want.z) + 1.0);
+  if (!chase.ready) { chase.pos.copy(want); chase.ready = true; }
+  chase.pos.lerp(want, Math.min(1, dt * 7));
+  camera.position.copy(chase.pos);
+  camera.lookAt(driving.x + Math.sin(driving.yaw) * 2.5, v.y + 1.3, driving.z + Math.cos(driving.yaw) * 2.5);
+  camera.rotateZ((Math.random() - 0.5) * shake * 0.01);
+  me.yaw = driving.yaw + Math.PI; me.pitch = 0;   // facing forward when they step out
+  weapon.root.visible = false;
 }
 
 // ---------------------------------------------------------------- server events
@@ -578,6 +672,9 @@ function onEvent(m) {
       if (d < 12) shake = Math.min(1.5, shake + (12 - d) / 14);
       break;
     }
+    case 'ram': // my truck hit something alive: it costs speed
+      if (driving) { driving.speed *= m.k; shake = Math.min(1.5, shake + 0.6); audio.thud([driving.x, 1, driving.z], 0.9); }
+      break;
     case 'hurt':
       hurtT = 1; shake = 1;
       audio.hurt();
@@ -605,6 +702,7 @@ function onEvent(m) {
       break;
     case 'restart':
       fx.clearPools();
+      ride = null; driving = null;
       loadout.weapons = [...START_WEAPONS]; loadout.cur = 0; loadout.ammo = {}; weapon.setGun('rifle');
       break;
     case 'chat':
@@ -700,7 +798,7 @@ function updateHud(dt) {
   $('powerups').innerHTML = (s.ik ? `<span class="pu ik">INSTA-KILL ${s.ik}</span>` : '') + (s.dp ? `<span class="pu dp">DOUBLE POINTS ${s.dp}</span>` : '');
   const spread = aiming ? 2 : 6 + Math.min(1, me.speed / 4) * 10 + weapon.recoil * 10;
   $('crosshair').style.setProperty('--spread', `${spread}px`);
-  $('crosshair').style.opacity = aiming ? 0 : 1;
+  $('crosshair').style.opacity = aiming || driving ? 0 : 1;
   $('scope').classList.toggle('show', weapon.scoped && weapon.aim > 0.85 && alive());
   $('damage').style.opacity = Math.max(hurtT, mySnap.hp < 35 ? 0.35 + Math.sin(performance.now() / 300) * 0.1 : 0);
   if ($('scoreboard').classList.contains('show')) renderScoreboard();
@@ -726,10 +824,19 @@ function updateHud(dt) {
         break;
       }
     }
+    if (ride) {
+      const kmh = driving ? Math.round(Math.abs(driving.speed) * 3.6) : 0;
+      prompt = driving ? `<b>${kmh} km/h</b> &nbsp; ${touchMode ? 'stick to drive, JUMP handbrake,' : 'WASD drive, Space handbrake,'} ${KEY_USE} get out`
+        : `${KEY_USE} to get out`;
+    }
     const bi = !prompt ? nearestBuy() : null;
     if (bi != null) {
       const b = WALL_BUYS[bi], owned = loadout.weapons.includes(b.weapon);
       prompt = `${touchMode ? 'Tap' : 'Press'} ${KEY_USE} to ${owned ? 'buy ammo for' : 'buy'} ${WEAPONS[b.weapon].name} <b>$${owned ? Math.round(b.cost / 2) : b.cost}</b>`;
+    }
+    if (!prompt) {
+      const t = nearestTruck();
+      if (t) prompt = `${touchMode ? 'Tap' : 'Press'} ${KEY_USE} to ${t.free === 0 ? 'drive' : t.free === 1 ? 'ride in' : 'ride in the back of'} the ${t.name}`;
     }
     if (!prompt) {
       const e = nearestRepairable();
@@ -766,6 +873,7 @@ function frame() {
   if (playing) {
     view = net.sample();
     mySnap = net.latest?.playerMap.get(net.id) || null;
+    syncTrucks(dt);
     stepLocal(dt);
     syncCows(dt);
     syncAvatars(dt);
@@ -821,14 +929,27 @@ function stepLocal(dt) {
   const downed = !!s.dn, dead = !!s.dd;
 
   // the server moved us (respawn / new wave): snap to it
-  if (Math.hypot(s.x - me.pos.x, s.z - me.pos.z) > 4 && !dead) me.teleport(s.x, s.y, s.z);
+  if (Math.hypot(s.x - me.pos.x, s.z - me.pos.z) > 4 && !dead && !ride) me.teleport(s.x, s.y, s.z);
 
   const sens = 0.0022 * (aiming ? 0.6 : 1);
   if (!dead) me.look(lookDX, lookDY, sens);
   const px = me.pos.x, pz = me.pos.z;
-  me.update(dt, keys, { aiming, downed, canMove: active() && !dead });
+  const riding = ride && !downed && !dead;
+  if (riding && driving) stepDriving(dt);
+  else if (riding) { // passenger: carried along, free to look around and shoot
+    truckViews.get(ride.id).seatWorld(ride.seat, me.pos);
+    me.vel.set(0, 0, 0); me.speed = 0; me.grounded = true; me.sprinting = false;
+  } else {
+    me.update(dt, keys, { aiming, downed, canMove: active() && !dead });
+    // parked or passing trucks are solid
+    for (const v of truckViews.values()) {
+      if (me.pos.y - heightAt(me.pos.x, me.pos.z) > v.def.h - 0.3) continue;
+      const out = pushOutOfVehicle(v, v.def, me.pos.x, me.pos.z, 0.38);
+      if (out) { me.pos.x = out[0]; me.pos.z = out[1]; }
+    }
+  }
   // footsteps: one every stride while on the ground (tile indoors and on the porch, grass outside)
-  if (me.grounded && !downed && !dead) {
+  if (me.grounded && !downed && !dead && !riding) {
     stepDist += Math.hypot(me.pos.x - px, me.pos.z - pz);
     const stride = me.sprinting ? 1.45 : me.crouching ? 0.7 : 1.0;
     if (stepDist > stride) {
@@ -846,7 +967,7 @@ function stepLocal(dt) {
   }
   // keep the loadout in sync with the server (e.g. after a restart)
   if (mySnap.w && mySnap.w.join() !== loadout.weapons.join()) { loadout.weapons = [...mySnap.w]; loadout.cur = Math.min(loadout.cur, loadout.weapons.length - 1); weapon.setGun(curId()); }
-  const canShoot = alive() && active() && reloadT <= 0 && !me.sprinting && weapon.meleeT <= 0 && weapon.switchT <= 0;
+  const canShoot = alive() && active() && reloadT <= 0 && !me.sprinting && weapon.meleeT <= 0 && weapon.switchT <= 0 && !driving;
   const am = ammo();
   if (mouseDown && canShoot && elapsed >= nextFire && am.mag > 0 && (W().auto || !triggerHeld)) fire(elapsed);
   else if (mouseDown && canShoot && am.mag === 0 && !triggerHeld) { startReload(); triggerHeld = true; }
@@ -860,10 +981,14 @@ function stepLocal(dt) {
       camera.rotation.set(t.pitch, t.yaw, 0, 'YXZ');
     }
     weapon.root.visible = false;
+  } else if (riding && driving) {
+    shake = Math.max(0, shake - dt * 4); // (the chase camera was placed by stepDriving)
   } else {
     shake = Math.max(0, shake - dt * 4);
     const bob = me.grounded ? Math.sin(weapon.bob) * 0.03 * Math.min(1, me.speed / 4) * (1 - weapon.aim * 0.8) : 0;
-    camera.position.set(me.pos.x, me.pos.y + me.eye - me.landDip + Math.abs(bob), me.pos.z);
+    // seated up front the eye is lower than standing; in the bed you stand
+    const eye = riding ? (ride.seat < 2 ? 1.3 : 1.62) : me.eye;
+    camera.position.set(me.pos.x, me.pos.y + eye - me.landDip + Math.abs(bob), me.pos.z);
     camera.rotation.set(
       Math.min(1.5, me.pitch + me.recoil) + (Math.random() - 0.5) * shake * 0.01,
       me.yaw + (Math.random() - 0.5) * shake * 0.01,
@@ -871,7 +996,7 @@ function stepLocal(dt) {
       'YXZ');
     weapon.root.visible = !downed;
   }
-  const targetFov = aiming && !downed ? W().zoom : me.sprinting ? 80 : me.sliding ? 82 : 74;
+  const targetFov = driving ? 70 + Math.min(14, Math.abs(driving.speed) * 0.8) : aiming && !downed ? W().zoom : me.sprinting ? 80 : me.sliding ? 82 : 74;
   camera.fov += (targetFov - camera.fov) * Math.min(1, dt * 12);
   camera.updateProjectionMatrix();
 
@@ -900,7 +1025,9 @@ function stepLocal(dt) {
   // tell the server where we are
   if (elapsed - lastStateSend > 0.05 && !dead) {
     lastStateSend = elapsed;
-    net.send({ t: 'state', p: [r2(me.pos.x), r2(me.pos.y), r2(me.pos.z)], yaw: r2(me.yaw), pitch: r2(me.pitch), use: !!keys.KeyE });
+    const st = { t: 'state', p: [r2(me.pos.x), r2(me.pos.y), r2(me.pos.z)], yaw: r2(me.yaw), pitch: r2(me.pitch), use: !!keys.KeyE && !ride };
+    if (driving) st.v = [r2(driving.x), r2(driving.z), r3(driving.yaw), r2(driving.speed), r2(driving.steer)];
+    net.send(st);
   }
 }
 const r2 = (v) => Math.round(v * 100) / 100;
@@ -995,6 +1122,15 @@ function syncBoards() {
 
 function ambientSounds(dt) {
   if (!view) return;
+  // engine: my own truck, or the nearest one that somebody is driving
+  let eng = null;
+  if (ride) { const v = truckViews.get(ride.id); eng = { speed: v.speed, d: 0, on: true }; }
+  else for (const [id, v] of truckViews) {
+    const occupied = (net.latest?.vehMap?.get(id)?.[6] || 0) !== 0;
+    const d = Math.hypot(v.x - me.pos.x, v.z - me.pos.z);
+    if (occupied && d < 70 && (!eng || d < eng.d)) eng = { speed: v.speed, d, on: true };
+  }
+  audio.engine(!!eng, eng ? Math.abs(eng.speed) : 0, eng ? Math.max(0.12, 1 - eng.d / 70) : 0);
   mooTimer -= dt;
   if (mooTimer <= 0) {
     const live = [...view.cows.entries()].filter(([, c]) => c[3] !== 2);
@@ -1018,4 +1154,4 @@ function ambientSounds(dt) {
 frame();
 
 // expose a little for automated testing / debugging
-window.__rd = { net, me, scene, camera, cowViews, renderer, CowView, HumanView, DogView, Avatar, weapon, world, vmScene, audio, fx };
+window.__rd = { net, me, scene, camera, cowViews, renderer, CowView, HumanView, DogView, Avatar, weapon, world, vmScene, audio, fx, keys, truckViews, get driving() { return driving; }, get ride() { return ride; } };
