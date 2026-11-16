@@ -335,6 +335,7 @@ export class TouchControls {
   // per-frame visual state from the game
   update({ aiming, crouched, prompt, canSwap, grenades, flashlight }) {
     if (!this.visible) return;
+    this.updateFullBtn();
     this.btn.aim.classList.toggle('on', !!aiming);
     this.btn.crouch.classList.toggle('on', !!crouched);
     this.btn.use.classList.toggle('ready', !!prompt);
