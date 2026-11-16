@@ -439,13 +439,15 @@ export const COW_TYPES = {
 };
 export const COW_TYPE_LIST = ['walker', 'runner', 'bull'];
 
-// The ranch dogs (two big red-brown dogs and the little fluffy one) fight on your side.
-// The ranch dogs. All three go after any cow near the players, through the doors if
-// the cow is on the other side of the walls.
+// The ranch dogs fight on your side: two big red-brown dogs (Jack, Mateo), the little
+// fluffy one (Taco) and Pepper, a sleek black lab mix. They go after any cow near the
+// players, through the doors if the cow is on the other side of the walls.
+// `coat` tints the shared dog model on the client ([r, g, b] multiplier, optional).
 export const DOG_TYPES = [
   { kind: 'big', name: 'Jack', hp: 90, speed: 7.5, sight: 30, bite: 1.0, damage: 7, biteEvery: 0.9, radius: 0.4 },
-  { kind: 'big', name: 'Mateo', hp: 90, speed: 7.2, sight: 30, bite: 1.0, damage: 7, biteEvery: 0.95, radius: 0.4 },
+  { kind: 'big', name: 'Mateo', hp: 90, speed: 7.2, sight: 30, bite: 1.0, damage: 7, biteEvery: 0.95, radius: 0.4, coat: [0.82, 0.74, 0.7] },
   { kind: 'little', name: 'Taco', hp: 45, speed: 8.0, sight: 24, bite: 0.7, damage: 3, biteEvery: 0.6, radius: 0.28 },
+  { kind: 'big', name: 'Pepper', hp: 90, speed: 7.8, sight: 30, bite: 1.0, damage: 7, biteEvery: 0.85, radius: 0.38, coat: [0.075, 0.11, 0.16], sleek: true, scale: 0.92 },
 ];
 export const DOG_LEASH = 32; // dogs only chase cows this close to a player
 

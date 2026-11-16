@@ -1,4 +1,5 @@
-// The ranch dogs: two big red-brown dogs and the little fluffy golden one, generated
+// The ranch dogs: two big red-brown dogs, the little fluffy golden one and Pepper (the big
+// model in a black coat), generated
 // from the ranch's own video (fal/Rodin) and rigged in Blender. They fight on your side.
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
@@ -34,19 +35,25 @@ export class DogView {
     this.root.add(this.body);
     const src = ASSETS[kind === 1 ? 'littledog' : 'bigdog'];
     this.bones = {};
+    const def = DOG_TYPES[id - 1];
     if (src) {
       const m = SkeletonUtils.clone(src);
       m.traverse(o => {
-        if (o.isMesh) { o.material = o.material.clone(); if (id === 2) o.material.color.setRGB(0.82, 0.74, 0.7); }
+        if (o.isMesh) {
+          o.material = o.material.clone();
+          if (def?.coat) o.material.color.setRGB(...def.coat);
+          if (def?.sleek) o.material.roughness = 0.5; // Pepper's short glossy black coat
+        }
         if (o.isBone) this.bones[o.name] = { bone: o, rest: o.quaternion.clone() };
       });
+      if (def?.scale) m.scale.multiplyScalar(def.scale);
       this.body.add(m);
     } else { // placeholder if the model didn't load
-      const b = new THREE.Mesh(new THREE.CapsuleGeometry(0.15, 0.5, 4, 8).rotateX(Math.PI / 2), new THREE.MeshStandardMaterial({ color: kind ? 0xd8b070 : 0x8a4a28 }));
+      const b = new THREE.Mesh(new THREE.CapsuleGeometry(0.15, 0.5, 4, 8).rotateX(Math.PI / 2), new THREE.MeshStandardMaterial({ color: def?.sleek ? 0x1c1a1a : kind ? 0xd8b070 : 0x8a4a28 }));
       b.position.y = 0.45; this.body.add(b);
     }
-    // name tag (Jack, Mateo...) floating over the dog
-    const name = DOG_TYPES[id - 1]?.name;
+    // name tag (Jack, Mateo, Pepper...) floating over the dog
+    const name = def?.name;
     if (name) {
       const tag = new THREE.Sprite(new THREE.SpriteMaterial({ map: nameTag(name, '#ffd27a'), depthTest: false, transparent: true }));
       tag.scale.set(1.0, 0.25, 1); tag.position.y = kind === 1 ? 0.95 : 1.35; tag.renderOrder = 10;

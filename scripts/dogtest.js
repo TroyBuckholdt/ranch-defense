@@ -13,7 +13,7 @@ for (const [label, px, pz] of [['veranda', 0, 12], ['inside the house', -6, 4.5]
     if (m.t === 'snap') return;
     ev[m.t] = (ev[m.t] || 0) + 1;
     if (m.t === 'dogbite') bites[m.dog] = (bites[m.dog] || 0) + 1;
-    if (m.t === 'chat' && /dog|Jack|Mateo/.test(m.msg)) chats.push(m.msg);
+    if (m.t === 'chat' && /dog|Jack|Mateo|Taco|Pepper/.test(m.msg)) chats.push(m.msg);
   });
   p.x = px; p.z = pz;
   room.hurtPlayer = () => {};
