@@ -10,7 +10,7 @@
 import {
   MAP_HALF, SOLIDS, ENTRIES, MAX_BOARDS, PLAYER_SPAWNS, COW_TYPES, WEAPONS, START_WEAPONS, START_POINTS, WALL_BUYS, BUY_RANGE,
   MELEE, GRENADE, POWERUP_TYPES, POWERUP_CHANCE, POWERUP_TIME, REPAIR_TIME, REPAIR_RANGE,
-  resolveCircle, raySolids, raySphere, cowHitSpheres, insideHouse, heightAt, shoreZ, solidsNear, playerPassable, DOG_TYPES, DOG_LEASH,
+  resolveCircle, raySolids, raySphere, cowHitSpheres, insideHouse, heightAt, shoreZ, solidsNear, playerPassable, DOG_TYPES, DOG_LEASH, BLANKET,
 } from '../shared/world.js';
 
 const TICK = 1 / 20;
@@ -367,7 +367,7 @@ export class Room {
         this.timer = INTERMISSION;
         let i = 0;
         for (const p of players) if (p.dead || p.downed) this.respawn(p, i++);
-        for (const d of this.dogs) { d.hp = DOG_TYPES.find(t => t.kind === d.kind).hp; if (d.state === 3) d.state = 0; }
+        for (const d of this.dogs) { d.hp = DOG_TYPES[d.id - 1].hp; if (d.state === 3) d.state = 0; }
         for (const p of players) p.grenades = Math.min(GRENADE.max, p.grenades + GRENADE.perWave);
         this.broadcastEvent({ t: 'waveclear', wave: this.wave });
       }
@@ -522,7 +522,7 @@ export class Room {
       const cIn = insideHouse(c.x, c.z), tIn = insideHouse(target.x, target.z);
 
       // a dog snapping at its legs gets the horns first
-      const pest = this.dogs.find(d => d.state !== 3 && Math.hypot(d.x - c.x, d.z - c.z) < def.reach * 0.8 && insideHouse(d.x, d.z) === insideHouse(c.x, c.z));
+      const pest = this.dogs.find(d => d.state !== 3 && !DOG_TYPES[d.id - 1].hider && Math.hypot(d.x - c.x, d.z - c.z) < def.reach * 0.8 && insideHouse(d.x, d.z) === insideHouse(c.x, c.z));
       if (pest && Math.random() < 0.5) {
         c.state = 'attack';
         c.yaw = turnToward(c.yaw, Math.atan2(pest.x - c.x, pest.z - c.z), dt * 8);
@@ -646,8 +646,9 @@ export class Room {
   // ---- the ranch dogs: follow the players, charge and bite zombie cows ----
   updateDogs(dt, alive) {
     for (const d of this.dogs) {
-      const def = DOG_TYPES.find(t => t.kind === d.kind);
+      const def = DOG_TYPES[d.id - 1];
       d.biteCd -= dt;
+      if (def.hider) { this.hideDog(d, def, dt); continue; }
       if (d.state === 3) { // knocked down
         d.downT -= dt;
         if (d.downT <= 0) { d.state = 0; d.hp = def.hp * 0.6; }
@@ -700,6 +701,24 @@ export class Room {
       d.x = nx; d.z = nz;
       d.yaw = turnToward(d.yaw, Math.atan2(gx, gz), dt * 9);
     }
+  }
+
+  // Pepper doesn't fight: she bolts into the house, through the arch to the living room,
+  // and crawls under her blanket (state 4), where she stays.
+  hideDog(d, def, dt) {
+    if (d.hidden) { d.state = 4; d.x = BLANKET.x; d.z = BLANKET.z; d.yaw = BLANKET.yaw; return; }
+    const dIn = insideHouse(d.x, d.z);
+    const [vx, vz] = BLANKET.via;
+    const target = !dIn || d.x > vx + 0.6 ? [vx, vz] : [BLANKET.x, BLANKET.z];
+    const goal = this.dogRoute(d, target[0], target[1]);
+    const gx = goal[0] - d.x, gz = goal[1] - d.z, gl = Math.hypot(gx, gz);
+    if (Math.hypot(BLANKET.x - d.x, BLANKET.z - d.z) < 0.35) { d.hidden = true; d.state = 4; return; }
+    d.state = 1;
+    if (gl < 1e-3) return;
+    let nx = d.x + (gx / gl) * def.speed * dt, nz = d.z + (gz / gl) * def.speed * dt;
+    [nx, nz] = resolveCircle(nx, nz, def.radius, 0, 0.4, playerPassable);
+    d.x = nx; d.z = nz;
+    d.yaw = turnToward(d.yaw, Math.atan2(gx, gz), dt * 9);
   }
 
   // Dogs have no pathfinding: when the goal is on the other side of the walls they go
