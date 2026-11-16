@@ -98,6 +98,13 @@ function fitModel(model, w, rotateToX = true) {
   return holder;
 }
 
+// real heights, and the turn that points each model's nose toward the front garden (+Z)
+const VEHICLES = {
+  f150: { length: 5.75, yaw: 0, tint: [0.6, 0.61, 0.64] },  // Carbonized Gray
+  chevy: { length: 5.84, yaw: 0 },
+  boat: { length: 8.2, yaw: 0 },                               // Cobalt 232 on its trailer, tongue toward the front
+};
+
 // scale a generated model to its real height, centred, feet on the floor, front facing +Z
 function fitReal(model, height, tint) {
   const m = model.clone();
@@ -272,7 +279,7 @@ export async function buildWorld(renderer, Q = { shadows: 2048, grass: 26000 }, 
   const house = buildHouse(updaters, models);
   scene.add(house.group);
   scene.add(buildVeranda(models));
-  for (const s of STRUCTURES) { const m = buildStructure(s, updaters); if (m) scene.add(m); }
+  for (const s of STRUCTURES) { const m = buildStructure(s, updaters, models); if (m) scene.add(m); }
   for (const b of HAY_BALES) scene.add(hayBale(b));
   scene.add(buildGardenWall());
   scene.add(buildHedges(models));
@@ -395,6 +402,7 @@ async function loadAllModels() {
     // the real house's furniture, generated from the family photos
     bench: 'house/bench.glb', caneRocker: 'house/rocker.glb', fan: 'house/fan.glb',
     diningChair: 'house/diningchair.glb', bar: 'house/bar.glb', xchair: 'house/xchair.glb',
+    f150: 'vehicles/f150.glb', chevy: 'vehicles/chevy.glb', boat: 'vehicles/boat.glb',
   };
   const out = {};
   await Promise.all(Object.entries(names).map(async ([k, p]) => { out[k] = await loadModel(p); }));
@@ -651,8 +659,9 @@ function buildHouse(updaters, models) {
 
     const list = [];
     const span = e.top - e.sill;
+    const boardH = Math.min(0.32, (span / MAX_BOARDS) * 0.62);
     for (let i = 0; i < MAX_BOARDS; i++) {
-      const g = new THREE.BoxGeometry(W + 0.45, 0.2, 0.05);
+      const g = new THREE.BoxGeometry(W + 0.45, boardH, 0.05);
       const uv = g.attributes.uv; for (let k = 0; k < uv.count; k++) uv.setXY(k, uv.getX(k) * 1.2 + i * 0.37, uv.getY(k) * 0.15 + i * 0.13);
       const b = new THREE.Mesh(g, M.planks);
       const y = e.sill + span * ((i + 0.5) / MAX_BOARDS);
@@ -910,12 +919,22 @@ function whiteBuilding(s, roofRise, doors = 2) {
   return g;
 }
 
-function buildStructure(s, updaters) {
+function buildStructure(s, updaters, models) {
   let g;
   switch (s.kind) {
     case 'veranda': return null;
     case 'windmill': g = windmill(s, updaters); break;
     case 'carport': g = carport(s); break;
+    // the family's vehicles (generated from photos of the same models)
+    case 'f150': case 'chevy': case 'boat': {
+      g = new THREE.Group(); g.position.set(s.x, heightAt(s.x, s.z), s.z);
+      const v = VEHICLES[s.kind];
+      const sz = new THREE.Box3().setFromObject(models[s.kind]).getSize(new THREE.Vector3());
+      const m = fitReal(models[s.kind], v.length * sz.y / Math.max(sz.x, sz.z), v.tint);
+      m.rotation.y = v.yaw;
+      g.add(m);
+      break;
+    }
     case 'bunkhouse': g = whiteBuilding(s, 2.4, 2); break;
     case 'feedstore': g = whiteBuilding(s, 1.4, 1); break;
     case 'fountain': {
@@ -942,21 +961,6 @@ function buildStructure(s, updaters) {
       const c = new THREE.Mesh(new THREE.CylinderGeometry(2.3, 2.3, 3, 32), m); c.position.y = 4.4; g.add(c);
       const cone = new THREE.Mesh(new THREE.ConeGeometry(2.4, 0.9, 32), m); cone.position.y = 6.3; g.add(cone);
       for (const [lx, lz] of [[-1.6, -1.6], [1.6, -1.6], [-1.6, 1.6], [1.6, 1.6]]) box(0.15, 2.9, 0.15, M.bluePipe, lx, 1.45, lz, g);
-      break;
-    }
-    case 'truck': {
-      g = new THREE.Group(); g.position.set(s.x, 0, s.z);
-      const paint = new THREE.MeshPhysicalMaterial({ color: 0xe8e6e0, roughness: 0.3, metalness: 0.3, clearcoat: 1, clearcoatRoughness: 0.15 });
-      const dark = std({ color: 0x1a1c1e, roughness: 0.6 });
-      box(2.2, 0.8, 5.2, paint, 0, 0.95, 0, g);
-      box(2.1, 0.95, 2.1, paint, 0, 1.8, -0.5, g);
-      box(2.12, 0.55, 1.6, new THREE.MeshStandardMaterial({ color: 0x111820, roughness: 0.05, metalness: 0.9 }), 0, 1.9, -0.5, g);
-      box(2.25, 0.25, 0.2, dark, 0, 0.7, -2.65, g);
-      for (const [wx, wz] of [[-1.05, -1.6], [1.05, -1.6], [-1.05, 1.7], [1.05, 1.7]]) {
-        const w = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, 0.3, 20), dark);
-        w.rotation.z = Math.PI / 2; w.position.set(wx, 0.45, wz); g.add(w);
-      }
-      g.rotation.y = 0.25;
       break;
     }
     case 'trough': {
@@ -1127,28 +1131,25 @@ function carport(s) {
   }
   for (const sz of [-1, 1]) box(s.w + 0.2, 0.22, 0.18, M.darkWood, 0, H + 0.1, sz * (s.d / 2 - 0.2), g);
   for (let x = -s.w / 2 + 0.3; x <= s.w / 2 - 0.3; x += 0.9) box(0.1, 0.16, s.d + 0.4, M.darkWood, x, H + 0.28, 0, g);
-  // hip roof: four tiled triangles/trapezoids meeting at a short ridge
-  const ov = 0.5, w = s.w / 2 + ov, d = s.d / 2 + ov, rise = 1.1, y0 = H + 0.36, rx = Math.max(0.2, w - d);
-  const P = (x, y, z) => [x, y, z];
-  const quads = [
-    [P(-w, y0, d), P(w, y0, d), P(rx, y0 + rise, 0), P(-rx, y0 + rise, 0)],
-    [P(w, y0, -d), P(-w, y0, -d), P(-rx, y0 + rise, 0), P(rx, y0 + rise, 0)],
-  ];
-  for (const q of quads) {
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(q.flat(), 3));
-    geo.setAttribute('uv', new THREE.Float32BufferAttribute([0, 0, (2 * w) / 2.2, 0, (w + rx) / 2.2, Math.hypot(d, rise) / 2.2, (w - rx) / 2.2, Math.hypot(d, rise) / 2.2], 2));
-    geo.setIndex([0, 1, 2, 0, 2, 3]); geo.computeVertexNormals();
-    const m = new THREE.Mesh(geo, M.roof); m.castShadow = m.receiveShadow = true; g.add(m);
-  }
+  // gable roof like the photo: ridge running front-to-back, white gable ends
+  const ov = 0.45, w = s.w / 2 + ov, d = s.d / 2 + ov, rise = 1.15, y0 = H + 0.36;
   for (const sx of [-1, 1]) {
     const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.Float32BufferAttribute([sx * w, y0, sx * d, sx * w, y0, -sx * d, sx * rx, y0 + rise, 0], 3));
-    geo.setAttribute('uv', new THREE.Float32BufferAttribute([0, 0, (2 * d) / 2.2, 0, d / 2.2, Math.hypot(w - rx, rise) / 2.2], 2));
-    geo.computeVertexNormals();
+    const q = [[sx * w, y0, -d], [sx * w, y0, d], [0, y0 + rise, d], [0, y0 + rise, -d]];
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(q.flat(), 3));
+    const sl = Math.hypot(w, rise) / 2.2;
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute([0, 0, (2 * d) / 2.2, 0, (2 * d) / 2.2, sl, 0, sl], 2));
+    geo.setIndex(sx > 0 ? [0, 2, 1, 0, 3, 2] : [0, 1, 2, 0, 2, 3]); geo.computeVertexNormals();
     const m = new THREE.Mesh(geo, M.roof); m.castShadow = m.receiveShadow = true; g.add(m);
+    box(0.12, 0.16, s.d + ov * 2, M.darkWood, sx * w, y0 - 0.05, 0, g);
   }
-  const ridge = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, rx * 2 + 0.2, 8), M.roof); ridge.rotation.z = Math.PI / 2; ridge.position.y = y0 + rise + 0.03; g.add(ridge);
+  for (const sz of [-1, 1]) {
+    const tri = new THREE.Shape(); tri.moveTo(-s.w / 2, 0); tri.lineTo(s.w / 2, 0); tri.lineTo(0, rise * (s.w / 2) / w); tri.lineTo(-s.w / 2, 0);
+    const tg = new THREE.ExtrudeGeometry(tri, { depth: 0.15, bevelEnabled: false });
+    const gm = new THREE.Mesh(tg, M.stucco); gm.position.set(0, y0, sz * (s.d / 2 - 0.2) - 0.075); gm.castShadow = gm.receiveShadow = true; g.add(gm);
+  }
+  // brick-red paved driveway out the front
+  const drive = worldBox(s.w + 0.4, 0.04, 6.5, M.terracotta, 1.4); drive.position.set(0, 0.02, s.d / 2 + 3.25); g.add(drive);
   const slab = worldBox(s.w + 0.6, 0.06, s.d + 0.6, std({ color: 0xb8b2a6, roughness: 0.9 }), 2); slab.position.y = 0.03; g.add(slab);
   return g;
 }
@@ -1335,14 +1336,14 @@ function buildHaciendaTop(group) {
 // Living foliage: matte leaves, wind sway (stronger higher up), per-leaf flutter, and light
 // glowing through the leaves when you look toward the sun.
 const FOLIAGE_TIME = { value: 0 };
-function foliage(m, { sway = 0.03, flutter = 0.006, tint = null, glow = 0.9, h = 'max(position.y, 0.0)' } = {}) {
+function foliage(m, { sway = 0.03, flutter = 0.006, tint = null, glow = 0.9, h = 'max(position.y, 0.0)', edgeFade = false } = {}) {
   // leaves are matte: the source roughness maps made them mirror the pale sky (silvery trees)
   m.roughnessMap = null; m.metalnessMap = null;
   m.roughness = 0.92;
   m.metalness = 0;
   m.envMapIntensity = 0.6;
   if (tint) m.color.multiply(new THREE.Color(...tint));
-  m.customProgramCacheKey = () => `foliage-${sway}-${flutter}-${glow}-${h}`;
+  m.customProgramCacheKey = () => `foliage-${sway}-${flutter}-${glow}-${h}-${edgeFade}`;
   m.onBeforeCompile = (sh) => {
     sh.uniforms.uFolTime = FOLIAGE_TIME;
     sh.vertexShader = 'uniform float uFolTime;\n' + sh.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
@@ -1357,6 +1358,10 @@ function foliage(m, { sway = 0.03, flutter = 0.006, tint = null, glow = 0.9, h =
         transformed.z += cos(uFolTime * 0.9 + ph * 1.3) * ${(sway * 0.7).toFixed(4)} * hh;
         transformed += objectNormal * sin(uFolTime * 7.0 + dot(position, vec3(13.1, 7.7, 9.3))) * ${flutter.toFixed(4)};
       }`);
+    if (edgeFade) sh.fragmentShader = sh.fragmentShader.replace('#include <alphatest_fragment>', `
+      // thin the leaves out toward the silhouette so crowns read as ragged foliage, not blobs
+      diffuseColor.a *= smoothstep(0.08, 0.5, abs(dot(normalize(vNormal), normalize(vViewPosition))));
+      #include <alphatest_fragment>`);
     sh.fragmentShader = sh.fragmentShader.replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
 #ifdef USE_FOG
       {
@@ -1455,6 +1460,26 @@ function buildVegetation(models, Q) {
   const canopy = meshOf(models.sapling);
   for (const c of canopy) foliage(c.material, { sway: 0.035, flutter: 0.012, tint: [0.62, 0.92, 0.42] });
   add(canopy, canopyT, { maxDist: 200, shadows: !lowQ });
+  // dense rounded crowns (the real trees are full and leafy): lumpy leaf-covered blobs
+  // filling each crown behind the branches
+  const blob = new THREE.IcosahedronGeometry(1, Q.shadows ? 2 : 1);
+  { const bp = blob.attributes.position, v = new THREE.Vector3();
+    for (let i = 0; i < bp.count; i++) { v.fromBufferAttribute(bp, i); const n = 1 + 0.22 * Math.sin(v.x * 5.1 + v.y * 3.7) * Math.cos(v.z * 4.3 - v.y * 2.1); v.multiplyScalar(n); v.y *= 0.78; bp.setXYZ(i, v.x, v.y, v.z); }
+    blob.computeVertexNormals(); }
+  const crownM = foliage(new THREE.MeshStandardMaterial({ map: T.leafClump(), alphaTest: 0.5, side: THREE.DoubleSide, color: 0xe8f0d8 }), { sway: 0.02, flutter: 0.01, h: 'max(position.y + 1.0, 0.0)', edgeFade: true });
+  const crownT = [];
+  broad.forEach((t, i) => {
+    const giant = t.kind === 'giant', h = (giant ? 9 : 5.5) * t.s, y = gy(t.x, t.z);
+    const R = (giant ? 4.0 : 2.7) * t.s, cy = y + h * 0.86;
+    crownT.push({ x: t.x, y: cy, z: t.z, ry: i, sx: R * 0.78, sy: R * 0.7, sz: R * 0.78 });
+    const n = giant ? 6 : 4;
+    for (let j = 0; j < n; j++) {
+      const a = j * (Math.PI * 2 / n) + i * 0.7, rr = R * (0.5 + (j % 2) * 0.12);
+      const sc = R * (0.48 + ((i + j) % 3) * 0.06);
+      crownT.push({ x: t.x + Math.cos(a) * rr, y: cy + ((j % 3) - 1) * R * 0.18, z: t.z + Math.sin(a) * rr, ry: a, sx: sc, sy: sc * 0.8, sz: sc });
+    }
+  });
+  add([{ geometry: blob, material: crownM }], crownT, { maxDist: 220, shadows: !lowQ });
 
   // undergrowth: ferns and shrubs from the real models
   const ferns = UNDERGROWTH.filter(u => u.kind === 'fern').map(u => ({ x: u.x, y: gy(u.x, u.z), z: u.z, ry: u.rot, s: u.s * 2.6 }));

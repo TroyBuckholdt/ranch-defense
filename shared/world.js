@@ -99,8 +99,9 @@ export const ENTRIES = ENTRY_DEFS.map((e, id) => {
   const z = along ? n[1] * HZ : e.at;
   return {
     id, ...e, width, x, z, nx: n[0], nz: n[1],
-    sill: e.kind === 'door' ? 0 : 0.95,
-    top: e.kind === 'door' ? 2.45 : 2.3,
+    // tall French windows and doors like the real house (a low ledge keeps the cows' climb-in)
+    sill: e.kind === 'door' ? 0 : 0.4,
+    top: 2.85,
     out: [x + n[0] * 2.1, z + n[1] * 2.1],   // where a cow stands to tear boards
     in: [x - n[0] * 2.1, z - n[1] * 2.1],    // where a cow lands after climbing in
     // solid box filling the opening (blocks walking, not bullets)
@@ -180,7 +181,11 @@ export const STRUCTURES = [
   { id: 'bunkhouse', kind: 'bunkhouse', x: 31, z: -14, w: 10, d: 20, h: 6.5 },
   { id: 'feedstore', kind: 'feedstore', x: -30, z: 22, w: 8, d: 6, h: 4.5 },
   { id: 'tank', kind: 'tank', x: -12, z: -30, w: 5, d: 5, h: 6 },
-  { id: 'truck', kind: 'truck', x: 16, z: 22, w: 2.3, d: 5.4, h: 1.9 },
+  // parked like the drone photo: the grey F-150 Tremor in the carport, the boat on its trailer
+  // in front of it beside the house, and the white Chevy on the lawn
+  { id: 'f150', kind: 'f150', x: 17.5, z: -0.4, w: 2.2, d: 5.9, h: 2.0 },
+  { id: 'boat', kind: 'boat', x: 15.7, z: 8.1, w: 2.6, d: 8.2, h: 2.7 },
+  { id: 'chevy', kind: 'chevy', x: 15.7, z: 16.2, w: 2.2, d: 5.9, h: 1.9 },
   { id: 'trough', kind: 'trough', x: 40, z: 18, w: 1.4, d: 5, h: 0.8 },
   { id: 'woodpile', kind: 'woodpile', x: -22, z: -12, w: 4, d: 1.6, h: 1.4 },
   // from the drone photo: the steel farm windmill behind the house and the tiled carport
@@ -245,6 +250,13 @@ export const UNDERGROWTH = [];
   }
   // palms in the front garden, like the photos
   for (const [x, z, s] of [[-7, 17, 1.2], [7.5, 15.5, 1.1], [-14, 10, 1.3], [13, 9, 1.15], [-4, 24, 1.0]]) TREES.push({ x, z, s, kind: 'palm' });
+  // big shade trees around the lawn and royal palms down the west side, after the drone photo
+  for (const [x, z, kind, s] of [
+    [-6, -20, 'giant', 1.3], [7, -25, 'broad', 1.3], [-21, -25, 'giant', 1.4], [22, -30, 'giant', 1.5],
+    [-35, -14, 'broad', 1.3], [38, -34, 'giant', 1.4], [31, 12, 'giant', 1.6], [-34, 33, 'giant', 1.4],
+    [20, 30, 'broad', 1.2], [-40, 0, 'broad', 1.3], [44, 0, 'broad', 1.3], [2, -36, 'broad', 1.2],
+    [-18, 2, 'palm', 1.35], [-19, -6, 'palm', 1.25],
+  ]) TREES.push({ x, z, s, kind });
 })();
 
 // All solid boxes. `shoot: true` means bullets pass through (open doors/windows).

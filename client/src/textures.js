@@ -670,3 +670,23 @@ export const compass = () => once('compass', () => {
   g.fillStyle = '#5e2c1d'; g.beginPath(); g.arc(m, m, 14, 0, Math.PI * 2); g.fill();
   return tex(c);
 });
+
+// Dense leaf clump for tree crowns: thousands of overlapping leaves with gaps (alpha), seamless.
+export const leafClump = () => once('leafClump', () => {
+  const S = 512, [c, g] = canvas(S); const r = rand(91);
+  g.clearRect(0, 0, S, S);
+  for (let i = 0; i < 2400; i++) {
+    const x = r() * S, y = r() * S, a = r() * Math.PI * 2, L = 8 + r() * 13, W = L * (0.36 + r() * 0.12);
+    const sh = 0.5 + r() * 0.65, warm = r() < 0.15;
+    const col = warm ? `rgb(${Math.round(88 * sh)},${Math.round(110 * sh)},${Math.round(36 * sh)})` : `rgb(${Math.round(46 * sh)},${Math.round(96 * sh)},${Math.round(32 * sh)})`;
+    for (const ox of [-S, 0, S]) for (const oy of [-S, 0, S]) {
+      const px = x + ox, py = y + oy;
+      if (px < -30 || px > S + 30 || py < -30 || py > S + 30) continue;
+      g.save(); g.translate(px, py); g.rotate(a);
+      g.fillStyle = col; g.beginPath(); g.ellipse(0, 0, L, W, 0, 0, Math.PI * 2); g.fill();
+      g.strokeStyle = 'rgba(170,205,110,0.3)'; g.lineWidth = 1; g.beginPath(); g.moveTo(-L * 0.9, 0); g.lineTo(L * 0.9, 0); g.stroke();
+      g.restore();
+    }
+  }
+  return tex(c, [2, 1]);
+});
