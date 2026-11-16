@@ -10,7 +10,7 @@
 import {
   MAP_HALF, SOLIDS, ENTRIES, MAX_BOARDS, PLAYER_SPAWNS, COW_TYPES, WEAPONS, START_WEAPONS, START_POINTS, WALL_BUYS, BUY_RANGE,
   MELEE, GRENADE, POWERUP_TYPES, POWERUP_CHANCE, POWERUP_TIME, REPAIR_TIME, REPAIR_RANGE,
-  resolveCircle, raySolids, raySphere, cowHitSpheres, insideHouse, heightAt, shoreZ, solidsNear, playerPassable, DOG_TYPES, DOG_LEASH, BLANKET,
+  resolveCircle, raySolids, raySphere, cowHitSpheres, insideHouse, heightAt, shoreZ, solidsNear, playerPassable, DOG_TYPES, DOG_LEASH, BLANKET, COW_TYPE_LIST, LOCALS_WAVE, BOSS_WAVE, BOTTLE,
 } from '../shared/world.js';
 
 const TICK = 1 / 20;
@@ -21,6 +21,8 @@ const BLEEDOUT = 30;
 const REVIVE_TIME = 3;
 const VAULT_TIME = 1.1;
 const MAX_ALIVE_COWS = 40;
+const MAX_ALIVE_PEOPLE = 18;   // people are heavier to draw than cows
+const START_WAVE = Math.max(1, parseInt(process.env.RD_START_WAVE || '1', 10) || 1); // for testing later rounds
 
 // ---- Path grid ------------------------------------------------------------
 const CELL = 1;
@@ -137,13 +139,13 @@ export class Room {
   }
 
   reset() {
-    this.wave = 0;
+    this.wave = START_WAVE - 1;
     this.phase = 'intermission';
     this.timer = FIRST_WAVE_DELAY;
     this.toSpawn = [];
     this.spawnTimer = 0;
     this.cows.clear();
-    this.nades = []; this.powerups = []; this.instakill = 0; this.doublePts = 0;
+    this.nades = []; this.powerups = []; this.bottles = []; this.instakill = 0; this.doublePts = 0;
     this.boards = ENTRIES.map(() => MAX_BOARDS);
     this.vaulting = ENTRIES.map(() => 0);
     this.dogs = DOG_TYPES.map((d, i) => ({ id: i + 1, kind: d.kind, x: -4 + i * 3, z: 9, yaw: 0, hp: d.hp, state: 0, downT: 0, biteCd: 0, target: null, wander: Math.random() * 6 }));
@@ -242,16 +244,19 @@ export class Room {
 
   damageCow(p, c, dmg, head, hit, d) {
     if (c.state === 'dead') return;
-    c.hp -= this.instakill > 0 ? c.hp : dmg;
+    c.hp -= this.instakill > 0 ? (COW_TYPES[c.type].boss ? dmg * 3 : c.hp) : dmg;
     if (p) this.award(p, 10);
     let kill = false;
     if (c.hp <= 0) {
       kill = true;
       this.killCow(c);
+      if (COW_TYPES[c.type].boss) this.taunt(c, 'death');
       if (p) { p.kills += 1; this.award(p, COW_TYPES[c.type].score + (head ? 50 : 0)); }
       if (Math.random() < POWERUP_CHANCE) this.dropPowerup(c.x, c.z);
-    } else if (c.type !== 'bull' && c.state !== 'vault') {
+    } else if (!COW_TYPES[c.type].heavy && c.state !== 'vault') {
       c.stagger = 0.22;
+    } else if (COW_TYPES[c.type].boss && c.tauntCd < 3 && (head || dmg > 150) && Math.random() < 0.5) {
+      this.taunt(c, 'hurt');
     }
     this.broadcastEvent({ t: 'hit', cow: c.id, p: hit, d, head, kill, by: p ? p.id : 0 });
   }
@@ -312,7 +317,9 @@ export class Room {
       if (pu.type === 'instakill') this.instakill = POWERUP_TIME;
       if (pu.type === 'double') this.doublePts = POWERUP_TIME;
       if (pu.type === 'nuke') {
-        for (const c of this.cows.values()) if (c.state !== 'dead') { this.killCow(c); }
+        for (const c of this.cows.values()) if (c.state !== 'dead') {
+          if (COW_TYPES[c.type].boss) this.damageCow(null, c, c.maxHp * 0.2, false, [c.x, 3, c.z], [0, 1, 0]); else this.killCow(c);
+        }
         for (const p of this.players.values()) this.award(p, 400);
       }
       if (pu.type === 'maxammo') for (const p of this.players.values()) p.grenades = Math.min(GRENADE.max, p.grenades + 1);
@@ -337,6 +344,47 @@ export class Room {
         if (dist < GRENADE.radius) this.damageCow(owner, c, GRENADE.damage * (1 - dist / GRENADE.radius * 0.7), false, [c.x, 1, c.z], [c.x - n.x, 0.3, c.z - n.z]);
       }
       this.broadcastEvent({ t: 'boom', p: [n.x, n.y, n.z] });
+    }
+  }
+
+  // Rafael never shuts up. The client holds the lines; we pick which kind and which one so
+  // everyone in the room hears the same thing.
+  taunt(c, kind) {
+    c.tauntCd = 4.5 + Math.random() * 3.5;
+    this.broadcastEvent({ t: 'taunt', cow: c.id, k: kind, i: Math.floor(Math.random() * 1000) });
+  }
+
+  bossTaunt(c, dt) {
+    c.tauntCd -= dt;
+    if (c.tauntCd > 0) return;
+    this.taunt(c, c.tauntKind || 'rant');
+    c.tauntKind = null;
+  }
+
+  // Rafael throws his empty at whoever he's after when they're out of arm's reach, indoors
+  // or up on something. It lands where they were standing, so keep moving.
+  bossThrow(c, target, td, dt) {
+    c.throwCd -= dt;
+    if (c.throwCd > 0 || td < BOTTLE.minDist || td > BOTTLE.maxDist || c.stagger > 0) return;
+    c.throwCd = BOTTLE.every * (0.8 + Math.random() * 0.5);
+    const time = 1.0 + td / 28;
+    const to = [target.x + (Math.random() - 0.5) * 1.5, target.z + (Math.random() - 0.5) * 1.5];
+    this.bottles.push({ x: to[0], z: to[1], t: time });
+    this.broadcastEvent({ t: 'bottle', cow: c.id, to, time: Math.round(time * 100) / 100 });
+    if (Math.random() < 0.6) this.taunt(c, 'throw');
+  }
+
+  updateBottles(dt) {
+    for (let i = this.bottles.length - 1; i >= 0; i--) {
+      const b = this.bottles[i];
+      b.t -= dt;
+      if (b.t > 0) continue;
+      this.bottles.splice(i, 1);
+      for (const p of this.players.values()) {
+        const d = Math.hypot(p.x - b.x, p.z - b.z);
+        if (d < BOTTLE.radius) this.hurtPlayer(p, Math.round(BOTTLE.damage * (1 - 0.6 * d / BOTTLE.radius)), b);
+      }
+      this.broadcastEvent({ t: 'smash', p: [Math.round(b.x * 100) / 100, Math.round(b.z * 100) / 100] });
     }
   }
 
@@ -385,6 +433,7 @@ export class Room {
     this.updateCows(dt, alive);
     this.updateDogs(dt, alive);
     this.updateExtras(dt, alive);
+    this.updateBottles(dt);
     this.broadcastSnapshot();
   }
 
@@ -394,15 +443,28 @@ export class Room {
     const n = this.wave;
     const pc = Math.max(1, this.players.size);
     const count = Math.round((6 + n * 3) * (1 + 0.45 * (pc - 1)));
-    const list = [];
-    for (let i = 0; i < count; i++) {
-      const runnerChance = n < 3 ? 0 : Math.min(0.45, 0.1 + n * 0.03);
-      list.push(Math.random() < runnerChance ? 'runner' : 'walker');
+    let list = [], kind = '';
+    const herd = (k, localChance) => {
+      for (let i = 0; i < k; i++) {
+        const runnerChance = n < 3 ? 0 : Math.min(0.45, 0.1 + n * 0.03);
+        list.push(Math.random() < localChance ? 'local' : Math.random() < runnerChance ? 'runner' : 'walker');
+      }
+    };
+    if (n === BOSS_WAVE) {
+      // Rafael comes out of the jungle first, with a smaller mixed crowd around him
+      kind = 'boss';
+      herd(Math.round(count * 0.45), 0.35);
+      list.splice(1, 0, 'rafael');
+    } else if (n === LOCALS_WAVE) {
+      kind = 'locals';
+      herd(Math.round(count * 0.75), 1);
+    } else {
+      herd(count, 0);
+      if (n % 5 === 0) for (let i = 0; i < 1 + Math.floor(n / 10); i++) list.splice(Math.floor(list.length / 2), 0, 'bull');
     }
-    if (n % 5 === 0) for (let i = 0; i < 1 + Math.floor(n / 10); i++) list.splice(Math.floor(list.length / 2), 0, 'bull');
     this.toSpawn = list;
     this.spawnTimer = 2;
-    this.broadcastEvent({ t: 'wave', wave: n, count: list.length });
+    this.broadcastEvent({ t: 'wave', wave: n, count: list.length, kind });
   }
 
   // Cows stagger out of the jungle 45-75 m from a random player, never right on top of anyone.
@@ -424,18 +486,21 @@ export class Room {
     this.spawnTimer -= dt;
     const living = [...this.cows.values()].filter(c => c.state !== 'dead').length;
     if (this.spawnTimer > 0 || living >= MAX_ALIVE_COWS) return;
+    if (COW_TYPES[this.toSpawn[0]].human && [...this.cows.values()].filter(c => c.state !== 'dead' && COW_TYPES[c.type].human).length >= MAX_ALIVE_PEOPLE) return;
     const spot = this.findSpawn(alive);
     if (!spot) return;
     this.spawnTimer = Math.max(0.35, 1.6 - this.wave * 0.1);
     const type = this.toSpawn.shift();
     const [x, z] = spot;
     const def = COW_TYPES[type];
-    const hp = Math.round(def.hp * (1 + (this.wave - 1) * 0.09));
+    // the boss doesn't scale with the round number, only with how many are fighting him
+    const hp = def.boss ? Math.round(def.hp * (1 + 0.4 * (this.players.size - 1)))
+      : Math.round(def.hp * (1 + (this.wave - 1) * 0.09));
     const id = this.nextCowId++;
     this.cows.set(id, {
       id, type, x, y: 0, z, yaw: Math.random() * 6.28, hp, maxHp: hp, state: 'walk',
       entry: null, tearT: def.tear, vaultT: 0,
-      attackCd: 0, stagger: 0, speedMul: 0.85 + Math.random() * 0.3, deadAt: 0,
+      attackCd: 0, stagger: 0, speedMul: 0.85 + Math.random() * 0.3, deadAt: 0, throwCd: 5, tauntCd: 1.5, tauntKind: 'spawn',
     });
   }
 
@@ -519,6 +584,7 @@ export class Room {
         if (d < td) { td = d; target = p; }
       }
       if (!target) { c.state = 'walk'; continue; }
+      if (def.boss) { this.bossThrow(c, target, td, dt); this.bossTaunt(c, dt); }
       const cIn = insideHouse(c.x, c.z), tIn = insideHouse(target.x, target.z);
 
       // a dog snapping at its legs gets the horns first
@@ -537,7 +603,7 @@ export class Room {
         c.state = 'attack';
         c.yaw = turnToward(c.yaw, Math.atan2(target.x - c.x, target.z - c.z), dt * 8);
         if (c.attackCd <= 0) {
-          c.attackCd = c.type === 'bull' ? 1.6 : 1.1;
+          c.attackCd = def.boss ? 2.0 : c.type === 'bull' ? 1.6 : def.human ? 0.9 : 1.1;
           this.hurtPlayer(target, def.damage, c);
         }
         continue;
@@ -590,12 +656,12 @@ export class Room {
       c.tearT -= dt;
       if (c.tearT <= 0) {
         c.tearT = def.tear * (0.8 + Math.random() * 0.4);
-        const n = c.type === 'bull' ? this.boards[e.id] : 1;
+        const n = def.heavy ? this.boards[e.id] : 1;
         this.boards[e.id] -= n;
         this.entryAge = this.playerAge = 99;
         this.broadcastEvent({ t: 'board', e: e.id, n: this.boards[e.id], add: -n });
       }
-    } else if (!this.vaulting[e.id] && dSpot < 1.3) {
+    } else if (!def.boss && !this.vaulting[e.id] && dSpot < 1.3) {
       c.state = 'vault';
       c.vaultT = 0;
       c.vaultFrom = [c.x, c.z];
@@ -608,7 +674,7 @@ export class Room {
 
   updateVault(c, dt) {
     const e = ENTRIES[c.entry];
-    c.vaultT += dt / (VAULT_TIME * (c.type === 'runner' ? 0.7 : 1));
+    c.vaultT += dt / (VAULT_TIME * (c.type === 'runner' || c.type === 'local' ? 0.7 : 1));
     const k = Math.min(1, c.vaultT);
     c.x = c.vaultFrom[0] + (c.vaultTo[0] - c.vaultFrom[0]) * k;
     c.z = c.vaultFrom[1] + (c.vaultTo[1] - c.vaultFrom[1]) * k;
@@ -634,13 +700,19 @@ export class Room {
       const minD = (def.radius + COW_TYPES[o.type].radius) * 0.9;
       if (d2 < minD * minD && d2 > 1e-6) { const d = Math.sqrt(d2); sx += (dx / d) * (minD - d); sz += (dz / d) * (minD - d); }
     }
-    const speed = def.speed * c.speedMul * speedMul * (cIn ? 0.85 : 1);
+    let speed = def.speed * c.speedMul * speedMul * (cIn ? 0.85 : 1);
+    if (def.boss) { // drunk: he lurches, and weaves either side of where he means to go
+      const a = Math.sin(this.time * 0.8 + c.id) * 0.55 + Math.sin(this.time * 2.1 + c.id * 3) * 0.2;
+      const cs = Math.cos(a), sn = Math.sin(a);
+      dir = [dir[0] * cs - dir[1] * sn, dir[0] * sn + dir[1] * cs];
+      speed *= 0.75 + 0.45 * Math.sin(this.time * 1.7 + c.id * 2);
+    }
     let nx = c.x + dir[0] * speed * dt + sx * 0.4;
     let nz = c.z + dir[1] * speed * dt + sz * 0.4;
-    [nx, nz] = resolveCircle(nx, nz, def.radius * 0.7);
+    [nx, nz] = resolveCircle(nx, nz, Math.min(0.85, def.radius * 0.7));
     if (insideHouse(nx, nz) !== cIn) return; // walls only get crossed by vaulting
     c.x = nx; c.z = nz;
-    c.yaw = turnToward(c.yaw, Math.atan2(dir[0], dir[1]), dt * (c.type === 'runner' ? 9 : 5));
+    c.yaw = turnToward(c.yaw, Math.atan2(dir[0], dir[1]), dt * (c.type === 'runner' || c.type === 'local' ? 9 : def.boss ? 2.5 : 5));
   }
 
   // ---- the ranch dogs: follow the players, charge and bite zombie cows ----
@@ -675,7 +747,7 @@ export class Room {
           if (d.biteCd <= 0) {
             d.biteCd = def.biteEvery;
             prey.hp -= def.damage;
-            if (prey.type !== 'bull') prey.stagger = 0.3;
+            if (!COW_TYPES[prey.type].heavy) prey.stagger = 0.3;
             this.broadcastEvent({ t: 'dogbite', dog: d.id, cow: prey.id, p: [prey.x, 0.9, prey.z] });
             if (prey.hp <= 0) this.killCow(prey);
           }
@@ -805,7 +877,7 @@ export class Room {
         rp: Math.round((p.repairT / REPAIR_TIME) * 100), w: p.weapons, cw: p.weapons[p.cur] || p.weapons[0], g: p.grenades,
       })),
       cows: [...this.cows.values()].map(c => [
-        c.id, c.type === 'walker' ? 0 : c.type === 'runner' ? 1 : 2, r(c.x), r(c.z), r(c.yaw),
+        c.id, COW_TYPE_LIST.indexOf(c.type), r(c.x), r(c.z), r(c.yaw),
         Math.round((c.hp / c.maxHp) * 100), STATE[c.state], r(c.y),
       ]),
     };

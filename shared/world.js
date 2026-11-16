@@ -434,12 +434,21 @@ export function raySphere(o, d, cx, cy, cz, r) {
 
 // ---- Cows (shared so hitboxes match on both sides) -------------------------
 
+// `human` types are people, not cattle: the machete-swinging locals who replace the herd on
+// round 10, and the round 20 boss, a giant drunk Rafael (three times the height of a cow).
+// `hs` scales their hit spheres; `boss` types shrug off insta-kills and can't fit indoors.
 export const COW_TYPES = {
   walker: { hp: 100, speed: 3.0, scale: 1.0, radius: 0.8, damage: 14, reach: 2.2, score: 60, tear: 1.5 },
   runner: { hp: 60, speed: 6.0, scale: 0.85, radius: 0.7, damage: 9, reach: 2.0, score: 80, tear: 1.0 },
-  bull: { hp: 900, speed: 3.4, scale: 1.55, radius: 1.2, damage: 38, reach: 3.0, score: 500, tear: 0.35 },
+  bull: { hp: 900, speed: 3.4, scale: 1.55, radius: 1.2, damage: 38, reach: 3.0, score: 500, tear: 0.35, heavy: true },
+  local: { hp: 120, speed: 4.3, scale: 1.0, radius: 0.45, damage: 18, reach: 1.9, score: 90, tear: 0.9, human: true, hs: 0.95 },
+  rafael: { hp: 9000, speed: 3.3, scale: 2.7, radius: 1.5, damage: 50, reach: 4.4, score: 5000, tear: 0.5, human: true, hs: 2.7, heavy: true, boss: true },
 };
-export const COW_TYPE_LIST = ['walker', 'runner', 'bull'];
+export const COW_TYPE_LIST = ['walker', 'runner', 'bull', 'local', 'rafael'];
+export const LOCALS_WAVE = 10;   // the locals attack instead of the herd
+export const BOSS_WAVE = 20;     // Rafael. After that it's back to the herd, bigger every round
+// Rafael lobs his empties: they land where you were standing when he threw
+export const BOTTLE = { every: 3.2, minDist: 6, maxDist: 55, radius: 3.2, damage: 32 };
 
 // The ranch dogs: two big red-brown dogs (Jack, Mateo) and the little fluffy one (Taco)
 // fight on your side, going after any cow near the players, through the doors if the
@@ -463,7 +472,13 @@ export const DOG_LEASH = 32; // dogs only chase cows this close to a player
 // Hit spheres for a cow at (x,z) facing yaw, matched to the Brahman model
 // (2.7 m nose to rump, head ~1.55 m forward, back ~1.55 m high). Index 0 is the head.
 export function cowHitSpheres(type, x, z, yaw, y = 0) {
-  const s = COW_TYPES[type].scale;
+  const def = COW_TYPES[type];
+  if (def.human) { // a standing person: head, chest, belly, hips, thighs, shins
+    const k = def.hs;
+    const up = (h, r, head) => ({ x, y: y + h * k, z, r: r * k, head });
+    return [up(1.6, 0.15, true), up(1.3, 0.25), up(1.02, 0.24), up(0.76, 0.22), up(0.46, 0.19), up(0.18, 0.16)];
+  }
+  const s = def.scale;
   const fx = Math.sin(yaw), fz = Math.cos(yaw);
   const at = (f, h, r, head) => ({ x: x + fx * f * s, y: y + h * s, z: z + fz * f * s, r: r * s, head });
   return [

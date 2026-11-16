@@ -7,10 +7,12 @@ import { GTAOPass } from 'three/examples/jsm/postprocessing/GTAOPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { SunPass, ViewmodelPass } from './post.js';
 import {
-  ENTRIES, HOUSE, MAX_BOARDS, COW_TYPE_LIST, WEAPON, WEAPONS, START_WEAPONS, WALL_BUYS, BUY_RANGE, MELEE, REPAIR_RANGE, raySolids, raySphere, cowHitSpheres, insideHouse, heightAt, shoreZ, SAND_WIDTH,
+  ENTRIES, HOUSE, MAX_BOARDS, COW_TYPE_LIST, COW_TYPES, LOCALS_WAVE, BOSS_WAVE, BOTTLE, WEAPON, WEAPONS, START_WEAPONS, WALL_BUYS, BUY_RANGE, MELEE, REPAIR_RANGE, raySolids, raySphere, cowHitSpheres, insideHouse, heightAt, shoreZ, SAND_WIDTH,
 } from '../../shared/world.js';
 import { buildWorld } from './world.js';
 import { CowView, loadCowAsset } from './cow.js';
+import { HumanView, preloadHumans, bottleMesh } from './humanoid.js';
+import { tauntLine } from './taunts.js';
 import { DogView, loadDogAssets } from './dog.js';
 import { Avatar, CHARACTERS, loadCharacter } from './avatar.js';
 import { Weapon } from './weapon.js';
@@ -239,6 +241,7 @@ const dogViews = new Map();
 const pickupViews = new Map(); // power-ups on the ground
 const nadeViews = new Map();
 const flyingPlanks = [];
+const flyingBottles = [];
 let view = null;            // latest interpolated world
 let mySnap = null;          // my own state from the server
 let playing = false;
@@ -543,12 +546,49 @@ function onEvent(m) {
       if (d) audio.yelp([d[0], 0.6, d[1]], d[4] === 1);
       break;
     }
+    case 'taunt': { // Rafael mouthing off: subtitle under his health bar, and a slurred voice
+      const [es, en] = tauntLine(m.k, m.i);
+      const el = $('boss-line');
+      el.innerHTML = `<b>${escapeHtml(es)}</b><small>${escapeHtml(en)}</small>`;
+      el.classList.add('show');
+      clearTimeout(tauntTimer);
+      tauntTimer = setTimeout(() => el.classList.remove('show'), m.k === 'death' ? 6000 : 4200);
+      const c = view?.cows.get(m.cow);
+      const dist = c ? Math.hypot(c[0] - me.pos.x, c[1] - me.pos.z) : 30;
+      audio.say(es, Math.max(0.25, 1 - dist / 90), m.k === 'death');
+      break;
+    }
+    case 'bottle': { // Rafael throws his empty: it arcs over and lands at m.to after m.time seconds
+      const v = cowViews.get(m.cow);
+      const from = v?.startThrow ? v.startThrow(new THREE.Vector3()) : new THREE.Vector3(m.to[0], 6, m.to[1]);
+      const mesh = bottleMesh();
+      mesh.scale.setScalar(COW_TYPES.rafael.scale * 1.5);
+      scene.add(mesh);
+      const to = new THREE.Vector3(m.to[0], heightAt(m.to[0], m.to[1]) + 0.1, m.to[1]);
+      flyingBottles.push({ mesh, from, to, t: 0, time: m.time, arc: 5 + from.distanceTo(to) * 0.16 });
+      audio.swish([from.x, from.y, from.z]);
+      break;
+    }
+    case 'smash': {
+      const p = new THREE.Vector3(m.p[0], heightAt(m.p[0], m.p[1]) + 0.15, m.p[1]);
+      fx.spawn(46, p, { spread: 2, up: 1.6, speed: 9, life: 1.1, size: 0.05, color: 0x4f8a36, grav: 12, bounce: 0.3, stretch: 2 });
+      fx.puff(p, 0xb8c8a0, 2.2, 0.8);
+      audio.smash([p.x, p.y, p.z]);
+      const d = p.distanceTo(me.pos);
+      if (d < 12) shake = Math.min(1.5, shake + (12 - d) / 14);
+      break;
+    }
     case 'hurt':
       hurtT = 1; shake = 1;
       audio.hurt();
       break;
     case 'wave':
-      banner(`WAVE ${m.wave}`, `${m.count} zombie cows are coming for the house`);
+      if (m.kind === 'boss') { banner(`WAVE ${m.wave}: RAFAEL`, "He's huge, he's drunk, and he's throwing bottles. Keep moving.", 6000); preloadHumans(); }
+      else if (m.kind === 'locals') { banner(`WAVE ${m.wave}: THE LOCALS`, `${m.count} locals with machetes are coming instead of the herd`, 5000); preloadHumans(['local']); }
+      else banner(`WAVE ${m.wave}`, `${m.count} zombie cows are coming for the house`);
+      // have the people-enemies downloaded before the rounds that need them
+      if (m.wave >= LOCALS_WAVE - 2 && m.wave < BOSS_WAVE) preloadHumans(['local']);
+      if (m.wave >= BOSS_WAVE - 2 && m.wave < BOSS_WAVE) preloadHumans();
       audio.stinger(false);
       audio.music(true);
       break;
@@ -558,6 +598,7 @@ function onEvent(m) {
       audio.music(false);
       break;
     case 'gameover':
+      for (const b of flyingBottles.splice(0)) scene.remove(b.mesh);
       banner('THE HERD GOT IN', `You held the ranch for ${m.wave - 1} wave${m.wave === 2 ? '' : 's'}. Restarting...`, 8000);
       audio.stinger(false);
       audio.music(false);
@@ -592,7 +633,7 @@ function launchPlank(entryId, idx) {
 }
 
 // ---------------------------------------------------------------- HUD
-let bannerTimer = null;
+let bannerTimer = null, tauntTimer = null;
 function banner(title, sub, ms = 3500) {
   const b = $('wave-banner');
   b.innerHTML = `${title}<small>${sub}</small>`;
@@ -627,13 +668,25 @@ function renderScoreboard() {
 }
 const escapeHtml = (s) => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
+// what the round's enemies are called in the counter under the wave number
+function leftWord(wave, n) {
+  if (wave === LOCALS_WAVE) return n === 1 ? 'local' : 'locals';
+  if (wave === BOSS_WAVE) return n === 1 ? 'enemy' : 'enemies';
+  return n === 1 ? 'cow' : 'cows';
+}
+
 function updateHud(dt) {
   const s = net.latest;
   if (!s || !mySnap) return;
   $('wave-num').textContent = s.wave;
   if ((s.phase === 'wave') !== !!audio.musicOn) audio.music(s.phase === 'wave'); // e.g. joined mid-wave
   $('wave-sub').textContent = s.phase === 'intermission' ? `Next wave in ${s.timer}s`
-    : s.phase === 'wave' ? `${s.left} cow${s.left === 1 ? '' : 's'} left` : 'Game over';
+    : s.phase === 'wave' ? `${s.left} ${leftWord(s.wave, s.left)} left` : 'Game over';
+  // boss health bar
+  let bossHp = -1;
+  for (const c of s.cows) if (COW_TYPES[COW_TYPE_LIST[c[1]]].boss && c[6] !== 2) bossHp = c[5];
+  $('boss-bar').classList.toggle('show', bossHp >= 0);
+  if (bossHp >= 0) $('boss-fill').style.width = `${bossHp}%`;
   $('hp-fill').style.width = `${mySnap.hp}%`;
   $('hp-fill').classList.toggle('low', mySnap.hp < 35);
   $('score').textContent = mySnap.s;
@@ -740,6 +793,16 @@ function frame() {
     if (p.age > 6) { scene.remove(p.m); flyingPlanks.splice(i, 1); }
   }
 
+  for (let i = flyingBottles.length - 1; i >= 0; i--) {
+    const b = flyingBottles[i];
+    b.t += dt;
+    const k = Math.min(1, b.t / b.time);
+    b.mesh.position.lerpVectors(b.from, b.to, k);
+    b.mesh.position.y += Math.sin(k * Math.PI) * b.arc;
+    b.mesh.rotation.x += dt * 9; b.mesh.rotation.z += dt * 4;
+    if (k >= 1) { scene.remove(b.mesh); flyingBottles.splice(i, 1); }
+  }
+
   fx.update(dt);
   world.update(dt, elapsed, camera.position);
   hurtT = Math.max(0, hurtT - dt * 2.2);
@@ -842,11 +905,26 @@ function stepLocal(dt) {
 }
 const r2 = (v) => Math.round(v * 100) / 100;
 
+// sounds and shakes the people-enemies ask for as they animate
+const humanHooks = {
+  swing(pos) { audio.swish([pos.x, pos.y + 1.2, pos.z]); },
+  stomp(pos, hard, fell) {
+    const d = pos.distanceTo(me.pos);
+    audio.thud([pos.x, pos.y, pos.z], hard ? 1 : 0.5);
+    if (d < 40) shake = Math.min(1.5, shake + (hard ? 0.9 : 0.35) * (1 - d / 40));
+    if (hard) for (let i = 0; i < (fell ? 10 : 4); i++) fx.puff(pos.clone().add(new THREE.Vector3((Math.random() - 0.5) * (fell ? 6 : 3), 0.3, (Math.random() - 0.5) * (fell ? 6 : 3))), 0xa89880, 3, 1.6);
+  },
+};
+
 function syncCows(dt) {
   if (!view) return;
   for (const [id, c] of view.cows) {
     let v = cowViews.get(id);
-    if (!v) { v = new CowView(id, COW_TYPE_LIST[c[5]], scene); cowViews.set(id, v); }
+    if (!v) {
+      const type = COW_TYPE_LIST[c[5]];
+      v = COW_TYPES[type].human ? new HumanView(id, type, scene, humanHooks) : new CowView(id, type, scene);
+      cowViews.set(id, v);
+    }
     v.apply(c, dt, elapsed);
   }
   for (const [id, v] of cowViews) if (!view.cows.has(id)) { v.dispose(); cowViews.delete(id); }
@@ -927,7 +1005,10 @@ function ambientSounds(dt) {
       const a = pick(), b = pick();
       const d2 = (c) => (c[0] - me.pos.x) ** 2 + (c[1] - me.pos.z) ** 2;
       const c = d2(a) < d2(b) ? a : b;
-      audio.moo([c[0], 1.4, c[1]], COW_TYPE_LIST[c[5]]);
+      const type = COW_TYPE_LIST[c[5]];
+      if (type === 'rafael') audio.bossRoar([c[0], 4, c[1]]);
+      else if (type === 'local') audio.shout([c[0], 1.5, c[1]]);
+      else audio.moo([c[0], 1.4, c[1]], type);
       // cows tearing at a window also bang on it
       if (c[3] === 3 && Math.random() < 0.6) audio.bang([c[0], 1.2, c[1]]);
     }
@@ -937,4 +1018,4 @@ function ambientSounds(dt) {
 frame();
 
 // expose a little for automated testing / debugging
-window.__rd = { net, me, scene, camera, cowViews, renderer, CowView, DogView, Avatar, weapon, world, vmScene, audio };
+window.__rd = { net, me, scene, camera, cowViews, renderer, CowView, HumanView, DogView, Avatar, weapon, world, vmScene, audio, fx };
