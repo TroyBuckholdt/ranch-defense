@@ -52,7 +52,7 @@ wss.on('connection', (ws) => {
       const name = String(m.name || 'Rancher').replace(/[<>]/g, '').trim().slice(0, 16) || 'Rancher';
       room = getRoom(code);
       if (room.players.size >= 8) { send(JSON.stringify({ t: 'full' })); ws.close(); return; }
-      const char = /^p[1-8]$/.test(m.char) ? m.char : 'p1';
+      const char = /^p[124678]$/.test(m.char) ? m.char : 'p1'; // p3 and p5 were duplicates of Teresa and Maria
       player = room.addPlayer(nextId++, name, send, char);
       send(JSON.stringify({ t: 'welcome', id: player.id, room: code }));
       return;
@@ -60,6 +60,10 @@ wss.on('connection', (ws) => {
     if (!player) return;
     if (m.t === 'state') room.onState(player, m);
     else if (m.t === 'shoot') room.onShoot(player, m);
+    else if (m.t === 'melee') room.onMelee(player, m);
+    else if (m.t === 'nade') room.onNade(player, m);
+    else if (m.t === 'buy') room.onBuy(player, m);
+    else if (m.t === 'switch') { if (player.weapons[m.slot | 0]) player.cur = m.slot | 0; }
     else if (m.t === 'ping') send(JSON.stringify({ t: 'pong', c: m.c }));
   });
 

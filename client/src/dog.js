@@ -3,7 +3,8 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js';
-import { heightAt } from '../../shared/world.js';
+import { heightAt, DOG_TYPES } from '../../shared/world.js';
+import { nameTag } from './textures.js';
 
 const ASSETS = {};
 export async function loadDogAssets() {
@@ -43,6 +44,14 @@ export class DogView {
     } else { // placeholder if the model didn't load
       const b = new THREE.Mesh(new THREE.CapsuleGeometry(0.15, 0.5, 4, 8).rotateX(Math.PI / 2), new THREE.MeshStandardMaterial({ color: kind ? 0xd8b070 : 0x8a4a28 }));
       b.position.y = 0.45; this.body.add(b);
+    }
+    // name tag (Jack, Mateo...) floating over the dog
+    const name = DOG_TYPES[id - 1]?.name;
+    if (name) {
+      const tag = new THREE.Sprite(new THREE.SpriteMaterial({ map: nameTag(name, '#ffd27a'), depthTest: false, transparent: true }));
+      tag.scale.set(1.0, 0.25, 1); tag.position.y = kind === 1 ? 0.95 : 1.35; tag.renderOrder = 10;
+      this.root.add(tag);
+      this.tag = tag;
     }
     scene.add(this.root);
     this.phase = Math.random() * 6;

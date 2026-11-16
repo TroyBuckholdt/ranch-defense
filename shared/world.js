@@ -99,8 +99,9 @@ export const ENTRIES = ENTRY_DEFS.map((e, id) => {
   const z = along ? n[1] * HZ : e.at;
   return {
     id, ...e, width, x, z, nx: n[0], nz: n[1],
-    sill: e.kind === 'door' ? 0 : 0.95,
-    top: e.kind === 'door' ? 2.45 : 2.3,
+    // tall French windows and doors like the real house (a low ledge keeps the cows' climb-in)
+    sill: e.kind === 'door' ? 0 : 0.4,
+    top: 2.85,
     out: [x + n[0] * 2.1, z + n[1] * 2.1],   // where a cow stands to tear boards
     in: [x - n[0] * 2.1, z - n[1] * 2.1],    // where a cow lands after climbing in
     // solid box filling the opening (blocks walking, not bullets)
@@ -137,16 +138,19 @@ export const HOUSE_WALLS = (() => {
 })();
 
 // Furniture: low cover inside. Low pieces can be jumped onto.
+// Furniture that blocks movement (copied from the real house photos). Small pieces such as
+// the cane rockers and iron side tables are decoration only, so they never trap cows.
 export const FURNITURE = [
-  { kind: 'couch', x: -8.2, z: -3.0, w: 2.6, d: 1.1, h: 0.85 },
-  { kind: 'table', x: 4, z: 3.6, w: 2.2, d: 1.2, h: 0.78 },
+  // living room (west): carved colonial bench and the bar cabinet against the partition
+  { kind: 'bench', x: -8.6, z: -6.3, w: 1.75, d: 0.7, h: 0.95 },
+  { kind: 'bar', x: -3.38, z: -4.7, w: 0.52, d: 1.6, h: 2.2 },
+  // dining room (east): long dark table with ten carved high-back chairs
+  { kind: 'dining', x: 4.2, z: 3.4, w: 3.7, d: 2.0, h: 0.78 },
+  // kitchen along the back wall
   { kind: 'island', x: 4.5, z: -0.5, w: 3.2, d: 1.2, h: 0.95 },
   { kind: 'counter', x: 0.6, z: -6.2, w: 3, d: 0.75, h: 0.95 },
   { kind: 'stove', x: 2.6, z: -6.2, w: 1.0, d: 0.75, h: 0.95 },
   { kind: 'fridge', x: 10.1, z: -5.9, w: 1.1, d: 0.9, h: 2.0 },
-  { kind: 'bookshelf', x: -9, z: -6.45, w: 2.2, d: 0.5, h: 2.1 },
-  { kind: 'crate', x: -9.8, z: 5.8, w: 1.2, d: 1.2, h: 1.0 },
-  { kind: 'crate', x: 9.8, z: 5.9, w: 1.0, d: 1.0, h: 0.8 },
 ];
 
 // ---- The rest of the property (seen through the windows) --------------------
@@ -177,9 +181,16 @@ export const STRUCTURES = [
   { id: 'bunkhouse', kind: 'bunkhouse', x: 31, z: -14, w: 10, d: 20, h: 6.5 },
   { id: 'feedstore', kind: 'feedstore', x: -30, z: 22, w: 8, d: 6, h: 4.5 },
   { id: 'tank', kind: 'tank', x: -12, z: -30, w: 5, d: 5, h: 6 },
-  { id: 'truck', kind: 'truck', x: 16, z: 22, w: 2.3, d: 5.4, h: 1.9 },
+  // parked like the drone photo: the grey F-150 Tremor in the carport, the boat on its trailer
+  // in front of it beside the house, and the white Chevy on the lawn
+  { id: 'f150', kind: 'f150', x: 17.5, z: -0.4, w: 2.2, d: 5.9, h: 2.0 },
+  { id: 'boat', kind: 'boat', x: 15.7, z: 8.1, w: 2.6, d: 8.2, h: 2.7 },
+  { id: 'chevy', kind: 'chevy', x: 15.7, z: 16.2, w: 2.2, d: 5.9, h: 1.9 },
   { id: 'trough', kind: 'trough', x: 40, z: 18, w: 1.4, d: 5, h: 0.8 },
   { id: 'woodpile', kind: 'woodpile', x: -22, z: -12, w: 4, d: 1.6, h: 1.4 },
+  // from the drone photo: the steel farm windmill behind the house and the tiled carport
+  { id: 'windmill', kind: 'windmill', x: 15, z: -13, w: 2.4, d: 2.4, h: 11 },
+  { id: 'carport', kind: 'carport', x: 17.5, z: 0, w: 6, d: 6.5, h: 3.2, open: true },
 ];
 
 // Veranda railing (wrought iron balusters) with a gap at the front steps, plus columns.
@@ -200,9 +211,8 @@ export const HEDGES = [
 ];
 export const PENS = [{ x: 72, z: -6, w: 14, d: 22 }, { x: -74, z: -20, w: 12, d: 16 }];
 
-export const HAY_BALES = [
-  [18, 12], [20.2, 12], [19.1, 13.8], [-18, 18], [-16, 20.2], [32, 24], [34.2, 24], [12, -26],
-].map(([x, z], i) => ({ id: 'hay' + i, kind: 'hay', x, z, w: 1.9, d: 1.7, h: 1.6 }));
+// (the real ranch has no hay bales around the house, so there are none)
+export const HAY_BALES = [];
 
 function rng(seed) {
   let s = seed >>> 0;
@@ -240,11 +250,22 @@ export const UNDERGROWTH = [];
   }
   // palms in the front garden, like the photos
   for (const [x, z, s] of [[-7, 17, 1.2], [7.5, 15.5, 1.1], [-14, 10, 1.3], [13, 9, 1.15], [-4, 24, 1.0]]) TREES.push({ x, z, s, kind: 'palm' });
+  // big shade trees around the lawn and royal palms down the west side, after the drone photo
+  for (const [x, z, kind, s] of [
+    [-6, -20, 'giant', 1.3], [7, -25, 'broad', 1.3], [-21, -25, 'giant', 1.4], [22, -30, 'giant', 1.5],
+    [-35, -14, 'broad', 1.3], [38, -34, 'giant', 1.4], [31, 12, 'giant', 1.6], [-34, 33, 'giant', 1.4],
+    [20, 30, 'broad', 1.2], [-40, 0, 'broad', 1.3], [44, 0, 'broad', 1.3], [2, -36, 'broad', 1.2],
+    [-18, 2, 'palm', 1.35], [-19, -6, 'palm', 1.25],
+  ]) TREES.push({ x, z, s, kind });
 })();
 
 // All solid boxes. `shoot: true` means bullets pass through (open doors/windows).
 export const SOLIDS = (() => {
-  const out = [...HOUSE_WALLS, ...FURNITURE, ...STRUCTURES, ...HAY_BALES];
+  const out = [...HOUSE_WALLS, ...FURNITURE, ...STRUCTURES.filter(s => !s.open), ...HAY_BALES];
+  // open structures (the carport) only block at their posts
+  for (const s of STRUCTURES.filter(s => s.open)) for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+    out.push({ kind: 'post', x: s.x + sx * (s.w / 2 - 0.2), z: s.z + sz * (s.d / 2 - 0.2), w: 0.4, d: 0.4, h: s.h });
+  }
   for (const e of ENTRIES) out.push({ kind: 'entry', entry: e.id, shoot: true, ...e.box });
   for (const s of FENCE_SEGMENTS) {
     if (s.x1 !== undefined) out.push({ kind: 'fence', x: (s.x1 + s.x2) / 2, z: s.z, w: s.x2 - s.x1, d: FENCE.t, h: FENCE.h });
@@ -419,11 +440,14 @@ export const COW_TYPES = {
 export const COW_TYPE_LIST = ['walker', 'runner', 'bull'];
 
 // The ranch dogs (two big red-brown dogs and the little fluffy one) fight on your side.
+// The ranch dogs. All three go after any cow near the players, through the doors if
+// the cow is on the other side of the walls.
 export const DOG_TYPES = [
-  { kind: 'big', hp: 90, speed: 7.5, sight: 20, bite: 1.0, damage: 7, biteEvery: 0.9, radius: 0.4 },
-  { kind: 'big', hp: 90, speed: 7.2, sight: 20, bite: 1.0, damage: 7, biteEvery: 0.95, radius: 0.4 },
-  { kind: 'little', hp: 45, speed: 8.0, sight: 14, bite: 0.7, damage: 3, biteEvery: 0.6, radius: 0.28 },
+  { kind: 'big', name: 'Jack', hp: 90, speed: 7.5, sight: 30, bite: 1.0, damage: 7, biteEvery: 0.9, radius: 0.4 },
+  { kind: 'big', name: 'Mateo', hp: 90, speed: 7.2, sight: 30, bite: 1.0, damage: 7, biteEvery: 0.95, radius: 0.4 },
+  { kind: 'little', name: 'Taco', hp: 45, speed: 8.0, sight: 24, bite: 0.7, damage: 3, biteEvery: 0.6, radius: 0.28 },
 ];
+export const DOG_LEASH = 32; // dogs only chase cows this close to a player
 
 // Hit spheres for a cow at (x,z) facing yaw. Index 0 is the head.
 // `rear` lifts the front end (used while climbing through a window).
@@ -442,6 +466,30 @@ export function cowHitSpheres(type, x, z, yaw, y = 0) {
   ];
 }
 
-export const WEAPON = { damage: 30, headMult: 3.5, fireInterval: 0.095, mag: 30, reload: 2.1, range: 250 };
+// ---- Weapons (CoD Zombies style: start with a rifle + revolver, buy more off the walls) ----
+export const WEAPONS = {
+  rifle:    { name: 'RANCH RIFLE',   damage: 30,  headMult: 3.5, fireInterval: 0.095, auto: true,  mag: 30, reserve: 210, reload: 2.1, pellets: 1, hip: 0.03,  ads: 0.003, range: 250, zoom: 52 },
+  revolver: { name: 'REVOLVER',      damage: 70,  headMult: 3.0, fireInterval: 0.28,  auto: false, mag: 6,  reserve: 60,  reload: 2.3, pellets: 1, hip: 0.02,  ads: 0.002, range: 200, zoom: 60 },
+  shotgun:  { name: 'PUMP SHOTGUN',  damage: 24,  headMult: 2.0, fireInterval: 0.75,  auto: false, mag: 6,  reserve: 42,  reload: 3.0, pellets: 9, hip: 0.09,  ads: 0.06,  range: 60,  zoom: 62 },
+  hunting:  { name: 'HUNTING RIFLE', damage: 220, headMult: 3.0, fireInterval: 1.1,   auto: false, mag: 5,  reserve: 35,  reload: 2.9, pellets: 1, hip: 0.05,  ads: 0.0,   range: 400, zoom: 28 },
+  lmg:      { name: 'LA BESTIA LMG', damage: 42,  headMult: 3.0, fireInterval: 0.075, auto: true,  mag: 75, reserve: 300, reload: 4.5, pellets: 1, hip: 0.045, ads: 0.008, range: 300, zoom: 50 },
+};
+export const WEAPON = WEAPONS.rifle; // kept for older code paths
+export const START_WEAPONS = ['rifle', 'revolver'];
+export const START_POINTS = 500;
+
+// Wall-buy stations: walk up, hold E. Buying a gun you already own refills its ammo for half.
+export const WALL_BUYS = [
+  { weapon: 'shotgun', cost: 500,  x: -3.35, z: 4.6,  nx: -1, nz: 0 },   // living room, on the partition wall
+  { weapon: 'hunting', cost: 1000, x: 25.7,  z: -10,  nx: -1, nz: 0 },   // outside the bunkhouse
+  { weapon: 'lmg',     cost: 2000, x: -25.7, z: 22,   nx: 1,  nz: 0 },   // outside the feed store
+];
+export const BUY_RANGE = 2.2;
+
+export const MELEE = { damage: 150, range: 2.4, interval: 0.55 };
+export const GRENADE = { fuse: 2.2, radius: 7, damage: 480, perWave: 2, max: 4 };
+export const POWERUP_TYPES = ['maxammo', 'instakill', 'double', 'nuke'];
+export const POWERUP_CHANCE = 0.045;
+export const POWERUP_TIME = 30;
 export const REPAIR_TIME = 0.7;
 export const REPAIR_RANGE = 2.4;

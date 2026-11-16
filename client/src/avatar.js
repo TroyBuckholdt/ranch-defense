@@ -9,13 +9,11 @@ import { nameTag } from './textures.js';
 
 export const CHARACTERS = [
   { id: 'p1', label: 'Troy', height: 1.83 },
-  { id: 'p2', label: 'Blue shirt', height: 1.62 },
-  { id: 'p3', label: 'White top', height: 1.63 },
+  { id: 'p2', label: 'Maria', height: 1.62 },
   { id: 'p4', label: 'Rafael', height: 1.76 },
-  { id: 'p5', label: 'Red cap', height: 1.66 },
   { id: 'p6', label: 'Rafa', height: 1.82 },
   { id: 'p7', label: 'Julio', height: 1.76 },
-  { id: 'p8', label: 'Terresa', height: 1.65 },
+  { id: 'p8', label: 'Tere', height: 1.65 },
 ];
 
 const A = '/assets/models/people/';
