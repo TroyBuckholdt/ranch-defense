@@ -324,6 +324,29 @@ export class Audio {
     } catch {}
   }
 
+  // truck engine: two detuned saws through a low-pass, pitch and brightness follow speed
+  engine(on, speed = 0, gain = 1) {
+    if (!this.ctx) return;
+    if (!this.eng) {
+      if (!on) return;
+      const g = this.ctx.createGain(); g.gain.value = 0;
+      const lp = this.ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 300; lp.Q.value = 1.2;
+      const o1 = this.ctx.createOscillator(), o2 = this.ctx.createOscillator(), sub = this.ctx.createOscillator();
+      o1.type = 'sawtooth'; o2.type = 'sawtooth'; sub.type = 'square';
+      const sg = this.ctx.createGain(); sg.gain.value = 0.5;
+      o1.connect(lp); o2.connect(lp); sub.connect(sg).connect(lp);
+      lp.connect(g).connect(this.master);
+      o1.start(); o2.start(); sub.start();
+      this.eng = { g, lp, o1, o2, sub };
+    }
+    const t = this.ctx.currentTime, e = this.eng;
+    const rev = 0.25 + (speed % 7.5) / 7.5 * 0.5 + Math.min(1, speed / 19) * 0.25; // climbs through the gears
+    const f = 38 + rev * 70;
+    e.o1.frequency.setTargetAtTime(f, t, 0.08); e.o2.frequency.setTargetAtTime(f * 1.505, t, 0.08); e.sub.frequency.setTargetAtTime(f * 0.5, t, 0.08);
+    e.lp.frequency.setTargetAtTime(220 + rev * 700, t, 0.1);
+    e.g.gain.setTargetAtTime(on ? 0.11 * gain : 0, t, 0.15);
+  }
+
   // heavy footfall / body hitting the ground (the boss)
   thud(pos, power = 1) {
     if (!this.ctx) return;

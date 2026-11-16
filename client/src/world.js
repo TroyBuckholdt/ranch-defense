@@ -14,7 +14,7 @@ import { gltfLoader, texURL, isLowDetail } from './gltf.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import {
   HOUSE, HOUSE_WALLS, ENTRIES, FURNITURE, STRUCTURES, HAY_BALES, TREES, UNDERGROWTH, FENCE_SEGMENTS,
-  FENCE_HEIGHT, YARD, MAX_BOARDS, VERANDA, HEDGES, PENS, WALL_BUYS, WEAPONS, heightAt, shoreZ, SAND_WIDTH, trailDist, solidsNear,
+  FENCE_HEIGHT, YARD, MAX_BOARDS, VERANDA, HEDGES, PENS, WALL_BUYS, WEAPONS, heightAt, shoreZ, SAND_WIDTH, trailDist, solidsNear, ROAD, ROAD_HALF, roadDist, VEHICLES as TRUCKS,
 } from '../../shared/world.js';
 import * as T from './textures.js';
 
@@ -99,7 +99,7 @@ function fitModel(model, w, rotateToX = true) {
 }
 
 // real heights, and the turn that points each model's nose toward the front garden (+Z)
-const VEHICLES = {
+const VEHICLE_FIT = {
   f150: { length: 5.75, yaw: 0, tint: [0.6, 0.61, 0.64] },  // Carbonized Gray
   chevy: { length: 5.84, yaw: 0 },
   boat: { length: 8.2, yaw: 0 },                               // Cobalt 232 on its trailer, tongue toward the front
@@ -302,7 +302,17 @@ export async function buildWorld(renderer, Q = { shadows: 2048, grass: 26000 }, 
     });
   }
 
+  // the two pickups are driven around, so main.js owns them: hand over a fitted model each
+  const trucks = TRUCKS.map(def => {
+    const v = VEHICLE_FIT[def.kind];
+    const sz = new THREE.Box3().setFromObject(models[def.kind]).getSize(new THREE.Vector3());
+    const m = fitReal(models[def.kind], v.length * sz.y / Math.max(sz.x, sz.z), v.tint);
+    m.rotation.y = v.yaw;
+    return { def, model: m };
+  });
+
   return {
+    trucks,
     scene, sun, sunDir: sunDir.raw, lightDir: sunDir.clone(), boards: house.boards, grilles: house.grilles,
     update(dt, t, camPos) { for (const u of updaters) u(dt, t, camPos); },
   };
@@ -417,6 +427,7 @@ function buildTerrain() {
   g.translate(0, 0, cz);
   const pos = g.attributes.position, uv = g.attributes.uv;
   const splat = new Float32Array(pos.count * 4);
+  const road = new Float32Array(pos.count);
   const smooth = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i), z = pos.getZ(i);
@@ -432,8 +443,10 @@ function buildTerrain() {
     splat[i * 4 + 1] = rest * jungle;        // jungle floor
     splat[i * 4 + 2] = (1 - trail) * sand;   // sand
     splat[i * 4 + 3] = trail;                // dirt trail
+    road[i] = 1 - smooth(ROAD_HALF + 1.5, ROAD_HALF + 6, roadDist(x, z)); // where the shader should look for the road
   }
   g.setAttribute('splat', new THREE.BufferAttribute(splat, 4));
+  g.setAttribute('road', new THREE.BufferAttribute(road, 1));
   g.computeVertexNormals();
 
   const tex = (n, srgb = true) => loadTex(n, srgb);
@@ -444,15 +457,16 @@ function buildTerrain() {
   const uni = {
     tJungle: { value: tex('forest_leaves_02_diff.jpg') }, tSand: { value: tex('coast_sand_01_diff.jpg') },
     tTrail: { value: tex('brown_mud_leaves_01_diff.jpg') }, tMacro: { value: T.macroNoise() },
+    uRoad: { value: ROAD.map(p => new THREE.Vector2(p[0], p[1])) },
   };
   mat.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, uni);
-    sh.vertexShader = 'attribute vec4 splat;\nvarying vec4 vSplat;\nvarying vec2 vWXZ;\nvarying float vWY;\n' + sh.vertexShader.replace('#include <begin_vertex>', `
+    sh.vertexShader = 'attribute vec4 splat;\nattribute float road;\nvarying float vRoad;\nvarying vec4 vSplat;\nvarying vec2 vWXZ;\nvarying float vWY;\n' + sh.vertexShader.replace('#include <begin_vertex>', `
       #include <begin_vertex>
-      vSplat = splat;
+      vSplat = splat; vRoad = road;
       vec4 wp4 = modelMatrix * vec4(transformed, 1.0);
       vWXZ = wp4.xz; vWY = wp4.y;`);
-    sh.fragmentShader = 'uniform sampler2D tJungle, tSand, tTrail, tMacro;\nvarying vec4 vSplat;\nvarying vec2 vWXZ;\nvarying float vWY;\n' + sh.fragmentShader.replace('#include <roughnessmap_fragment>', `
+    sh.fragmentShader = `uniform sampler2D tJungle, tSand, tTrail, tMacro;\nuniform vec2 uRoad[${ROAD.length}];\nvarying float vRoad;\n` + 'varying vec4 vSplat;\nvarying vec2 vWXZ;\nvarying float vWY;\n' + sh.fragmentShader.replace('#include <roughnessmap_fragment>', `
       #include <roughnessmap_fragment>
       roughnessFactor = mix(roughnessFactor, 0.22, (1.0 - smoothstep(0.0, 0.45, vWY)) * vSplat.z);`).replace('#include <map_fragment>', `
       vec2 tuv = vWXZ / 3.0;
@@ -468,6 +482,25 @@ function buildTerrain() {
       vec4 col = cg * vSplat.x + cj * vSplat.y + cs * vSplat.z + ct * vSplat.w;
       float macro = texture2D(tMacro, vWXZ / 70.0).r;
       col.rgb *= mix(0.78, 1.18, macro);
+      // the road: pale crushed limestone, two darker wheel tracks, weeds down the middle,
+      // a ragged edge where the verge grows in
+      if (vRoad > 0.01) {
+        float rd = 99.0;
+        for (int i = 0; i < ${ROAD.length - 1}; i++) {
+          vec2 a = uRoad[i], ab = uRoad[i + 1] - a;
+          float t = clamp(dot(vWXZ - a, ab) / dot(ab, ab), 0.0, 1.0);
+          rd = min(rd, distance(vWXZ, a + ab * t));
+        }
+        float fine = texture2D(tMacro, vWXZ / 9.0).r, mid = texture2D(tMacro, vWXZ / 27.0 + 0.37).r;
+        float edge = 1.0 - smoothstep(${(ROAD_HALF - 0.9).toFixed(2)}, ${(ROAD_HALF + 0.25).toFixed(2)}, rd + (mid - 0.5) * 1.3);
+        vec3 stone = texture2D(tSand, tuv * 1.6).rgb * vec3(1.16, 1.12, 1.03) * mix(0.86, 1.08, fine);
+        float rut = (1.0 - smoothstep(0.1, 0.55, abs(rd - 0.92))) * 0.7;
+        stone *= mix(1.0, 0.8, rut);
+        float weeds = (1.0 - smoothstep(0.12, 0.5, rd)) * smoothstep(0.42, 0.6, mid) * 0.75;
+        stone = mix(stone, cg.rgb * 0.85, weeds);
+        // (the ground material is tinted green for the grass; undo that for bare stone)
+        col.rgb = mix(col.rgb, stone / vec3(0.58, 0.72, 0.35) * 0.62, edge);
+      }
       // sand darkens where the swash keeps it wet, and more so under the water
       float wet = 1.0 - smoothstep(0.0, 0.45, vWY);
       col.rgb *= mix(1.0, 0.6, wet * vSplat.z);
@@ -950,9 +983,9 @@ function buildStructure(s, updaters, models) {
     case 'windmill': g = windmill(s, updaters); break;
     case 'carport': g = carport(s); break;
     // the family's vehicles (generated from photos of the same models)
-    case 'f150': case 'chevy': case 'boat': {
+    case 'boat': {
       g = new THREE.Group(); g.position.set(s.x, heightAt(s.x, s.z), s.z);
-      const v = VEHICLES[s.kind];
+      const v = VEHICLE_FIT[s.kind];
       const sz = new THREE.Box3().setFromObject(models[s.kind]).getSize(new THREE.Vector3());
       const m = fitReal(models[s.kind], v.length * sz.y / Math.max(sz.x, sz.z), v.tint);
       m.rotation.y = v.yaw;
@@ -1562,6 +1595,7 @@ function buildGrass(COUNT) {
     const sz = shoreZ(x), r = Math.hypot(x, z * 1.1);
     let d = (1 - smooth(sz - SAND_WIDTH - 2, sz - SAND_WIDTH + 5, z)) * (1 - smooth(72, 96, r) * 0.8);
     if (d > 0 && r > 45) d *= smooth(1.4, 3.2, trailDist(x, z));
+    if (d > 0) d *= smooth(ROAD_HALF - 0.6, ROAD_HALF + 0.8, roadDist(x, z));
     if (Math.abs(x) < HOUSE.w / 2 + 0.6 && z > -HOUSE.d / 2 - 0.6 && z < VERANDA.z + 0.8) d = 0;
     else if (Math.abs(x) < 1.6 && z > 9 && z < 22.5) d = 0;
     else if (Math.abs(x) < 2.4 && Math.abs(z - 19) < 2.4) d = 0;

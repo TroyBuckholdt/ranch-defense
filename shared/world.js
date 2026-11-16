@@ -48,11 +48,21 @@ export const WATER_Y = 0;
 // ---- Trails ----------------------------------------------------------------
 // Dirt trails from the yard gates through the jungle to the beach and the pens.
 export const TRAILS = [
-  [[2, 44], [6, 62], [-4, 80], [4, 98], [18, 112], [14, 130], [6, 146], [8, 162]],          // south gate -> beach
-  [[54, -1], [66, -4], [80, 10], [86, 34], [74, 58], [60, 80], [40, 100], [18, 112]],       // east gate -> pens -> joins
+  [[2, 44], [5, 62], [-3, 80], [4, 98], [16, 112], [13, 130], [7, 146], [8, 162]],          // south gate -> beach (now the road)
+  [[54, -1], [66, -4], [80, 10], [86, 34], [74, 58], [60, 80], [40, 100], [16, 112]],       // east gate -> pens -> joins
   [[-50, -1], [-66, 8], [-80, 30], [-92, 56], [-86, 86], [-70, 112], [-62, 136], [-58, 160]], // west gate -> beach
   [[2, -46], [-6, -66], [8, -88], [30, -104], [58, -100], [80, -76], [86, -50]],             // north loop
 ];
+// The road: a white caliche track wide enough for the trucks, from the driveway in front of
+// the house, out of the south gate and through the jungle to the beach. No trees grow on it.
+export const ROAD = [[14.5, 23], [10, 33], [3.5, 41], [2, 47], [5, 62], [-3, 80], [4, 98], [16, 112], [13, 130], [7, 146], [8, 158], [9, 170]];
+export const ROAD_HALF = 3.3;      // half the width of the driven surface
+export function roadDist(x, z) {
+  if (z < 15 || Math.abs(x) > 40) return 99;
+  let best = 99;
+  for (let i = 0; i < ROAD.length - 1; i++) best = Math.min(best, segDist(x, z, ROAD[i][0], ROAD[i][1], ROAD[i + 1][0], ROAD[i + 1][1]));
+  return best;
+}
 function segDist(px, pz, ax, az, bx, bz) {
   const dx = bx - ax, dz = bz - az, l2 = dx * dx + dz * dz;
   const t = l2 ? Math.max(0, Math.min(1, ((px - ax) * dx + (pz - az) * dz) / l2)) : 0;
@@ -69,6 +79,8 @@ export function trailDist(x, z) {
 }
 function trailWear(x, z) {
   if (Math.hypot(x, z) < 50) return 0;
+  const rd = roadDist(x, z);
+  if (rd < ROAD_HALF + 2.5) return 0.2 * (1 - smooth(ROAD_HALF, ROAD_HALF + 2.5, rd)); // graded flat, with a soft shoulder
   const d = trailDist(x, z);
   return d < 3 ? 0.18 * (1 - d / 3) : 0;
 }
@@ -183,17 +195,53 @@ export const STRUCTURES = [
   { id: 'bunkhouse', kind: 'bunkhouse', x: 31, z: -14, w: 10, d: 20, h: 6.5 },
   { id: 'feedstore', kind: 'feedstore', x: -30, z: 22, w: 8, d: 6, h: 4.5 },
   { id: 'tank', kind: 'tank', x: -12, z: -30, w: 5, d: 5, h: 6 },
-  // parked like the drone photo: the grey F-150 Tremor in the carport, the boat on its trailer
-  // in front of it beside the house, and the white Chevy on the lawn
-  { id: 'f150', kind: 'f150', x: 17.5, z: -0.4, w: 2.2, d: 5.9, h: 2.0 },
-  { id: 'boat', kind: 'boat', x: 15.7, z: 8.1, w: 2.6, d: 8.2, h: 2.7 },
-  { id: 'chevy', kind: 'chevy', x: 15.7, z: 16.2, w: 2.2, d: 5.9, h: 1.9 },
+  // parked like the drone photo: the boat on its trailer beside the house (the trucks that
+  // park by it can be driven: see VEHICLES below)
+  // (the boat sits a little toward the house so the F-150 can pull straight out past it)
+  { id: 'boat', kind: 'boat', x: 14.6, z: 8.1, w: 2.6, d: 8.2, h: 2.7 },
   { id: 'trough', kind: 'trough', x: 40, z: 18, w: 1.4, d: 5, h: 0.8 },
   { id: 'woodpile', kind: 'woodpile', x: -22, z: -12, w: 4, d: 1.6, h: 1.4 },
   // from the drone photo: the steel farm windmill behind the house and the tiled carport
   { id: 'windmill', kind: 'windmill', x: 15, z: -13, w: 2.4, d: 2.4, h: 11 },
   { id: 'carport', kind: 'carport', x: 17.5, z: 0, w: 6, d: 6.5, h: 3.2, open: true },
 ];
+
+// ---- The trucks ---------------------------------------------------------------
+// Both pickups can be driven (hold nothing: walk up, press E). They are not part of SOLIDS;
+// each side checks against where they currently are. A truck at (x, z) with `yaw` points
+// along (sin yaw, cos yaw), like the cows; "left" is (cos yaw, -sin yaw), the driver's side.
+export const VEHICLES = [
+  { id: 1, kind: 'f150', name: 'F-150', x: 17.5, z: -0.4, yaw: 0, w: 2.1, l: 5.8, h: 1.95 },   // in the carport
+  { id: 2, kind: 'chevy', name: 'Chevy', x: 17.2, z: 17.5, yaw: 0.35, w: 2.1, l: 5.8, h: 1.9 }, // on the lawn, nose toward the gate
+];
+// seats: [left, forward, height the rider's feet are held at]. 0 drives, 1 rides up front,
+// 2 and 3 stand in the bed (and can shoot from there).
+export const VEHICLE_SEATS = [[0.45, 0.45, 0.1], [-0.45, 0.45, 0.1], [0.45, -1.9, 0.85], [-0.45, -1.9, 0.85]];
+export const ENTER_RANGE = 1.9;    // how close to the bodywork you must be to get in
+export const DRIVE = { max: 19, maxOff: 9, maxWet: 3.5, reverse: 6.5, accel: 7.5, brake: 17, wheelbase: 3.7, steer: 0.62 };
+
+// (x, z) in a truck's own frame: [left, forward]
+export function vehicleLocal(v, x, z) {
+  const s = Math.sin(v.yaw), c = Math.cos(v.yaw), dx = x - v.x, dz = z - v.z;
+  return [dx * c - dz * s, dx * s + dz * c];
+}
+export function vehicleWorld(v, left, fwd) {
+  const s = Math.sin(v.yaw), c = Math.cos(v.yaw);
+  return [v.x + left * c + fwd * s, v.z - left * s + fwd * c];
+}
+// distance from a point to the truck's bodywork (0 if inside its footprint)
+export function vehicleGap(v, def, x, z) {
+  const [l, f] = vehicleLocal(v, x, z);
+  return Math.hypot(Math.max(0, Math.abs(l) - def.w / 2), Math.max(0, Math.abs(f) - def.l / 2));
+}
+// push a circle out of the truck's footprint; returns the new [x, z], or null if it wasn't touching
+export function pushOutOfVehicle(v, def, x, z, r) {
+  const [l, f] = vehicleLocal(v, x, z);
+  const hl = def.w / 2 + r, hf = def.l / 2 + r;
+  if (Math.abs(l) >= hl || Math.abs(f) >= hf) return null;
+  const pl = hl - Math.abs(l), pf = hf - Math.abs(f);
+  return pl < pf ? vehicleWorld(v, Math.sign(l || 1) * hl, f) : vehicleWorld(v, l, Math.sign(f || 1) * hf);
+}
 
 // Veranda railing (wrought iron balusters) with a gap at the front steps, plus columns.
 export const VERANDA = (() => {
@@ -235,8 +283,8 @@ export const UNDERGROWTH = [];
       const sz = shoreZ(x);
       if (z > sz - 3) continue;                       // sea / wet sand
       if (yardWall(x, z) || inPen(x, z)) continue;
-      const td = trailDist(x, z);
-      if (td < 4.5) continue;
+      const td = trailDist(x, z), rd = roadDist(x, z);
+      if (td < 4.5 || rd < ROAD_HALF + 3.2) continue;
       const beach = z > sz - SAND_WIDTH;
       const pasture = Math.hypot(x, z * 1.1) < 85;
       let p = beach ? 0.18 : pasture ? 0.05 : 0.62;
@@ -246,8 +294,8 @@ export const UNDERGROWTH = [];
         TREES.push({ x, z, s: kind === 'giant' ? sc * 1.5 : sc, kind });
       }
       // undergrowth: dense in the jungle, lining the trails
-      if (!beach && !pasture && under < 0.75) UNDERGROWTH.push({ x: x + 2.5, z: z - 2, s: 0.7 + r() * 0.8, kind: r() < 0.5 ? 'fern' : 'shrub', rot: r() * 6.28 });
-      if (!beach && !pasture && td < 7 && td > 2.6) UNDERGROWTH.push({ x: x - 2, z: z + 2.5, s: 0.6 + r() * 0.6, kind: 'fern', rot: r() * 6.28 });
+      if (!beach && !pasture && under < 0.75 && roadDist(x + 2.5, z - 2) > ROAD_HALF + 1) UNDERGROWTH.push({ x: x + 2.5, z: z - 2, s: 0.7 + r() * 0.8, kind: r() < 0.5 ? 'fern' : 'shrub', rot: r() * 6.28 });
+      if (!beach && !pasture && td < 7 && td > 2.6 && roadDist(x - 2, z + 2.5) > ROAD_HALF + 1) UNDERGROWTH.push({ x: x - 2, z: z + 2.5, s: 0.6 + r() * 0.6, kind: 'fern', rot: r() * 6.28 });
     }
   }
   // palms in the front garden, like the photos
