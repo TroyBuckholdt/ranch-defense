@@ -2,7 +2,7 @@
 // footsteps, the ranch and the sea) load in the background after the ranch is ready; until a
 // clip has arrived, or if one fails, the synthesized WebAudio version below plays instead.
 const SFX = ['rifle', 'revolver', 'shotgun', 'hunting', 'lmg', 'magout', 'magin', 'bolt', 'shell', 'pump', 'dry',
-  'moo1', 'moo2', 'moorun', 'moobull', 'barkbig', 'barklittle', 'growl', 'yelp', 'impact', 'swish', 'explosion',
+  'moo_a', 'moo_b', 'moo_c', 'moo_d', 'moo_e', 'moo_f', 'moo_run1', 'moo_run2', 'moo_bull', 'barkbig', 'barklittle', 'growl', 'yelp', 'impact', 'swish', 'explosion',
   'boardtear', 'hammer', 'bang', 'cash', 'wave', 'step_grass', 'step_tile', 'amb_day', 'amb_sea', 'music_wave'];
 
 export class Audio {
@@ -268,35 +268,17 @@ export class Audio {
     this.tone(this.master, { dur: 0.06, type: 'square', freq: kill ? 1400 : 2200, gain: 0.07 });
   }
 
-  // zombie moo: a sawtooth through vowel-ish formants with a sick wobble
   moo(pos, type = 'walker') {
     if (!this.ctx) return;
-    const clip = type === 'bull' ? 'moobull' : type === 'runner' ? 'moorun' : Math.random() < 0.5 ? 'moo1' : 'moo2';
-    if (this.play(clip, { pos, gain: type === 'bull' ? 1.1 : 0.8, ref: type === 'bull' ? 8 : 5, rate: type === 'walker' ? 0.92 + Math.random() * 0.16 : 1, vary: 0.05 })) return;
-    const ctx = this.ctx, t = ctx.currentTime;
-    const base = type === 'bull' ? 55 : type === 'runner' ? 120 : 85 + Math.random() * 25;
-    const dur = type === 'runner' ? 0.6 : 1.1 + Math.random() * 0.7;
-    const out = this.out(pos, type === 'bull' ? 8 : 4);
-    const o = ctx.createOscillator(); o.type = 'sawtooth';
-    o.frequency.setValueAtTime(base * 1.2, t);
-    o.frequency.linearRampToValueAtTime(base * 1.5, t + dur * 0.3);
-    o.frequency.exponentialRampToValueAtTime(base * 0.75, t + dur);
-    const lfo = ctx.createOscillator(); lfo.frequency.value = 5 + Math.random() * 6;
-    const lfoG = ctx.createGain(); lfoG.gain.value = base * 0.08;
-    lfo.connect(lfoG).connect(o.frequency);
-    const f1 = ctx.createBiquadFilter(); f1.type = 'bandpass'; f1.Q.value = 5;
-    f1.frequency.setValueAtTime(350, t); f1.frequency.linearRampToValueAtTime(750, t + dur * 0.35); f1.frequency.linearRampToValueAtTime(400, t + dur);
-    const f2 = ctx.createBiquadFilter(); f2.type = 'lowpass'; f2.frequency.value = 1400;
-    const g = ctx.createGain();
-    g.gain.setValueAtTime(0, t);
-    g.gain.linearRampToValueAtTime(type === 'bull' ? 1.6 : 1.1, t + 0.12);
-    g.gain.setValueAtTime(type === 'bull' ? 1.4 : 1.0, t + dur * 0.7);
-    g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-    o.connect(f1).connect(f2).connect(g).connect(out);
-    // gargling rasp layered on top
-    const rasp = this.noise(out, { dur, type: 'bandpass', freq: 500, q: 2, gain: 0.25, attack: 0.1 });
-    void rasp;
-    o.start(t); lfo.start(t); o.stop(t + dur + 0.05); lfo.stop(t + dur + 0.05);
+    // real cattle moos (six regular, two agitated for runners, a deep bellow for bulls);
+    // never the same clip twice in a row, and bulls also use the regular moos pitched down
+    const WALK = ['moo_a', 'moo_b', 'moo_c', 'moo_d', 'moo_e', 'moo_f'];
+    const pool = type === 'runner' ? ['moo_run1', 'moo_run2'] : type === 'bull' ? ['moo_bull', 'moo_b', 'moo_d', 'moo_e'] : WALK;
+    let clip = pool[Math.floor(Math.random() * pool.length)];
+    if (clip === this.lastMoo) clip = pool[(pool.indexOf(clip) + 1) % pool.length];
+    this.lastMoo = clip;
+    const rate = type === 'bull' ? (clip === 'moo_bull' ? 0.9 : 0.78) : type === 'runner' ? 1.0 + Math.random() * 0.08 : 0.94 + Math.random() * 0.1;
+    this.play(clip, { pos, gain: type === 'bull' ? 1.0 : type === 'runner' ? 0.85 : 0.75, ref: type === 'bull' ? 8 : 5, rate, vary: 0 });
   }
 
   // dog bark: a short voiced burst through a mouth-like formant; little dog is higher
