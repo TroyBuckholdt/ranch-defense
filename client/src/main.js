@@ -188,6 +188,7 @@ const tmpV = new THREE.Vector3(), tmpV2 = new THREE.Vector3();
 const nameInput = $('name'), roomInput = $('room');
 let myChar = 'p1';
 try { myChar = localStorage.getItem('rd-char') || 'p1'; } catch {}
+if (!CHARACTERS.some(c => c.id === myChar)) myChar = 'p1'; // e.g. a removed duplicate
 const picker = $('char-picker');
 for (const c of CHARACTERS) {
   const b = document.createElement('button');

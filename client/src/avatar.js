@@ -10,9 +10,7 @@ import { nameTag } from './textures.js';
 export const CHARACTERS = [
   { id: 'p1', label: 'Troy', height: 1.83 },
   { id: 'p2', label: 'Maria', height: 1.62 },
-  { id: 'p3', label: 'Teresa (white top)', height: 1.63 },
   { id: 'p4', label: 'Rafael', height: 1.76 },
-  { id: 'p5', label: 'Maria (riding)', height: 1.66 },
   { id: 'p6', label: 'Rafa', height: 1.82 },
   { id: 'p7', label: 'Julio', height: 1.76 },
   { id: 'p8', label: 'Teresa', height: 1.65 },
