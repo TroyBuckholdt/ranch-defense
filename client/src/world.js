@@ -210,6 +210,7 @@ function mats() {
     planks: pbr('weathered_planks', { color: 0xd8c0a0 }),
     bark: pbr('bark_brown_02', { color: 0xb0a898 }),
     palmBark: pbr('palm_bark'),
+    coconut: std({ color: 0x4a5a22, roughness: 0.55 }),
     sand: pbr('coast_sand_01'),
     floor: new THREE.MeshStandardMaterial({ map: loadTex('ranch_floor.jpg'), roughness: 0.32, metalness: 0 }),
     border: new THREE.MeshStandardMaterial({ map: loadTex('ranch_border.jpg'), roughness: 0.32 }),
@@ -409,11 +410,12 @@ function brightestDirection(tex) {
 async function loadAllModels() {
   const names = {
     pot: 'potted_plant_02/potted_plant_02_lod.glb', fern: 'fern_02/fern_02_lod.glb',
-    shrub: 'shrub_04/shrub_04_lod.glb', sapling: 'shrub_02/shrub_02_lod.glb',
+    shrub: 'shrub_04/shrub_04_lod.glb',
     // the real house's furniture, generated from the family photos
     bench: 'house/bench.glb', caneRocker: 'house/rocker.glb', fan: 'house/fan.glb',
     diningChair: 'house/diningchair.glb', bar: 'house/bar.glb', xchair: 'house/xchair.glb',
     f150: 'vehicles/f150.glb', chevy: 'vehicles/chevy.glb', boat: 'vehicles/boat.glb',
+    trees: 'trees/trees.glb',   // tools/blender/make_trees.py
   };
   const out = {};
   await Promise.all(Object.entries(names).map(async ([k, p]) => { out[k] = await loadModel(p); }));
@@ -453,7 +455,7 @@ function buildTerrain() {
   const tex = (n, srgb = true) => loadTex(n, srgb);
   const mat = new THREE.MeshStandardMaterial({
     map: tex('leafy_grass_diff.jpg'), normalMap: tex('forest_leaves_02_nor.jpg', false),
-    normalScale: new THREE.Vector2(0.8, 0.8), roughness: 1, color: 0xc8dca0,
+    normalScale: new THREE.Vector2(0.8, 0.8), roughness: 1, color: 0xffffff,
   });
   const uni = {
     tJungle: { value: tex('forest_leaves_02_diff.jpg') }, tSand: { value: tex('coast_sand_01_diff.jpg') },
@@ -471,15 +473,16 @@ function buildTerrain() {
       #include <roughnessmap_fragment>
       roughnessFactor = mix(roughnessFactor, 0.22, (1.0 - smoothstep(0.0, 0.45, vWY)) * vSplat.z);`).replace('#include <map_fragment>', `
       vec2 tuv = vWXZ / 3.0;
-      vec4 cg = texture2D(map, tuv) * vec4(0.82, 1.0, 0.62, 1.0);
+      // each layer gets its own tint: pasture, dark leaf litter under the trees, pale sand
+      vec4 cg = texture2D(map, tuv) * vec4(0.40, 0.56, 0.20, 1.0);
       // inside the yard fence: a mowed, watered lawn with faint mowing stripes
       float yd = max(max(${YARD.minX.toFixed(1)} - vWXZ.x, vWXZ.x - ${YARD.maxX.toFixed(1)}), max(${YARD.minZ.toFixed(1)} - vWXZ.y, vWXZ.y - ${YARD.maxZ.toFixed(1)}));
       float lawn = 1.0 - smoothstep(-3.0, 2.0, yd);
       float stripe = smoothstep(0.35, 0.65, abs(fract(vWXZ.x / 7.0) - 0.5) * 2.0);
-      cg.rgb = mix(cg.rgb, texture2D(map, tuv * 1.7).rgb * vec3(0.6, 0.9, 0.4) * mix(0.93, 1.07, stripe), lawn);
-      vec4 cj = texture2D(tJungle, tuv * 0.8) * vec4(0.8, 0.85, 0.7, 1.0);
-      vec4 cs = texture2D(tSand, tuv * 0.9) * vec4(1.08, 1.02, 0.92, 1.0);
-      vec4 ct = texture2D(tTrail, tuv);
+      cg.rgb = mix(cg.rgb, texture2D(map, tuv * 1.7).rgb * vec3(0.30, 0.52, 0.16) * mix(0.93, 1.07, stripe), lawn);
+      vec4 cj = texture2D(tJungle, tuv * 0.8) * vec4(0.44, 0.42, 0.27, 1.0);
+      vec4 cs = texture2D(tSand, tuv * 0.9) * vec4(1.02, 0.96, 0.84, 1.0);
+      vec4 ct = texture2D(tTrail, tuv) * vec4(0.62, 0.55, 0.42, 1.0);
       vec4 col = cg * vSplat.x + cj * vSplat.y + cs * vSplat.z + ct * vSplat.w;
       float macro = texture2D(tMacro, vWXZ / 70.0).r;
       col.rgb *= mix(0.78, 1.18, macro);
@@ -499,8 +502,7 @@ function buildTerrain() {
         stone *= mix(1.0, 0.8, rut);
         float weeds = (1.0 - smoothstep(0.12, 0.5, rd)) * smoothstep(0.42, 0.6, mid) * 0.75;
         stone = mix(stone, cg.rgb * 0.85, weeds);
-        // (the ground material is tinted green for the grass; undo that for bare stone)
-        col.rgb = mix(col.rgb, stone / vec3(0.58, 0.72, 0.35) * 0.62, edge);
+        col.rgb = mix(col.rgb, stone * 0.9, edge);
       }
       // sand darkens where the swash keeps it wet, and more so under the water
       float wet = 1.0 - smoothstep(0.0, 0.45, vWY);
@@ -1394,14 +1396,14 @@ function buildHaciendaTop(group) {
 // Living foliage: matte leaves, wind sway (stronger higher up), per-leaf flutter, and light
 // glowing through the leaves when you look toward the sun.
 const FOLIAGE_TIME = { value: 0 };
-function foliage(m, { sway = 0.03, flutter = 0.006, tint = null, glow = 0.9, h = 'max(position.y, 0.0)', edgeFade = false } = {}) {
+function foliage(m, { sway = 0.03, flutter = 0.006, tint = null, glow = 0.9, h = 'max(position.y, 0.0)', edgeFade = false, puffy = false } = {}) {
   // leaves are matte: the source roughness maps made them mirror the pale sky (silvery trees)
   m.roughnessMap = null; m.metalnessMap = null;
   m.roughness = 0.92;
   m.metalness = 0;
   m.envMapIntensity = 0.6;
   if (tint) m.color.multiply(new THREE.Color(...tint));
-  m.customProgramCacheKey = () => `foliage-${sway}-${flutter}-${glow}-${h}-${edgeFade}`;
+  m.customProgramCacheKey = () => `foliage-${sway}-${flutter}-${glow}-${h}-${edgeFade}-${puffy}`;
   m.onBeforeCompile = (sh) => {
     sh.uniforms.uFolTime = FOLIAGE_TIME;
     sh.vertexShader = 'uniform float uFolTime;\n' + sh.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
@@ -1416,6 +1418,9 @@ function foliage(m, { sway = 0.03, flutter = 0.006, tint = null, glow = 0.9, h =
         transformed.z += cos(uFolTime * 0.9 + ph * 1.3) * ${(sway * 0.7).toFixed(4)} * hh;
         transformed += objectNormal * sin(uFolTime * 7.0 + dot(position, vec3(13.1, 7.7, 9.3))) * ${flutter.toFixed(4)};
       }`);
+    // crown cards carry normals that point out of the crown: keep them on the back faces too,
+    // so the whole crown shades as one soft mass
+    if (puffy) sh.fragmentShader = sh.fragmentShader.replace('#include <normal_fragment_begin>', THREE.ShaderChunk.normal_fragment_begin.replace('gl_FrontFacing ? 1.0 : - 1.0', '1.0'));
     if (edgeFade) sh.fragmentShader = sh.fragmentShader.replace('#include <alphatest_fragment>', `
       // thin the leaves out toward the silhouette so crowns read as ragged foliage, not blobs
       diffuseColor.a *= smoothstep(0.08, 0.5, abs(dot(normalize(vNormal), normalize(vViewPosition))));
@@ -1477,67 +1482,35 @@ function buildVegetation(models, Q) {
   };
   const gy = (x, z) => heightAt(x, z) - 0.05;
 
-  // palms: bent trunk segments + drooping fronds
-  const palms = TREES.filter(t => t.kind === 'palm');
-  const segGeo = new THREE.CylinderGeometry(0.17, 0.22, 1, 10).translate(0, 0.5, 0);
-  segGeo.attributes.uv.array.forEach((v, i, a) => { if (i % 2 === 1) a[i] = v * 1.5; });
-  const SEG = 6, segT = [], frondT = [];
-  palms.forEach((t, i) => {
-    const h = (8 + (i % 5)) * t.s, segH = h / SEG, lean = 0.05 + (i % 4) * 0.035, dir = i * 2.4;
-    const p = new THREE.Vector3(t.x, gy(t.x, t.z), t.z);
-    for (let j = 0; j < SEG; j++) {
-      const tilt = lean * (j + 1);
-      const rx = Math.cos(dir) * tilt, rz = Math.sin(dir) * tilt;
-      segT.push({ x: p.x, y: p.y, z: p.z, rx, rz, sx: t.s * (1 - j * 0.07), sy: segH, sz: t.s * (1 - j * 0.07) });
-      p.add(new THREE.Vector3(0, segH, 0).applyEuler(new THREE.Euler(rx, 0, rz)));
-    }
-    for (let j = 0; j < 12; j++) frondT.push({ x: p.x, y: p.y, z: p.z, ry: (j / 12) * Math.PI * 2 + i, rz: -0.3 + (j % 3) * 0.25, s: t.s });
-  });
-  add([{ geometry: segGeo, material: M.palmBark }], segT, { maxDist: 220 });
-  const fg = new THREE.PlaneGeometry(1, 0.55, 8, 1);
-  const fpos = fg.attributes.position;
-  for (let i = 0; i < fpos.count; i++) { const x = fpos.getX(i) + 0.5; fpos.setXYZ(i, x * 4.2, -x * x * 1.9, fpos.getY(i) * 1.2); }
-  fg.computeVertexNormals();
-  add([{ geometry: fg, material: foliage(new THREE.MeshStandardMaterial({ map: T.frond(), alphaTest: 0.45, roughness: 0.75 }), { sway: 0.05, flutter: 0.008, h: 'max(position.x, 0.0) * 0.6' }) }], frondT.map(f => ({ ...f, rx: 0, ry: f.ry, rz: f.rz })), { maxDist: 220 });
+  // Trees are modelled in Blender (tools/blender/make_trees.py): two broadleaf trees with
+  // real limbs and uneven leafy crowns, two coconut palms with arching fronds. Each part is
+  // instanced across the map.
+  const part = (name) => {
+    const o = models.trees.getObjectByName(name);
+    o.updateWorldMatrix(true, false);
+    const g = o.geometry.clone(); g.applyMatrix4(o.matrixWorld);
+    return { geometry: g, map: o.material.map };
+  };
+  const leafMat = (map, opts) => foliage(new THREE.MeshStandardMaterial({ map, alphaTest: 0.5, side: THREE.DoubleSide, roughness: 0.9 }), opts);
+  const trees = (kind, trunkMat, leafOpts, list, nuts) => {
+    const trunk = part(kind + '_Trunk'), leaves = part(kind + (nuts ? '_Fronds' : '_Leaves'));
+    add([{ geometry: trunk.geometry, material: trunkMat }], list, { maxDist: 220 });
+    add([{ geometry: leaves.geometry, material: leafMat(leaves.map, leafOpts) }], list, { maxDist: 220, shadows: !lowQ });
+    if (nuts) add([{ geometry: part(kind + '_Nuts').geometry, material: M.coconut }], list, { maxDist: 90, shadows: false });
+  };
 
-  // broadleaf jungle trees: bark trunk + canopy built from the sapling model scaled up
-  const broad = TREES.filter(t => t.kind !== 'palm');
-  const trunkGeo = new THREE.CylinderGeometry(0.28, 0.5, 1, 10).translate(0, 0.5, 0);
-  trunkGeo.attributes.uv.array.forEach((v, i, a) => { if (i % 2 === 1) a[i] = v * 3; });
-  const trunkT = [], canopyT = [];
-  broad.forEach((t, i) => {
-    const giant = t.kind === 'giant', h = (giant ? 9 : 5.5) * t.s, y = gy(t.x, t.z);
-    trunkT.push({ x: t.x, y, z: t.z, sx: t.s * (giant ? 1.8 : 1), sy: h * 0.72, sz: t.s * (giant ? 1.8 : 1), ry: i });
-    const n = giant ? 6 : 4;
-    for (let j = 0; j < n; j++) {
-      const a = j * 2.1 + i, r = j === 0 ? 0 : 1.6 * t.s * (giant ? 1.6 : 1);
-      canopyT.push({ x: t.x + Math.cos(a) * r, y: y + h * (0.42 + (j % 2) * 0.12), z: t.z + Math.sin(a) * r, ry: a, s: t.s * (giant ? 4.6 : 3.4) });
-    }
-  });
-  add([{ geometry: trunkGeo, material: M.bark }], trunkT, { maxDist: 200 });
-  const canopy = meshOf(models.sapling);
-  for (const c of canopy) foliage(c.material, { sway: 0.035, flutter: 0.012, tint: [0.62, 0.92, 0.42] });
-  add(canopy, canopyT, { maxDist: 200, shadows: !lowQ });
-  // dense rounded crowns (the real trees are full and leafy): lumpy leaf-covered blobs
-  // filling each crown behind the branches
-  const blob = new THREE.IcosahedronGeometry(1, Q.crowns || 1);
-  { const bp = blob.attributes.position, v = new THREE.Vector3();
-    for (let i = 0; i < bp.count; i++) { v.fromBufferAttribute(bp, i); const n = 1 + 0.22 * Math.sin(v.x * 5.1 + v.y * 3.7) * Math.cos(v.z * 4.3 - v.y * 2.1); v.multiplyScalar(n); v.y *= 0.78; bp.setXYZ(i, v.x, v.y, v.z); }
-    blob.computeVertexNormals(); }
-  const crownM = foliage(new THREE.MeshStandardMaterial({ map: T.leafClump(), alphaTest: 0.5, side: THREE.DoubleSide, color: 0xe8f0d8 }), { sway: 0.02, flutter: 0.01, h: 'max(position.y + 1.0, 0.0)', edgeFade: true });
-  const crownT = [];
-  broad.forEach((t, i) => {
-    const giant = t.kind === 'giant', h = (giant ? 9 : 5.5) * t.s, y = gy(t.x, t.z);
-    const R = (giant ? 4.0 : 2.7) * t.s, cy = y + h * 0.86;
-    crownT.push({ x: t.x, y: cy, z: t.z, ry: i, sx: R * 0.78, sy: R * 0.7, sz: R * 0.78 });
-    const n = giant ? 6 : 4;
-    for (let j = 0; j < n; j++) {
-      const a = j * (Math.PI * 2 / n) + i * 0.7, rr = R * (0.5 + (j % 2) * 0.12);
-      const sc = R * (0.48 + ((i + j) % 3) * 0.06);
-      crownT.push({ x: t.x + Math.cos(a) * rr, y: cy + ((j % 3) - 1) * R * 0.18, z: t.z + Math.sin(a) * rr, ry: a, sx: sc, sy: sc * 0.8, sz: sc });
-    }
-  });
-  add([{ geometry: blob, material: crownM }], crownT, { maxDist: 220, shadows: (Q.crowns || 1) > 1 });
+  // coconut palms: 10 m models, two leans
+  const palms = TREES.filter(t => t.kind === 'palm');
+  const palmAt = (t, i) => ({ x: t.x, y: gy(t.x, t.z), z: t.z, ry: i * 2.4, s: ((8 + (i % 5)) * t.s) / 10 });
+  const frondOpts = { sway: 0.012, flutter: 0.012, h: 'max(position.y - 7.0, 0.0) * 2.0' };
+  trees('PalmA', M.palmBark, frondOpts, palms.map(palmAt).filter((p, i) => i % 2 === 0), true);
+  trees('PalmB', M.palmBark, frondOpts, palms.map(palmAt).filter((p, i) => i % 2 === 1), true);
+
+  // broadleaf jungle trees: the 7 m tree, and the 11 m buttressed giant
+  const broadAt = (k) => (t, i) => ({ x: t.x, y: gy(t.x, t.z), z: t.z, ry: i * 1.7, sx: t.s * k * (0.92 + (i % 4) * 0.06), sy: t.s * k * (0.9 + (i % 3) * 0.09), sz: t.s * k * (0.92 + ((i + 2) % 4) * 0.06) });
+  const leafOpts = { sway: 0.006, flutter: 0.014, h: 'max(position.y - 2.0, 0.0)', puffy: true };
+  trees('Broad', M.bark, leafOpts, TREES.filter(t => t.kind === 'broad').map(broadAt(0.95)));
+  trees('Giant', M.bark, leafOpts, TREES.filter(t => t.kind === 'giant').map(broadAt(0.82)));
 
   // undergrowth: ferns and shrubs from the real models
   const ferns = UNDERGROWTH.filter(u => u.kind === 'fern').map(u => ({ x: u.x, y: gy(u.x, u.z), z: u.z, ry: u.rot, s: u.s * 2.6 }));
@@ -1625,7 +1598,7 @@ function buildGrass(COUNT) {
   geo.instanceCount = COUNT;
   geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e5);
 
-  const mat = new THREE.MeshStandardMaterial({ color: 0x86a650, roughness: 0.85, side: THREE.DoubleSide });
+  const mat = new THREE.MeshStandardMaterial({ color: 0x6f9440, roughness: 0.85, side: THREE.DoubleSide });
   const uniforms = { uTime: { value: 0 }, uTerrain: { value: tex } };
   mat.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, uniforms);
@@ -1649,11 +1622,11 @@ varying float vGrassH; varying vec3 vGrassC; varying float vLawn;
       transformed.z += sway * transformed.y * transformed.y * 0.3;
       transformed += vec3(wxz.x, tv.r - 0.02, wxz.y);
       vGrassH = uv.y; vLawn = tv.b;
-      vGrassC = mix(vec3(0.62, 0.78, 0.36), vec3(0.95, 0.9, 0.5), aRand.y * aRand.y) * (0.75 + aRand.z * 0.4);
+      vGrassC = mix(vec3(0.58, 0.78, 0.34), vec3(0.86, 0.86, 0.46), aRand.y * aRand.y * 0.7) * (0.75 + aRand.z * 0.4);
       vGrassC = mix(vGrassC, vec3(0.5, 0.8, 0.34) * (0.8 + aRand.z * 0.3), tv.b);`);
     sh.fragmentShader = 'varying float vGrassH; varying vec3 vGrassC; varying float vLawn;\n' + sh.fragmentShader.replace('#include <color_fragment>', `
       #include <color_fragment>
-      diffuseColor.rgb *= vGrassC * mix(mix(0.36, 0.72, vLawn), 1.12, vGrassH);
+      diffuseColor.rgb *= vGrassC * mix(mix(0.5, 0.72, vLawn), 1.1, vGrassH);
       diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(1.25, 1.12, 0.7), smoothstep(0.7, 1.0, vGrassH) * 0.5);`);
   };
   const mesh = new THREE.Mesh(geo, mat);
