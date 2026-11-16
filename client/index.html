@@ -6,6 +6,11 @@
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="theme-color" content="#000000" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Ranch Defense" />
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+  <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
   <title>Ranch Defense</title>
   <link rel="stylesheet" href="./style.css" />
 </head>
@@ -46,6 +51,7 @@
     <div class="menu-card">
       <div class="menu-left">
         <h1>RANCH<br/><span>DEFENSE</span></h1>
+        <div id="ios-fs-hint" class="hidden">Full screen on iPhone: tap <b>Share</b> → <b>Add to Home Screen</b>, then play from the new icon.</div>
         <p class="tag">The cows came back wrong. Hold the ranch.</p>
         <label class="f-name">Your name<input id="name" maxlength="16" autocomplete="off" placeholder="Rancher" /></label>
         <label class="f-room">Room code <small>(friends type the same code to play together)</small><input id="room" maxlength="20" autocomplete="off" placeholder="ranch" /></label>

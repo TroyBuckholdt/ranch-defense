@@ -33,6 +33,7 @@ body.touch.in-game, body.touch.in-game #game { touch-action: none; overscroll-be
 .tb-full { right: calc(10px + env(safe-area-inset-right)); font-size: 18px; }
 .tb-light { right: calc(62px + env(safe-area-inset-right)); }
 .tb-scores { right: calc(130px + env(safe-area-inset-right)); }
+.tb-full.pulse { opacity: 1; border-color: #c8ff4d; animation: use-pulse 1.2s ease-in-out infinite; }
 .tb-light.on { background: rgba(255, 236, 160, 0.4); border-color: #ffe9a0; transform: none; }
 
 /* move stick */
@@ -106,13 +107,14 @@ body.touch .menu-card { max-height: none; overflow: visible; margin: auto 0; }
   /* touch + landscape: two columns so PLAY fits on screen without scrolling */
   body.touch .menu-card {
     width: min(860px, 100%); display: grid; column-gap: 22px; row-gap: 0; align-items: start; grid-template-columns: 1fr 1fr;
-    grid-template-areas: "title title" "tag tag" "name plabel" "room chars" "gfx chars" "sens play" "status help";
+    grid-template-areas: "title title" "tag tag" "hint hint" "name plabel" "room chars" "gfx chars" "sens play" "status help";
   }
   body.touch .menu-left, body.touch .menu-right { display: contents; }
   body.touch .menu-card h1 { grid-area: title; font-size: 34px; }
   body.touch .menu-card h1 br { display: none; }
   body.touch .menu-card h1 span { margin-left: 0.25em; }
   body.touch .tag { grid-area: tag; margin: 2px 0 8px; }
+  body.touch #ios-fs-hint { grid-area: hint; margin: 2px 0 8px; font-size: 12px; }
   body.touch .f-name { grid-area: name; }
   body.touch .f-room { grid-area: room; }
   body.touch .f-gfx { grid-area: gfx; }
@@ -150,3 +152,7 @@ body.touch .touch-only { display: block; }
   body.touch #char-picker button img { aspect-ratio: 1; object-position: top; }
   body.touch #touch-settings { margin: 0 0 6px; }
 }
+/* iPhone Safari can't full-screen a page: one line on how to get the home-screen app */
+#ios-fs-hint { margin: 8px 0 12px; font-family: system-ui, sans-serif; font-size: 13px; color: #ffd27a; }
+#ios-fs-hint b { color: #fff; font-weight: 600; }
+body.ios-hint .tag { display: none; }
