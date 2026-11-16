@@ -440,11 +440,14 @@ export const COW_TYPES = {
 export const COW_TYPE_LIST = ['walker', 'runner', 'bull'];
 
 // The ranch dogs (two big red-brown dogs and the little fluffy one) fight on your side.
+// The ranch dogs. All three go after any cow near the players, through the doors if
+// the cow is on the other side of the walls.
 export const DOG_TYPES = [
-  { kind: 'big', hp: 90, speed: 7.5, sight: 20, bite: 1.0, damage: 7, biteEvery: 0.9, radius: 0.4 },
-  { kind: 'big', hp: 90, speed: 7.2, sight: 20, bite: 1.0, damage: 7, biteEvery: 0.95, radius: 0.4 },
-  { kind: 'little', hp: 45, speed: 8.0, sight: 14, bite: 0.7, damage: 3, biteEvery: 0.6, radius: 0.28 },
+  { kind: 'big', name: 'Jack', hp: 90, speed: 7.5, sight: 30, bite: 1.0, damage: 7, biteEvery: 0.9, radius: 0.4 },
+  { kind: 'big', name: 'Mateo', hp: 90, speed: 7.2, sight: 30, bite: 1.0, damage: 7, biteEvery: 0.95, radius: 0.4 },
+  { kind: 'little', name: 'Taco', hp: 45, speed: 8.0, sight: 24, bite: 0.7, damage: 3, biteEvery: 0.6, radius: 0.28 },
 ];
+export const DOG_LEASH = 32; // dogs only chase cows this close to a player
 
 // Hit spheres for a cow at (x,z) facing yaw. Index 0 is the head.
 // `rear` lifts the front end (used while climbing through a window).

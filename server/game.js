@@ -10,7 +10,7 @@
 import {
   MAP_HALF, SOLIDS, ENTRIES, MAX_BOARDS, PLAYER_SPAWNS, COW_TYPES, WEAPONS, START_WEAPONS, START_POINTS, WALL_BUYS, BUY_RANGE,
   MELEE, GRENADE, POWERUP_TYPES, POWERUP_CHANCE, POWERUP_TIME, REPAIR_TIME, REPAIR_RANGE,
-  resolveCircle, raySolids, raySphere, cowHitSpheres, insideHouse, heightAt, shoreZ, solidsNear, playerPassable, DOG_TYPES,
+  resolveCircle, raySolids, raySphere, cowHitSpheres, insideHouse, heightAt, shoreZ, solidsNear, playerPassable, DOG_TYPES, DOG_LEASH,
 } from '../shared/world.js';
 
 const TICK = 1 / 20;
@@ -654,18 +654,21 @@ export class Room {
         continue;
       }
       const dIn = insideHouse(d.x, d.z);
-      // closest living cow on the same side, not too far from the pack
-      let prey = null, pd = def.sight;
-      for (const c of this.cows.values()) {
-        if (c.state === 'dead' || c.state === 'vault' || insideHouse(c.x, c.z) !== dIn) continue;
-        const dd = Math.hypot(c.x - d.x, c.z - d.z);
-        if (dd < pd) { pd = dd; prey = c; }
-      }
       const owner = alive.reduce((a, p) => (!a || Math.hypot(p.x - d.x, p.z - d.z) < Math.hypot(a.x - d.x, a.z - d.z) ? p : a), null);
+      // closest living cow near the players; ones on this side of the walls come first
+      let prey = null, best = Infinity, pd = Infinity;
+      for (const c of this.cows.values()) {
+        if (c.state === 'dead' || c.state === 'vault') continue;
+        const dd = Math.hypot(c.x - d.x, c.z - d.z);
+        if (dd > def.sight) continue;
+        if (owner && Math.hypot(c.x - owner.x, c.z - owner.z) > DOG_LEASH) continue;
+        const cost = dd + (insideHouse(c.x, c.z) !== dIn ? 8 : 0);
+        if (cost < best) { best = cost; prey = c; pd = dd; }
+      }
       let goal = null, speed = def.speed;
       if (prey) {
         const reach = def.bite + COW_TYPES[prey.type].radius;
-        if (pd < reach) {
+        if (pd < reach && insideHouse(prey.x, prey.z) === dIn) {
           d.state = 2;
           d.yaw = turnToward(d.yaw, Math.atan2(prey.x - d.x, prey.z - d.z), dt * 10);
           if (d.biteCd <= 0) {
@@ -677,14 +680,14 @@ export class Room {
           }
           continue;
         }
-        goal = [prey.x, prey.z];
+        goal = this.dogRoute(d, prey.x, prey.z);
         if (Math.random() < dt * 0.6) this.broadcastEvent({ t: 'bark', dog: d.id });
       } else if (owner) {
         const od = Math.hypot(owner.x - d.x, owner.z - d.z);
-        if (od > 5) { goal = [owner.x, owner.z]; speed = od > 12 ? def.speed : def.speed * 0.55; }
+        if (od > 5) { goal = this.dogRoute(d, owner.x, owner.z); speed = od > 12 ? def.speed : def.speed * 0.55; }
         else { // mill about near the owner
           d.wander += dt * 0.4;
-          goal = [owner.x + Math.cos(d.wander + d.id * 2) * 3, owner.z + Math.sin(d.wander + d.id * 2) * 3];
+          goal = this.dogRoute(d, owner.x + Math.cos(d.wander + d.id * 2) * 3, owner.z + Math.sin(d.wander + d.id * 2) * 3);
           speed = def.speed * 0.25;
         }
       }
@@ -699,10 +702,41 @@ export class Room {
     }
   }
 
+  // Dogs have no pathfinding: when the goal is on the other side of the walls they go
+  // out (or in) through the nearest door, then head straight for it.
+  dogRoute(d, gx, gz) {
+    const dIn = insideHouse(d.x, d.z);
+    // finish going through a door before chasing again, or a diagonal line back past the
+    // doorway would pull the dog straight back through it
+    if (d.via != null && d.viaStage === 1) {
+      const door = ENTRIES[d.via], far = d.viaOut ? door.out : door.in;
+      if (Math.hypot(d.x - far[0], d.z - far[1]) > 0.8) return far;
+      d.via = null;
+    }
+    if (dIn === insideHouse(gx, gz)) { d.via = null; return [gx, gz]; }
+    let door = d.via != null ? ENTRIES[d.via] : null;
+    if (!door) {
+      let best = Infinity;
+      for (const e of ENTRIES) {
+        if (e.kind !== 'door') continue;
+        const k = Math.hypot(e.x - d.x, e.z - d.z) + Math.hypot(e.x - gx, e.z - gz);
+        if (k < best) { best = k; door = e; }
+      }
+      d.via = door.id; d.viaStage = 0;
+    }
+    const near = dIn ? door.in : door.out, far = dIn ? door.out : door.in;
+    if (d.viaStage === 0 && Math.hypot(d.x - near[0], d.z - near[1]) < 0.8) { d.viaStage = 1; d.viaOut = dIn; }
+    return d.viaStage === 0 ? near : far;
+  }
+
   hurtDog(d, dmg) {
     d.hp -= dmg;
     this.broadcastEvent({ t: 'dogyelp', dog: d.id });
-    if (d.hp <= 0) { d.state = 3; d.downT = 20; }
+    if (d.hp <= 0 && d.state !== 3) {
+      d.state = 3; d.downT = 20;
+      const name = DOG_TYPES.find((t, i) => i === d.id - 1)?.name || 'The little dog';
+      this.broadcastEvent({ t: 'chat', msg: `${name} got knocked down by a cow! Back up in 20 seconds` });
+    }
   }
 
   hurtPlayer(p, dmg, cow) {
