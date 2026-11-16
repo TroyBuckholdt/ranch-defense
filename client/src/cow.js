@@ -450,7 +450,7 @@ export class CowView {
     root.rotation.y = yaw;
 
     // state crossfade
-    if (state !== this.state) { this.prevState = this.state; this.state = state; this.stateT = 0; if (state === 1) this.attackT = 0.62; }
+    if (state !== this.state) { this.prevState = this.state; this.state = state; this.stateT = 0; if (state === 1) this.attackT = 0.4 * this.attackPeriod(); }
     this.stateT += dt;
     const rate = state === 2 ? 7 : 5;
     let sum = 0;
@@ -603,7 +603,7 @@ export class CowView {
   }
 
   poseLoco(Q, v, t) {
-    const st = this.style, sc = COW_TYPES[this.type].scale;
+    const st = this.style;
     const av = Math.abs(v), moving = smooth(0.05, 0.6, av);
     const c = this.cycle, f = this.freq || 1;
     const id = this.seed;
@@ -612,7 +612,7 @@ export class CowView {
 
     // body: bounce twice a stride (once in the gallop), roll with the stepping legs,
     // lurch side to side, lean into turns, nose down a touch when moving fast
-    const bob2 = Math.cos(c * TAU * 2), bob1 = Math.cos(c * TAU);
+    const bob2 = Math.cos(c * TAU * 2);
     Q[BY] = -(0.05 + 0.03 * gallop) * moving - st.bounce * moving * lerp(0.5 + 0.5 * bob2, 0.5 + 0.5 * Math.cos((c - 0.15) * TAU), gallop);
     Q[ROLL] = Math.sin(c * TAU) * (0.035 + 0.04 * st.lurch) * moving * (1 - gallop) - this.yawRate * 0.05 * moving;
     Q[YAW] = Math.sin(c * TAU + 0.6) * 0.045 * st.lurch * moving;
@@ -682,10 +682,13 @@ export class CowView {
     Q[TZ] = Math.sin(t * 2.3 + id) * 0.32 * (1 - gallop * 0.6) + Math.sin(c * TAU) * 0.15 * moving;
   }
 
-  // Horn swing / head butt, timed to the server's swing cadence.
+  attackPeriod() { return this.type === 'bull' ? 1.6 : 1.1; } // server attack cooldowns
+
+  // Horn swing / head butt, timed to the server's swing cadence. The server lands the
+  // first blow as soon as the cow is in reach, so the swing starts just before the lunge.
   poseAttack(Q, dt, t) {
-    const st = this.style, bull = this.type === 'bull';
-    const period = bull ? 1.6 : this.type === 'runner' ? 1.1 : 1.1;
+    const st = this.style;
+    const period = this.attackPeriod();
     this.attackT += dt;
     const a = frac(this.attackT / period);
     // 0-0.45 wind up (rear back, head high, paw), 0.45-0.58 lunge + hook, then recover
