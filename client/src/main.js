@@ -81,10 +81,11 @@ let myChar = 'p1';
 try { myChar = localStorage.getItem('rd-char') || 'p1'; } catch {}
 if (!CHARACTERS.some(c => c.id === myChar)) myChar = 'p1'; // e.g. a removed duplicate
 const picker = $('char-picker');
+// (?v= on the pictures: bump it when one changes, or browsers keep showing the old one for an hour)
 for (const c of CHARACTERS) {
   const b = document.createElement('button');
   b.type = 'button';
-  b.innerHTML = `<img src="/assets/models/people/thumbs/${c.id}.jpg" alt=""><span>${c.label}</span>`;
+  b.innerHTML = `<img src="/assets/models/people/thumbs/${c.id}.jpg?v=2" alt=""><span>${c.label}</span>`;
   b.classList.toggle('sel', c.id === myChar);
   b.onclick = () => {
     myChar = c.id;
