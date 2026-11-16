@@ -321,7 +321,7 @@ function fire(time) {
       }
     }
     const hit = o.clone().addScaledVector(dir, dist);
-    if (hitCow != null) { fx.blood(hit, dir); cowViews.get(hitCow)?.hit(); }
+    if (hitCow != null) { fx.blood(hit, dir); cowViews.get(hitCow)?.hit(da); }
     else if (dist < w.range - 1 && (i % 3 === 0)) fx.dust(hit, dir.clone().negate());
     if (i < 3 && Math.random() < 0.6) fx.tracer(weapon.muzzleWorld(tmpV), hit);
   });
@@ -379,7 +379,7 @@ function onEvent(m) {
         if (m.kill) fx.blood(p, d, true);
       } else {
         fx.blood(p, d, m.kill);
-        cowViews.get(m.cow)?.hit();
+        cowViews.get(m.cow)?.hit(m.d);
       }
       audio.impact(m.p, m.head);
       break;
