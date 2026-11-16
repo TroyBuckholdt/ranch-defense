@@ -11,7 +11,8 @@ body.touch.in-game, body.touch.in-game #game { touch-action: none; overscroll-be
   position: absolute; width: var(--b); height: var(--b); border-radius: 50%;
   display: grid; place-items: center; color: rgba(255, 255, 255, 0.92);
   background: rgba(20, 20, 20, 0.32); border: 2px solid rgba(255, 255, 255, 0.38);
-  font-size: calc(var(--b) * 0.22); letter-spacing: 1px; text-shadow: 0 1px 3px #000;
+  font-size: calc(var(--b) * 0.2); letter-spacing: 0.3px; text-shadow: 0 1px 3px #000;
+  font-family: "Arial Narrow", "Roboto Condensed", sans-serif-condensed, "Oswald", system-ui, sans-serif; font-stretch: condensed;
   backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px);
   transition: background 0.08s, transform 0.08s, opacity 0.2s;
 }
@@ -91,15 +92,36 @@ body.touch .controls { display: none; }
 body.touch #menu { place-items: start center; overflow-y: auto; touch-action: pan-y; -webkit-overflow-scrolling: touch; padding: calc(12px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) 16px calc(16px + env(safe-area-inset-left)); }
 body.touch .menu-card { max-height: none; overflow: visible; margin: auto 0; }
 @media (max-height: 520px) {
-  /* landscape phone: compact header, characters in one row */
-  .menu-card { width: min(640px, 100%); }
+  /* short screens (landscape phones): compact header, characters in one row */
   .menu-card h1 { font-size: 40px; }
   .tag { margin: 6px 0 12px; font-size: 13px; }
   label { margin-bottom: 8px; font-size: 12px; }
   input, select { padding: 8px 10px; font-size: 16px; margin-top: 4px; }
-  #char-picker { grid-template-columns: repeat(auto-fill, minmax(64px, 1fr)); gap: 6px; }
-  #char-picker button img { aspect-ratio: 1; object-position: top; }
+  body #char-picker { grid-template-columns: repeat(auto-fill, minmax(56px, 1fr)); gap: 6px; margin-bottom: 8px; }
+  body #char-picker button img { aspect-ratio: 1; object-position: top; }
   button#play { padding: 10px; font-size: 22px; }
+}
+@media (max-height: 520px) and (min-width: 600px) {
+  /* touch + landscape: two columns so PLAY fits on screen without scrolling */
+  body.touch .menu-card {
+    width: min(860px, 100%); display: grid; column-gap: 22px; grid-template-columns: 1fr 1fr;
+    grid-template-areas: "title title" "tag tag" "name plabel" "room chars" "gfx chars" "sens play" "status help";
+  }
+  body.touch .menu-card h1 { grid-area: title; font-size: 34px; }
+  body.touch .menu-card h1 br { display: none; }
+  body.touch .menu-card h1 span { margin-left: 0.25em; }
+  body.touch .tag { grid-area: tag; margin: 2px 0 8px; }
+  body.touch .menu-card > label:nth-of-type(1) { grid-area: name; }
+  body.touch .menu-card > label:nth-of-type(2) { grid-area: room; }
+  body.touch .menu-card > label:nth-of-type(3) { grid-area: gfx; }
+  body.touch .menu-card > label small { display: none; }
+  body.touch .pick-label { grid-area: plabel; align-self: end; margin-bottom: 4px; }
+  body.touch #char-picker { grid-area: chars; align-self: start; grid-template-columns: repeat(6, 1fr); }
+  body.touch #touch-menu { grid-area: sens; }
+  body.touch #touch-settings { margin: 0; }
+  body.touch button#play { grid-area: play; align-self: end; margin: 0 0 8px; }
+  body.touch #menu-status { grid-area: status; }
+  body.touch .touch-help { grid-area: help; margin-top: 4px; font-size: 12px; }
 }
 /* inputs at 16px+ so iOS doesn't zoom when focusing them */
 body.touch input, body.touch select { font-size: max(16px, 1em); }

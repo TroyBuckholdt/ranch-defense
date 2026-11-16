@@ -108,27 +108,27 @@ export class TouchControls {
     const W = innerWidth, H = innerHeight, vmin = Math.min(W, H);
     const b = Math.round(Math.min(72, Math.max(44, vmin * 0.13)));
     const fire = Math.round(b * 1.5);
-    const gap = Math.max(6, b * 0.14);
+    const gap = Math.max(8, b * 0.16);
     this.root.style.setProperty('--b', `${b}px`);
     this.root.style.setProperty('--fire', `${fire}px`);
     const fx = Math.max(12, vmin * 0.04) + fire / 2; // fire centre, from the right edge
     const fy = Math.max(10, vmin * 0.05) + fire / 2; // ... and from the bottom
-    const r1 = fire / 2 + gap + b / 2, r2 = r1 + b + gap, r3 = r2 + b * 0.6 + gap * 2;
     const place = (id, ang, r, size = b) => {
       const a = ang * Math.PI / 180;
       const el = this.btn[id];
       el.style.right = `${fx - Math.cos(a) * r - size / 2}px`;
       el.style.bottom = `${fy + Math.sin(a) * r - size / 2}px`;
     };
+    // lay buttons along an arc around fire, spaced so neighbours never overlap
+    const arc = (ids, r, start) => {
+      const step = 2 * Math.asin(Math.min(1, (b + gap) / 2 / r)) * 180 / Math.PI;
+      ids.forEach((id, i) => place(id, start + i * step, r));
+    };
+    const r1 = fire / 2 + gap + b / 2, r2 = r1 + b + gap;
     place('fire', 0, 0, fire);
-    place('jump', 78, r1);
-    place('reload', 116, r1);
-    place('aim', 150, r1);
-    place('crouch', 184, r1);
-    place('swap', 92, r2);
-    place('melee', 124, r2);
-    place('nade', 156, r2);
-    place('use', 140, r3, b * 1.2);
+    arc(['jump', 'aim', 'crouch'], r1, 84);
+    arc(['swap', 'reload', 'nade', 'melee'], r2, 82);
+    place('use', 150, r2 + b * 1.1 + gap, b * 1.2);
     // stick resting spot (it follows the thumb once touched)
     this.stickR = Math.round(Math.min(70, Math.max(46, vmin * 0.15)));
     this.root.style.setProperty('--stick', `${this.stickR * 2}px`);
@@ -200,8 +200,8 @@ export class TouchControls {
     st.x = dx / r * k; st.y = dy / r * k;
     const keys = this.api.keys;
     keys.axisX = st.x; keys.axisY = st.y;
-    // pushed to the rim, mostly forward = sprint
-    const sprint = m > 0.92 && st.y < -0.55;
+    // pushed to the rim, mostly forward = sprint (not while holding fire: you can't shoot on the run)
+    const sprint = m > 0.92 && st.y < -0.55 && !this.firing;
     if (sprint && !st.sprint && keys.KeyC) { keys.KeyC = false; this.btn.crouch.classList.remove('on'); } // stand up to run
     st.sprint = sprint;
     keys.ShiftLeft = sprint;
@@ -227,7 +227,7 @@ export class TouchControls {
     else { this.btn[act].classList.add('flash'); setTimeout(() => this.btn[act].classList.remove('flash'), 140); }
     navigator.vibrate?.(8);
     switch (act) {
-      case 'fire': api.fire(true); break;
+      case 'fire': this.firing = true; keys.ShiftLeft = false; this.base.classList.remove('sprint'); api.fire(true); break;
       case 'jump': keys.Space = true; break;
       case 'use': api.use(true); break;
       case 'scores': api.scores(true); break;
@@ -245,7 +245,7 @@ export class TouchControls {
   release(act) {
     const api = this.api, keys = api.keys;
     this.btn[act]?.classList.remove('on');
-    if (act === 'fire') api.fire(false);
+    if (act === 'fire') { this.firing = false; api.fire(false); }
     if (act === 'jump') keys.Space = false;
     if (act === 'use') api.use(false);
     if (act === 'scores') api.scores(false);
