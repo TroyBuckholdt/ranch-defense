@@ -9,12 +9,15 @@
 //    the ground and the stride length always matches the speed (no skating).
 //  * States (walk/attack/tear/vault/dead) each produce a full pose and are crossfaded,
 //    with spring-driven hit flinches, hump/dewlap jiggle and ear flicks layered on top.
-//  * The zombie look is a shader on the hide: mangy bald patches, dark veins, sickly
-//    pallor and mud on the legs, plus glowing eyes that the bloom pass picks up.
-//    Deliberately no open wounds or gore.
+//  * The zombie look (after Call of Duty's zombies, on a Brahman): baked into the hide at
+//    load: rotting grey-green pallor, bruising and mange, open wounds with raw muscle and
+//    the ribs showing, torn skin, blood dripping from the wounds and round the mouth, dark
+//    sunken eye sockets with dead, clouded eyes (no glow). Real bone breaks through the
+//    biggest wound: ribs out of a flank, or vertebrae through a torn back.
 import * as THREE from 'three';
 import { gltfLoader } from './gltf.js';
 import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { COW_TYPES, heightAt } from '../../shared/world.js';
 import * as T from './textures.js';
 
@@ -33,9 +36,10 @@ function materials() {
     hide: new THREE.MeshStandardMaterial({ map: T.brahmanHide(), roughness: 0.85 }),
     darkHide: new THREE.MeshStandardMaterial({ map: T.brahmanHide(), color: 0xa8a49a, roughness: 0.85 }),
     bone: new THREE.MeshStandardMaterial({ color: 0xc8bea4, roughness: 0.6 }),
+    ribs: new THREE.MeshStandardMaterial({ color: 0xa8957a, roughness: 0.45 }),   // bone, stained
     hoof: new THREE.MeshStandardMaterial({ color: 0x1a1612, roughness: 0.6 }),
     nose: new THREE.MeshStandardMaterial({ color: 0x4a3a3a, roughness: 0.5 }),
-    eye: new THREE.MeshBasicMaterial({ color: new THREE.Color(16, 1.8, 0.2), toneMapped: false }), // far above the bloom threshold
+    eye: new THREE.MeshStandardMaterial({ color: 0xb9c2b4, roughness: 0.12, metalness: 0 }), // dead and clouded over
     bull: new THREE.MeshStandardMaterial({ map: T.brahmanHide(), color: 0x8a8680, roughness: 0.8 }),
     switchHair: new THREE.MeshStandardMaterial({ color: 0x1c1a18, roughness: 1 }),
   };
@@ -69,10 +73,17 @@ void main() { vObj = position; vUv = uv; gl_Position = vec4((uv + uOff) * 2.0 - 
 const BAKE_FRAG = /* glsl */`
 uniform sampler2D uMap, uOrm;
 uniform vec3 uSeed;
-uniform float uRagged, uRough;
+uniform float uRagged, uRough, uRibs, uSpine;
+uniform vec4 uWA, uWB;   // wounds: side (-1 left, +1 right), centre y, centre z, size
 varying vec3 vObj;
 varying vec2 vUv;
 ${HIDE_NOISE}
+// distance out from a wound's centre (1 = its torn edge), and 0 off that flank
+float woundR(vec4 w, vec3 p, vec3 zp, out float on) {
+  on = smoothstep(0.05, 0.15, p.x * w.x);
+  vec2 d = vec2((p.z - w.z) / (w.w * 1.35), (p.y - w.y) / w.w);
+  return length(d) + 0.6 * (zn(zp * 7.0 + w.yzw * 3.0) - 0.5) + 0.2 * (zn(zp * 24.0) - 0.5);
+}
 void main() {
   vec3 col = texture2D(uMap, vUv).rgb; // sRGB texture: the GPU hands us linear colour
   vec3 zp = vObj + uSeed;
@@ -88,7 +99,7 @@ void main() {
   col = mix(col, vec3(0.4, 0.3, 0.28) * (0.7 + 0.5 * zn(zp * 31.0)), mange * 0.9);
   // sickly pallor: drained, faintly yellow-green
   float l = dot(col, vec3(0.3, 0.59, 0.11));
-  col = mix(col, l * vec3(0.86, 0.95, 0.72), 0.5);
+  col = mix(col, l * vec3(0.8, 0.88, 0.68), 0.62) * 0.84;
   // grime and caked dust, darker toward the belly
   col *= (0.62 + 0.42 * zfbm(zp * 1.6)) * (0.72 + 0.28 * smoothstep(0.55, 1.15, vObj.y));
   // dark veins, thickest around the bald patches and up the neck and face
@@ -103,10 +114,71 @@ void main() {
   float wet = 1.0 - smoothstep(0.04, 0.2, vObj.y);
   vec3 mudCol = mix(vec3(0.1, 0.065, 0.04), vec3(0.2, 0.14, 0.08), zn(zp * 13.0)) * (1.0 - 0.4 * wet);
   col = mix(col, mudCol, mud * 0.92);
+  // rot: necrotic grey-green and bruise-purple blotches spreading through the hide
+  float rot = smoothstep(0.52, 0.68, zfbm(zp * 2.2 + 5.0)) * body;
+  col = mix(col, mix(vec3(0.2, 0.22, 0.13), vec3(0.2, 0.13, 0.2), zn(zp * 6.0)) * (0.7 + 0.5 * zn(zp * 40.0)), rot * 0.78);
+  float spat = smoothstep(0.78, 0.84, zn(zp * 36.0)) * smoothstep(0.55, 0.62, zn(zp * 5.0)) * smoothstep(0.5, 0.8, vObj.y);
+  // the wounds
+  vec3 raw = mix(vec3(0.34, 0.025, 0.03), vec3(0.56, 0.07, 0.05), zn(vec3(vObj.z * 70.0, vObj.y * 9.0, uSeed.x)));  // muscle, fibres along the body
+  vec3 cavity = vec3(0.06, 0.008, 0.01);
+  vec3 bone = vec3(0.74, 0.68, 0.55) * (0.8 + 0.25 * zn(zp * 50.0));
+  vec3 blood = vec3(0.3, 0.018, 0.02), dried = vec3(0.15, 0.03, 0.025);
+  float wet2 = 0.0, bloodAmt = spat;
+  for (int k = 0; k < 2; k++) {
+    vec4 w = k == 0 ? uWA : uWB;
+    float on;
+    float r = woundR(w, vObj, zp, on);
+    float inner = (1.0 - smoothstep(0.9, 1.0, r)) * on;
+    float torn = smoothstep(0.86, 1.0, r) * (1.0 - smoothstep(1.0, 1.16, r)) * on;
+    float halo = smoothstep(1.0, 1.12, r) * (1.0 - smoothstep(1.12, 1.75, r)) * on;
+    // inside: raw muscle, darker toward the middle; on the big flank wound, ribs with black
+    // gaps between them (real ribs are added on top, see addBones)
+    vec3 inside = mix(raw, cavity, smoothstep(0.35, 0.85, 1.0 - r) * 0.85);
+    if (k == 0 && uRibs > 0.5) {   // the ribcage: a dark hollow with ribs (mostly the real ones on top)
+      float rb = cos((vObj.z - w.z + (vObj.y - w.y) * 0.32 - 0.0425) * 6.2832 / 0.085);
+      inside = mix(cavity, raw, smoothstep(0.6, 1.0, r) * (0.6 + 0.4 * zn(zp * 20.0)));
+      inside = mix(inside, bone * 0.7, smoothstep(0.75, 0.92, rb) * (1.0 - smoothstep(0.7, 0.9, r)) * 0.6);
+    }
+    col = mix(col, inside, inner);
+    col = mix(col, mix(vec3(0.3, 0.1, 0.08), vec3(0.06, 0.02, 0.02), smoothstep(0.9, 1.08, r)), torn * 0.9);   // torn, blackened skin edge
+    bloodAmt = max(bloodAmt, halo * (0.7 + 0.3 * zn(zp * 18.0)));
+    // drips running down from the bottom of the wound
+    float below = w.y - w.w * 0.7 - vObj.y;
+    float drip = smoothstep(0.6, 0.68, zn(vec3(vObj.z * 34.0, vObj.y * 1.3, w.z * 9.0 + float(k))))
+               * (1.0 - smoothstep(0.0, 0.3 + 0.25 * zn(vec3(vObj.z * 20.0, 3.0, 1.0)), below)) * step(0.0, below)
+               * (1.0 - smoothstep(w.w * 0.9, w.w * 1.3, abs(vObj.z - w.z))) * on;
+    bloodAmt = max(bloodAmt, drip);
+    wet2 = max(wet2, inner);
+  }
+  // a torn strip down the back with the spine showing (the hide without rib wounds)
+  if (uSpine > 0.5) {
+    float st = (1.0 - smoothstep(0.035, 0.07 + 0.03 * zn(zp * 12.0), abs(vObj.x))) * smoothstep(-0.52, -0.42, vObj.z) * (1.0 - smoothstep(0.28, 0.38, vObj.z)) * smoothstep(1.4, 1.46, vObj.y);
+    float nub = smoothstep(0.3, 0.8, cos(vObj.z * 6.2832 / 0.075)) * (1.0 - smoothstep(0.02, 0.035, abs(vObj.x)));
+    col = mix(col, mix(mix(raw, cavity, 0.4), bone, nub), st);
+    bloodAmt = max(bloodAmt, (1.0 - smoothstep(0.07, 0.16, abs(vObj.x))) * smoothstep(-0.55, -0.4, vObj.z) * (1.0 - smoothstep(0.3, 0.45, vObj.z)) * smoothstep(1.32, 1.42, vObj.y) * (1.0 - st) * 0.8);
+    wet2 = max(wet2, st);
+  }
+  // blood round the mouth and dribbled down the chin and dewlap
+  float mouth = smoothstep(1.62, 1.74, vObj.z) * (1.0 - smoothstep(1.22, 1.34, vObj.y)) * (0.55 + 0.45 * zn(zp * 14.0));
+  float drool = smoothstep(0.62, 0.7, zn(vec3(vObj.x * 40.0, vObj.y * 1.6, vObj.z * 4.0))) * (1.0 - smoothstep(0.08, 0.16, abs(vObj.x)))
+              * smoothstep(1.0, 1.2, vObj.z) * (1.0 - smoothstep(1.62, 1.72, vObj.z)) * smoothstep(0.78, 0.92, vObj.y) * (1.0 - smoothstep(1.25, 1.35, vObj.y));
+  bloodAmt = max(bloodAmt, max(mouth, drool));
+  col = mix(col, mix(dried, blood, zn(zp * 9.0)), clamp(bloodAmt, 0.0, 1.0) * 0.9);
+  // sunken, bruised eye sockets
+  float sock = 1.0 - smoothstep(0.035, 0.08, length(vec3((abs(vObj.x) - 0.32) * 0.6, vObj.y - 1.444, vObj.z - 1.53)));
+  col = mix(col, vec3(0.07, 0.025, 0.03), sock * 0.9);
+  // the eye itself: dead and clouded over, milky blue-grey (no glow)
+  float eyeD = length(vec3((abs(vObj.x) - 0.32) * 0.6, vObj.y - 1.444, vObj.z - 1.53));
+  float milky = 1.0 - smoothstep(0.016, 0.026, eyeD);
+  col = mix(col, mix(vec3(0.55, 0.6, 0.58), vec3(0.36, 0.4, 0.4), smoothstep(0.004, 0.018, eyeD)), milky);
+  bloodAmt = max(bloodAmt, (1.0 - smoothstep(0.0, 0.06, abs(vObj.z - 1.53 - 0.02 * zn(zp * 30.0))) ) * smoothstep(1.25, 1.42, vObj.y) * (1.0 - smoothstep(1.42, 1.44, vObj.y)) * step(0.27, abs(vObj.x)) * 0.8);   // bloody tears
   if (uRough > 0.5) {
     float r = 0.85 * texture2D(uOrm, vUv).g;
     r = mix(r, 0.97, mange * 0.8);
     r = mix(r, mix(0.9, 0.42, wet), mud);
+    r = mix(r, 0.62, clamp(bloodAmt, 0.0, 1.0));   // tacky blood
+    r = mix(r, 0.28, wet2);                        // wet meat
+    r = mix(r, 0.15, 1.0 - smoothstep(0.016, 0.026, length(vec3((abs(vObj.x) - 0.32) * 0.6, vObj.y - 1.444, vObj.z - 1.53))));   // glassy eye
     gl_FragColor = vec4(0.0, r, 0.0, 1.0);
   } else {
     gl_FragColor = vec4(col, alpha);
@@ -153,7 +225,7 @@ function zombieHide(mat, uniforms) {
 // Render the hide in UV space into a texture. Each pass is drawn nudged by a couple of
 // texels in 8 directions first, then centred, which pads the UV islands so mip-mapping
 // never pulls in the empty background along the seams.
-function bakeHide(renderer, geo, map, orm, seed, ragged, rough, size) {
+function bakeHide(renderer, geo, map, orm, seed, ragged, rough, size, wound) {
   const rt = new THREE.WebGLRenderTarget(size, size, {
     generateMipmaps: true, minFilter: THREE.LinearMipmapLinearFilter, magFilter: THREE.LinearFilter,
     colorSpace: rough ? THREE.NoColorSpace : THREE.SRGBColorSpace, depthBuffer: false,
@@ -163,6 +235,8 @@ function bakeHide(renderer, geo, map, orm, seed, ragged, rough, size) {
     uniforms: {
       uMap: { value: map }, uOrm: { value: orm }, uSeed: { value: seed }, uRagged: { value: ragged ? 1 : 0 },
       uRough: { value: rough ? 1 : 0 }, uOff: { value: new THREE.Vector2() },
+      uWA: { value: new THREE.Vector4(...wound.a) }, uWB: { value: new THREE.Vector4(...wound.b) },
+      uRibs: { value: wound.ribs ? 1 : 0 }, uSpine: { value: wound.spine ? 1 : 0 },
     },
   });
   const scene = new THREE.Scene(), cam = new THREE.Camera();
@@ -279,6 +353,58 @@ export function buildCowModel(type) {
 // The real model
 let ASSET = null;
 const HIDE_VARIANTS = 3;
+// Each hide's wounds: [side (-1 left, +1 right), centre height, centre along the body, size] for
+// the big one (a) and a smaller bite (b). Ribs break out of the big wound, or the spine shows
+// through a torn back. Measured on the rest-pose mesh: the barrel's flank is ~0.33 m out
+// between z 0 and 0.6, 0.9-1.3 m up.
+const WOUNDS = [
+  { a: [-1, 1.07, 0.3, 0.19], b: [1, 1.24, -0.42, 0.11], ribs: true },
+  { a: [1, 1.09, 0.18, 0.18], b: [-1, 1.3, 0.8, 0.1], ribs: true },
+  { a: [-1, 1.14, -0.3, 0.16], b: [1, 1.0, 0.42, 0.12], spine: true },
+];
+
+// Bone breaking through the hide: curved ribs out of the big flank wound, or a row of
+// vertebrae along a torn back. Built once per hide in the mesh's rest pose (it rides on the
+// spine bone; see BrahmanRig), following the actual surface of the mesh.
+function boneGeometry(geo, wound) {
+  const pos = geo.attributes.position, n = pos.count;
+  const surf = (side, y, z) => {   // how far out the hide is at (y, z) on that side
+    let best = 0;
+    for (let i = 0; i < n; i++) {
+      const x = pos.getX(i) * side;
+      if (x > best && Math.abs(pos.getY(i) - y) < 0.035 && Math.abs(pos.getZ(i) - z) < 0.035) best = x;
+    }
+    return best || 0.3;
+  };
+  const parts = [];
+  if (wound.ribs) {
+    const [side, cy, cz, w] = wound.a;
+    const len = [0.85, 1, 0.55, 0.9], lo = [-0.8, -1, -0.95, -0.6];
+    for (let k = 0; k < 4; k++) {
+      const z0 = cz + (k - 1.5) * 0.085, broken = k === 2 || k === 0, pts = [];
+      for (let t = lo[k]; t <= len[k] + 0.0001; t += 0.2) {
+        const y = cy + t * w * 0.75, z = z0 - (y - cy) * 0.32;
+        if (Math.hypot((z - cz) / (w * 1.35), (y - cy) / w) > 0.95) continue;   // only inside the wound
+        pts.push(new THREE.Vector3(side * (surf(side, y, z) + 0.008 - 0.03 * t * t), y, z));
+      }
+      if (broken && pts.length) { const e = pts[pts.length - 1].clone(); e.x += side * 0.06; e.y += k ? 0.03 : -0.02; e.z += 0.015; pts.push(e); }   // snapped and sticking out
+      if (pts.length < 2) continue;
+      parts.push(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 10, 0.012 + 0.003 * (k % 2), 5, false));
+    }
+  }
+  if (wound.spine) {
+    for (let z = -0.44; z <= 0.3; z += 0.075) {
+      let top = 0;
+      for (let i = 0; i < n; i++) if (Math.abs(pos.getX(i)) < 0.03 && Math.abs(pos.getZ(i) - z) < 0.03) top = Math.max(top, pos.getY(i));
+      const v = new THREE.SphereGeometry(0.024, 6, 4); v.scale(1, 0.9, 1.25); v.translate(0, top + 0.004, z);
+      parts.push(v);
+    }
+  }
+  if (!parts.length) return null;
+  const g = mergeGeometries(parts.map(p => p.toNonIndexed()));
+  g.computeVertexNormals();
+  return g;
+}
 export async function loadCowAsset(renderer) {
   try {
     const gltf = await gltfLoader().loadAsync('/assets/models/brahman/brahman.glb');
@@ -295,9 +421,10 @@ export async function loadCowAsset(renderer) {
       const size = Math.min(1024, renderer.capabilities.maxTextureSize);
       for (let i = 0; i < HIDE_VARIANTS; i++) {
         const seed = new THREE.Vector3(i * 7.31 + 0.4, i * 3.17 + 1.3, i * 5.53 + 2.1);
-        const map = bakeHide(renderer, o.geometry, m.map, m.roughnessMap || m.map, seed, i !== 1, false, size);
-        const rough = m.roughnessMap ? bakeHide(renderer, o.geometry, m.map, m.roughnessMap, seed, false, true, size / 2) : null;
-        hides.push({ map, rough });
+        const wound = WOUNDS[i % WOUNDS.length];
+        const map = bakeHide(renderer, o.geometry, m.map, m.roughnessMap || m.map, seed, i !== 1, false, size, wound);
+        const rough = m.roughnessMap ? bakeHide(renderer, o.geometry, m.map, m.roughnessMap, seed, false, true, size / 2, wound) : null;
+        hides.push({ map, rough, bones: boneGeometry(o.geometry, wound) });
       }
     });
     ASSET = { scene: gltf.scene, meta, hides };
@@ -367,19 +494,20 @@ class BrahmanRig {
     });
     this.bones = {};
     this.model.traverse(o => { if (o.isBone) this.bones[o.name] = { bone: o, rest: o.quaternion.clone() }; });
-    // glowing eyes ride on the head bone; they are far brighter than the bloom threshold
-    const head = this.bones.head?.bone;
-    if (head) {
-      this.model.updateMatrixWorld(true);
-      const meta = ASSET.meta;
-      const hx = meta.head[0], hy = meta.head[1] + 0.05, hz = meta.head[2] + 0.08;
-      for (const sx of [-1, 1]) {
-        const wp = this.model.localToWorld(new THREE.Vector3(hx + sx * 0.13, hy, hz));
-        const eye = new THREE.Mesh(EYE_GEO, M.eye);
-        head.add(eye);
-        eye.position.copy(head.worldToLocal(wp));
-        eye.scale.setScalar(1.25 / s);
+    // (no eye meshes: the eyes are painted into the hide, dead and clouded in sunken sockets)
+    // bone through the hide (ribs or vertebrae), riding on the spine bone like the hide
+    const spine = (this.bones.spine || this.bones.root || {}).bone;
+    if (hide?.bones && spine) {
+      if (!hide.bonesLocal) {   // the same for every cow with this hide: build once
+        this.model.updateMatrixWorld(true);
+        const g = hide.bones.clone(), inv = new THREE.Matrix4().copy(spine.matrixWorld).invert(), m4 = new THREE.Matrix4().multiplyMatrices(inv, this.model.matrixWorld);
+        g.applyMatrix4(m4);
+        hide.bonesLocal = g;
       }
+      const b = new THREE.Mesh(hide.bonesLocal, M.ribs);
+      b.castShadow = true;
+      spine.add(b);
+      this.meshes.push(b);
     }
   }
   set(name, x = 0, y = 0, z = 0) {

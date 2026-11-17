@@ -29,6 +29,13 @@ Update it when something here changes or a new standing preference comes up.
 ## What exists (as of 2026-11-17)
 - Waves of zombie Brahman cows (walker, runner, bull every 5th round); boards on doors and
   windows; wall-buy guns; grenades; power-ups; revive; four dogs (Pepper only hides).
+- **The zombie cow look** (Troy, Nov 17: "more like zombie Brahman... something more like Call
+  of Duty", and "we don't need the red eyes, that looks funky"): no glowing eyes. Each of the
+  three hide variants (`WOUNDS` in `client/src/cow.js`, baked into the texture at load) has
+  rotting grey-green pallor, blood spatter, an open wound with raw muscle and a smaller bite,
+  blood round the mouth and down the dewlap, and dead clouded eyes in dark sockets. Real bone
+  breaks through: curved ribs out of a flank wound (variants 0 and 1) or vertebrae along a
+  torn back (variant 2), one merged mesh per variant riding on the spine bone.
 - **Round 10**: locals with machetes replace the herd. **Round 20**: boss fight with a giant
   drunk Rafael (4.75 m, Grey Goose bottle as a club, throws empties, curses in Spanish with
   subtitles and browser speech). **Round 21 on**: cows again.
