@@ -7,6 +7,7 @@
 //   - If the player is sealed inside, cows go to the nearest door/window, tear the boards
 //     off (swiping at anyone standing right behind it), then climb in.
 //   - Players can walk through doors whatever the boards (the client handles that).
+import { quip, line, awards, newStats } from '../shared/banter.js';
 import {
   MAP_HALF, SOLIDS, ENTRIES, MAX_BOARDS, PLAYER_SPAWNS, COW_TYPES, WEAPONS, START_WEAPONS, START_POINTS, WALL_BUYS, BUY_RANGE,
   MELEE, GRENADE, POWERUP_TYPES, POWERUP_CHANCE, POWERUP_TIME, REPAIR_TIME, REPAIR_RANGE,
@@ -19,7 +20,7 @@ import {
 const TICK = 1 / 20;
 const INTERMISSION = 15;
 const FIRST_WAVE_DELAY = +process.env.RD_FIRST_WAVE_DELAY || 10; // (override to look around in peace when testing)
-const GAMEOVER_TIME = 9;
+const GAMEOVER_TIME = 13;   // long enough to read the awards
 const BLEEDOUT = 30;
 const REVIVE_TIME = 3;
 const VAULT_TIME = 1.1;
@@ -270,13 +271,13 @@ export class Room {
   }
 
   addPlayer(id, name, send, char = 'p1') {
-    const p = { id, name, send, char, score: START_SCORE, kills: 0, using: false, lastShot: 0, lastMelee: 0, weapons: [...START_WEAPONS], cur: 0, grenades: GRENADE.perWave, perks: [], upg: [] };
+    const p = { id, name, send, char, score: START_SCORE, kills: 0, using: false, lastShot: 0, lastMelee: 0, weapons: [...START_WEAPONS], cur: 0, grenades: GRENADE.perWave, perks: [], upg: [], st: newStats() };
     this.respawn(p);
     if (this.phase === 'wave' && [...this.players.values()].some(o => !o.dead && !o.downed)) {
       p.dead = true; p.hp = 0;
     }
     this.players.set(id, p);
-    this.broadcastEvent({ t: 'chat', k: '{0} joined the ranch', a: [name], msg: `${name} joined the ranch` });
+    this.quip('join', name);
     return p;
   }
 
@@ -376,6 +377,11 @@ export class Room {
           // Rafael take a heavy hit and stop the truck
           const dmg = def.heavy ? sp * (def.boss ? 45 : 70) : sp > 4.5 ? c.hp + 1 : sp * 40;
           this.damageCow(driver, c, dmg, false, [c.x, 1, c.z], [fs, 0.2, fc]);
+          if (c.state === 'dead' && !COW_TYPES[c.type].flee) { // five under the wheels inside ten seconds gets a mention
+            driver.st.ram += 1;
+            driver.ramTimes = [...(driver.ramTimes || []).filter(t => this.time - t < 10), this.time];
+            if (driver.ramTimes.length >= 5) { driver.ramTimes = []; this.quip('ram', driver.name); }
+          }
           this.sendTo(driver, { t: 'ram', k: def.boss ? 0 : def.heavy ? 0.35 : c.state === 'dead' ? 0.9 : 0.8 });
           if (!def.heavy) { out[0] += fs * 1.2; out[1] += fc * 1.2; }
         }
@@ -390,7 +396,7 @@ export class Room {
   // within reach of a machine's front?
   near(p, m) { const [x, z] = stationSpot(m); return Math.hypot(p.x - x, p.z - z) < USE_RANGE + 0.6; }
   deny(p, why, cost = 0) { this.sendTo(p, { t: 'denied', why, cost }); }
-  pay(p, cost) { if (p.score < cost) { this.deny(p, 'points', cost); return false; } p.score -= cost; return true; }
+  pay(p, cost) { if (p.score < cost) { this.deny(p, 'points', cost); return false; } p.score -= cost; p.st.spent += cost; return true; }
 
   // ---- the generator ----
   onPower(p) {
@@ -412,6 +418,7 @@ export class Room {
     if (mc.perk === 'jugg') p.hp = maxHealth(p.perks);
     this.sendTo(p, { t: 'perk', perk: mc.perk });
     this.broadcastEvent({ t: 'drink', id: p.id, perk: mc.perk }, p.id);
+    this.speak(p, 'perk', 0.5);
   }
 
   // ---- the mystery box ----
@@ -452,7 +459,7 @@ export class Room {
     if (b.t > 0) return;
     if (b.state === 'rolling' && b.weapon === 'teddy') { // the toy cow: money back, and it moves
       const p = this.players.get(b.by);
-      if (p) p.score += b.paid;
+      if (p) { p.score += b.paid; p.st.spent -= b.paid; p.st.toys += 1; this.quip('toy', p.name); this.speak(p, 'toy', 0.6); }
       b.state = 'moving'; b.t = 3.5;
       this.broadcastEvent({ t: 'box', s: 'teddy', by: b.by });
     } else if (b.state === 'rolling') { b.state = 'ready'; b.t = BOX.take; }
@@ -549,6 +556,10 @@ export class Room {
     }
   }
 
+  // ---- banter (shared/banter.js): a random line for the feed, and things the family says
+  quip(kind, ...names) { this.broadcastEvent({ t: 'chat', k: quip(kind), a: names }); }
+  speak(p, kind, chance = 1) { if (Math.random() < chance) this.broadcastEvent({ t: 'chat', who: p.name, k: line(kind, p.char) }); }
+
   award(p, n) { p.score += n * (this.doublePts > 0 ? 2 : 1); }
 
   // a shot from weapon m.w; shotguns send several pellet directions in m.ds
@@ -572,12 +583,14 @@ export class Room {
       this.shells.push({ id: this.nextPowerId++, x: o[0], y: o[1], z: o[2], vx: d[0] * v, vy: d[1] * v, vz: d[2] * v, t: 3, owner: p.id, dmg: w.damage, r: w.projectile.radius, g: w.projectile.gravity });
       return;
     }
+    let hit = false;
     for (const d0 of dirs) {
       const dn = d0.slice(0, 3).map(Number);
       if (!dn.every(Number.isFinite)) continue;
       const l = Math.hypot(...dn) || 1;
-      this.hitscan(p, o, dn.map(v => v / l), w);
+      if (this.hitscan(p, o, dn.map(v => v / l), w)) hit = true;
     }
+    p.st.shots += 1; if (hit) p.st.hits += 1;
   }
 
   hitscan(p, o, d, w) {
@@ -592,10 +605,11 @@ export class Room {
         if (t >= 0 && t < wallDist && (!best || t < best.t)) best = { t, c, head: !!sp.head };
       }
     }
-    if (!best) return;
+    if (!best) return false;
     const { c, head, t } = best;
     const falloff = w.pellets > 1 ? Math.max(0.35, 1 - t / w.range) : 1;
     this.damageCow(p, c, w.damage * falloff * (head ? w.headMult : 1), head, [o[0] + d[0] * t, o[1] + d[1] * t, o[2] + d[2] * t], d);
+    return true;
   }
 
   damageCow(p, c, dmg, head, hit, d) {
@@ -608,7 +622,7 @@ export class Room {
       kill = true;
       this.killCow(c);
       if (COW_TYPES[c.type].boss) this.taunt(c, 'death');
-      if (p) { p.kills += 1; this.award(p, COW_TYPES[c.type].score + (head ? 50 : 0)); }
+      if (p) { p.kills += 1; if (head) p.st.heads += 1; this.award(p, COW_TYPES[c.type].score + (head ? 50 : 0)); }
       if (COW_TYPES[c.type].flee) {
         // the golden cow: everyone gets paid, the one who got her gets more, and a power-up drops
         for (const q of this.players.values()) this.award(q, GOLD.reward);
@@ -654,7 +668,7 @@ export class Room {
     const owned = p.weapons.includes(st.weapon);
     const cost = owned ? Math.round(st.cost / 2) : st.cost;
     if (p.score < cost) { this.sendTo(p, { t: 'buyfail', cost }); return; }
-    p.score -= cost;
+    p.score -= cost; p.st.spent += cost;
     if (!owned) this.giveWeapon(p, st.weapon, m.slot);
     this.sendTo(p, { t: 'bought', w: st.weapon, weapons: p.weapons, ammo: owned });
   }
@@ -748,7 +762,7 @@ export class Room {
       this.bottles.splice(i, 1);
       for (const p of this.players.values()) {
         const d = Math.hypot(p.x - b.x, p.z - b.z);
-        if (d < BOTTLE.radius) this.hurtPlayer(p, Math.round(BOTTLE.damage * (1 - 0.6 * d / BOTTLE.radius)), b);
+        if (d < BOTTLE.radius) this.hurtPlayer(p, Math.round(BOTTLE.damage * (1 - 0.6 * d / BOTTLE.radius)), { x: b.x, z: b.z, type: 'rafael' });
       }
       this.broadcastEvent({ t: 'smash', p: [Math.round(b.x * 100) / 100, Math.round(b.z * 100) / 100] });
     }
@@ -777,7 +791,7 @@ export class Room {
       if (players.length && !players.some(p => !p.dead && (!p.downed || p.selfRevive))) {
         this.phase = 'gameover';
         this.timer = GAMEOVER_TIME;
-        this.broadcastEvent({ t: 'gameover', wave: this.wave });
+        this.broadcastEvent({ t: 'gameover', wave: this.wave, awards: awards(players) });
       } else if (this.toSpawn.length === 0 && [...this.cows.values()].every(c => c.state === 'dead')) {
         this.phase = 'intermission';
         this.timer = INTERMISSION;
@@ -790,7 +804,7 @@ export class Room {
     } else if (this.phase === 'gameover') {
       this.timer -= dt;
       if (this.timer <= 0) {
-        for (const p of players) { p.score = START_SCORE; p.kills = 0; p.weapons = [...START_WEAPONS]; p.cur = 0; p.grenades = GRENADE.perWave; p.perks = []; p.upg = []; }
+        for (const p of players) { p.score = START_SCORE; p.kills = 0; p.weapons = [...START_WEAPONS]; p.cur = 0; p.grenades = GRENADE.perWave; p.perks = []; p.upg = []; p.st = newStats(); }
         this.reset();
         this.broadcastEvent({ t: 'restart' });
       }
@@ -916,6 +930,7 @@ export class Room {
           if (p.revive >= REVIVE_TIME) {
             p.downed = false; p.selfRevive = false; p.hp = 50; p.revive = 0; p.lastHurt = this.time;
             this.broadcastEvent({ t: 'chat', k: '{0} got back up', a: [p.name], msg: `${p.name} got back up` });
+            this.speak(p, 'revived', 0.7);
           }
         } else if (helper) {
           helper.reviving = true;
@@ -923,14 +938,16 @@ export class Room {
           if (p.revive >= REVIVE_TIME) {
             p.downed = false; p.hp = 50; p.revive = 0; p.lastHurt = this.time;
             this.award(helper, 150);
-            this.broadcastEvent({ t: 'chat', k: '{0} revived {1}', a: [helper.name, p.name], msg: `${helper.name} revived ${p.name}` });
+            helper.st.revives += 1;
+            this.quip(p.st.downs >= 3 ? 'reviveAgain' : 'revive', helper.name, p.name);
+            this.speak(p, 'revived', 0.7);
           }
         } else {
           p.revive = Math.max(0, p.revive - dt * 2);
         }
         if (p.bleed <= 0 && p.downed && !p.selfRevive) {
           p.downed = false; p.dead = true;
-          this.broadcastEvent({ t: 'chat', k: '{0} bled out', a: [p.name], msg: `${p.name} bled out` });
+          this.quip('bled', p.name);
         }
       } else if (!p.dead && p.hp < maxHealth(p.perks) && this.time - p.lastHurt > 4) {
         p.hp = Math.min(maxHealth(p.perks), p.hp + 25 * dt * (p.perks.includes('jugg') ? 2 : 1));
@@ -1315,6 +1332,8 @@ export class Room {
     this.sendTo(p, { t: 'hurt', dmg, from: [cow.x, cow.z] });
     if (p.hp <= 0) {
       p.hp = 0;
+      p.st.downs += 1;
+      const by = COW_TYPES[cow?.type] || {};
       const others = [...this.players.values()].filter(o => o !== p && !o.dead && !o.downed);
       this.leaveVehicle(p, true);
       const secondWind = p.perks.includes('revive');
@@ -1328,6 +1347,9 @@ export class Room {
       if (others.length) {
         p.downed = true; p.bleed = BLEEDOUT; p.revive = 0;
         this.broadcastEvent({ t: 'chat', k: '{0} is down! Hold E next to them to revive', a: [p.name], msg: `${p.name} is down! Hold E next to them to revive` });
+        // then either the feed makes fun of them or they say something themselves
+        if (Math.random() < 0.5) this.quip(by.boss ? 'downRafael' : by.human ? 'downLocal' : by.heavy ? 'downBull' : 'downCow', p.name);
+        else this.speak(p, 'down');
       } else {
         p.dead = true;
       }

@@ -911,8 +911,13 @@ function onEvent(m) {
       banner(tr('THE HERD GOT IN'), m.wave === 2 ? tr('You held the ranch for 1 wave. Restarting...') : tr('You held the ranch for {0} waves. Restarting...', m.wave - 1), 8000);
       audio.stinger(false);
       audio.music(false);
+      if (m.awards?.length) { // who did what, for bragging and blaming
+        $('awards').innerHTML = `<h3>${tr('AWARDS')}</h3>` + m.awards.map(a => `<div><b>${tr(a.k)}</b> ${escapeHtml(a.n)} <i>${tr(a.d, a.v)}</i></div>`).join('');
+        $('awards').classList.add('show');
+      }
       break;
     case 'restart':
+      $('awards').classList.remove('show');
       fx.clearPools();
       ride = null; driving = null;
       loadout.weapons = [...START_WEAPONS]; loadout.cur = 0; loadout.ammo = {}; weapon.setGun('rifle');
@@ -922,7 +927,8 @@ function onEvent(m) {
       preloadHumans();
       break;
     case 'chat':
-      feed(m.k ? tr(m.k, ...(m.a || [])) : m.msg);
+      if (m.who) feed(`${m.who}: “${tr(m.k)}”`, 'said');   // someone speaking
+      else feed(m.k ? tr(m.k, ...(m.a || [])) : m.msg);
       break;
     case 'disconnected':
       feed(tr('Lost connection to the server. Refresh to rejoin.'));
@@ -956,9 +962,10 @@ function banner(title, sub, ms = 3500) {
   bannerTimer = setTimeout(() => b.classList.remove('show'), ms);
 }
 
-function feed(msg) {
+function feed(msg, cls) {
   const d = document.createElement('div');
   d.textContent = msg;
+  if (cls) d.className = cls;
   $('feed').appendChild(d);
   setTimeout(() => d.remove(), 6000);
 }
