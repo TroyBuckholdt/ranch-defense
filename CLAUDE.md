@@ -62,8 +62,16 @@ Update it when something here changes or a new standing preference comes up.
   the bed). Driving faster than a jog kills cows and locals; bulls and Rafael stop the truck.
   A front passenger rides in first person inside a cab built in code (`buildCabin` in
   `client/src/vehicle.js`: dash, pillars, doors, roof lining, wheel, seats, mirror with a pine
-  air freshener), because the truck models are hollow shells; while it shows, the shell stops
-  drawing its inside faces (`setCabin`). The driver keeps the chase camera.
+  air freshener, plus its own hood and bed), because the truck models are hollow shells with
+  opaque windows; while it shows, the truck model is hidden for that player (`setCabin`). The
+  trucks ride tall (`CAB`: floor 0.75 m, windows from 1.36 m). The driver keeps the chase camera.
+- **Other players** (`client/src/avatar.js`, Troy: "their gun doesn't look right in their
+  hands"): the gun is placed butt-in-shoulder each frame and both arms reach to it (no finger
+  bones, so hands stay open); each weapon id has its own simple shape. Riders in the cab sit
+  (hips at `SEAT_HIP`), facing the truck's heading, turning chest and head to look.
+- **Cow gait** (`client/src/cow.js`, Troy: "their walking animations should be better"): each
+  end of the body rides as high as its legs allow, a hoof is always down (gallop included),
+  the cow tilts to the slope outdoors, footfall jolts are springs, the bull trots.
 - **Road**: white caliche road from the driveway out of the south gate to the beach.
 - **Language**: English / Español buttons on the start screen (`client/src/i18n.js`; Spanish
   is keyed by the English text; add new strings there).

@@ -133,15 +133,16 @@ export class VehicleView {
 const PAINT = { f150: 0x8a9096, chevy: 0xe9e9e6 };
 // How the cab is laid out (metres above the ground / forward of the truck's middle). The
 // pickups ride tall: floor at 0.75, windows from 1.36 to the roof.
-export const CAB = { floor: 0.75, sill: 1.36, eye: 1.68, back: -1.1, glass: 1.42 };
+export const CAB = { floor: 0.75, sill: 1.36, eye: 1.63, back: -1.1, glass: 1.42 };
 
 // The cab, in the truck's own frame: x to the left, z forward, y up from the ground.
 function buildCabin(def) {
   const g = new THREE.Group();
   const hw = def.w / 2 - 0.1, top = def.h - 0.06;
   const { floor, sill, back, glass } = CAB;
-  const std = (color, roughness, metalness = 0) => new THREE.MeshStandardMaterial({ color, roughness, metalness });
-  const trim = std(0x2b2d31, 0.8), soft = std(0x41444a, 0.95), liner = std(0xa3a39d, 1), cloth = std(0x5a4d40, 1);
+  // (a little self-glow on the trim: the cab is in its own shade and would otherwise go black)
+  const std = (color, roughness, metalness = 0, glow = 0) => new THREE.MeshStandardMaterial({ color, roughness, metalness, emissive: color, emissiveIntensity: glow });
+  const trim = std(0x2b2d31, 0.8, 0, 0.35), soft = std(0x41444a, 0.95, 0, 0.3), liner = std(0xa3a39d, 1, 0, 0.3), cloth = std(0x5a4d40, 1, 0, 0.25);
   const chrome = std(0xc4c7ca, 0.25, 0.85), paint = std(PAINT[def.kind] || 0x8a9096, 0.35, 0.6), black = std(0x15161a, 0.6);
   const box = (mat, w, h, d, x, y, z, rx = 0, rz = 0) => {
     const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
@@ -184,7 +185,7 @@ function buildCabin(def) {
   box(trim, hw * 2, 0.08, 0.1, 0, top - 0.04, back + 0.04);                                // rear header
   box(trim, hw * 2, sill - floor, 0.08, 0, (sill + floor) / 2, back);                      // back wall
   box(trim, 0.3, 0.3, 1.0, 0, floor + 0.17, 0.4);                                          // centre console
-  box(trim, 0.03, 0.16, 0.03, 0, floor + 0.36, 0.62); box(chrome, 0.065, 0.065, 0.065, 0, floor + 0.45, 0.62); // shifter
+  box(trim, 0.03, 0.16, 0.03, 0, floor + 0.36, 0.62); box(black, 0.05, 0.05, 0.05, 0, floor + 0.45, 0.62); // shifter
   box(cloth, hw * 2 - 0.12, 0.14, 0.5, 0, floor + 0.2, back + 0.36);                       // rear bench
   box(cloth, hw * 2 - 0.12, 0.6, 0.13, 0, floor + 0.52, back + 0.12, -0.1);
   for (const s of [1, -1]) {
@@ -196,8 +197,8 @@ function buildCabin(def) {
     box(trim, 0.09, 0.06, header - back, s * (hw + 0.02), top - 0.05, (header + back) / 2); // roof rail
     beam(trim, 0.1, V(s * (hw + 0.02), sill, glass), V(s * (hw - 0.01), top - 0.02, header)); // A pillar
     box(cloth, 0.54, 0.13, 0.52, s * 0.45, floor + 0.21, 0.42);                            // seat
-    box(cloth, 0.54, 0.66, 0.13, s * 0.45, floor + 0.56, 0.1, -0.14);                      // seat back
-    box(cloth, 0.24, 0.17, 0.09, s * 0.45, top - 0.33, 0.0);                               // headrest
+    // seat backs stop below eye level (no headrests), so looking back shows the rear window and the bed
+    box(cloth, 0.54, 0.48, 0.13, s * 0.45, floor + 0.43, 0.08, -0.14);
     box(soft, 0.36, 0.012, 0.15, s * 0.45, top - 0.035, header - 0.14);                    // sun visor
     beam(black, 0.018, V(s * 0.1, sill - 0.01, glass + 0.04), V(s * 0.62, sill + 0.03, glass + 0.0)); // wiper
   }
@@ -207,12 +208,12 @@ function buildCabin(def) {
   box(black, 0.34, 0.035, 0.03, 0.45, sill - 0.07, glass - 0.62, -0.42);
   box(black, 0.07, 0.07, 0.12, 0.45, sill - 0.09, glass - 0.57, -0.42);
   // rear-view mirror, with a pine-tree air freshener hanging off it
-  box(black, 0.24, 0.07, 0.03, 0, top - 0.17, header + 0.1);
-  box(chrome, 0.22, 0.055, 0.005, 0, top - 0.17, header + 0.083);
-  box(black, 0.02, 0.1, 0.02, 0, top - 0.09, header + 0.1);
+  box(black, 0.22, 0.06, 0.03, 0, top - 0.1, header + 0.1);
+  box(chrome, 0.2, 0.045, 0.005, 0, top - 0.1, header + 0.083);
+  box(black, 0.02, 0.05, 0.02, 0, top - 0.05, header + 0.1);
   const pine = new THREE.Mesh(new THREE.ConeGeometry(0.035, 0.09, 3), std(0x2f8f3a, 0.9));
-  pine.scale.z = 0.15; pine.position.set(0.02, top - 0.31, header + 0.09); g.add(pine);
-  box(black, 0.004, 0.07, 0.004, 0.02, top - 0.235, header + 0.09);
+  pine.scale.z = 0.15; pine.position.set(0.02, top - 0.25, header + 0.09); g.add(pine);
+  box(black, 0.004, 0.07, 0.004, 0.02, top - 0.17, header + 0.09);
   g.traverse(o => { if (o.isMesh) { o.castShadow = false; o.receiveShadow = true; } });
   g.visible = false;
   return g;
