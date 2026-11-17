@@ -70,6 +70,12 @@ Update it when something here changes or a new standing preference comes up.
   - End-of-game awards: the server keeps `p.st` (downs, revives, shots, hits, headshots, truck
     kills, toy cows, points spent) and sends `awards` with `gameover`; the client lists them
     under the banner (`#awards`). Game over lasts 13 s so they can be read.
+  - **Pepper the thief** (Troy: "add the pepper thing"): a power-up left lying five seconds
+    has a 30% chance (`RD_PEPPER_STEALS`) of bringing Pepper out from under her blanket. She
+    grabs it and carries it home at 70% speed; touching her on the way takes it back. What
+    reaches the blanket stays in her stash until a player walks up to the blanket in the
+    office, then it all drops at their feet. 40 s rest between thefts. `hideDog` in
+    `server/game.js`; the client needs nothing (the icon follows her). Test: `scripts/peppertest.js`.
   - Test: `scripts/bantertest.js`. Ideas not built yet: spectator heckle buttons, Rafael
     calling out between rounds, coconuts that make Rafael yell, cow ragdolls off the truck,
     silly cow variants (sombrero, moonwalk, screaming calf), joke power-ups, a chancla melee.
@@ -153,6 +159,12 @@ Update it when something here changes or a new standing preference comes up.
     Doorways are carved open (`PORTALS`), cows squeeze through indoors and sidestep tables.
     Rooms narrower than about 3 m (1.6 m upstairs), or furniture leaving less than ~1.2 m, cut
     the grid: run `node scripts/housetest.js` after any change to the plan.
+  - **Walking on stairs** (Troy, Nov 17: "make it so the stairs to the upstairs work. Right now
+    the UI is broken"; he did not say what he saw). Both flights could already be climbed, but
+    coming down you were in the air 80% of the time (no jump, sluggish steering, no footsteps)
+    and the eye jumped 17 cm at every step. `LocalPlayer.update` now keeps you on the ground
+    down drops of up to 0.5 m, and `stepLift` eases the eye over each step. Test:
+    `scripts/stairtest.js`. If he still reports it broken, ask for a screenshot.
 - **Scenery**: trees and palms are Blender-built models instanced across the map
   (`tools/blender/make_trees.py` -> `models/trees/trees.glb`). The ground shader tints each
   layer separately (pasture, leaf litter, sand, road); keep the terrain material white.
@@ -190,7 +202,7 @@ Update it when something here changes or a new standing preference comes up.
 - Sim tests (no browser): `node scripts/simtest.js`, `dogtest.js`, `entrytest.js`,
   `weapontest.js`, `bosstest.js` (rounds 10 and 20), `drivetest.js` (trucks and road),
   `zombiestest.js` (power, perks, box, El Taller, trap, coconut cannon, carpenter),
-  `bantertest.js` (jokes and awards),
+  `bantertest.js` (jokes and awards), `peppertest.js`, `stairtest.js`,
   `housetest.js` (cows and dogs get from every room to every other, Pepper reaches her
   blanket, players fit through every doorway), `twisttest.js` (the round twists).
 - Server test switches: `RD_TEST_SEAT=1` seats a lone tester as front passenger (2, 3: the bed);

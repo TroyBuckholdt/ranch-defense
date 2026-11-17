@@ -1238,7 +1238,7 @@ function stepLocal(dt) {
     const bob = me.grounded ? Math.sin(weapon.bob) * 0.03 * Math.min(1, me.speed / 4) * (1 - weapon.aim * 0.8) : 0;
     // seated up front the eye is lower than standing; in the bed you stand
     const eye = riding ? (ride.seat < 2 ? CAB_EYE : 1.62) : me.eye;
-    camera.position.set(me.pos.x, me.pos.y + eye - me.landDip + Math.abs(bob), me.pos.z);
+    camera.position.set(me.pos.x, me.pos.y + eye - me.landDip + me.stepLift + Math.abs(bob), me.pos.z);
     camera.rotation.set(
       Math.min(1.5, me.pitch + me.recoil) + (Math.random() - 0.5) * shake * 0.01,
       me.yaw + (Math.random() - 0.5) * shake * 0.01,

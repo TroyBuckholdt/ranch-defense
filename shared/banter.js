@@ -48,6 +48,21 @@ const QUIPS = {
     ['{0} got a toy cow out of the box. Adorable.', 'A {0} le salió una vaquita de juguete. Qué ternura.'],
     ['{0} gambled and won a stuffed animal', '{0} apostó y se ganó un peluche'],
   ],
+  pepperGo: [
+    ['Pepper has spotted something shiny', 'Pepper vio algo brillante'],
+    ['Pepper is out from under her blanket. Watch your power-ups.', 'Pepper salió de su cobija. Cuiden sus poderes.'],
+  ],
+  pepperStole: [
+    ['Pepper stole a power-up and hid it under her blanket', 'Pepper se robó un poder y lo escondió bajo su cobija'],
+    ['Pepper took it. It is hers now.', 'Pepper se lo llevó. Ahora es suyo.'],
+  ],
+  pepperCaught: [
+    ['{0} got it back from Pepper', '{0} se lo quitó a Pepper'],
+    ['{0} outran a dog. Barely.', '{0} le ganó a una perra. Apenitas.'],
+  ],
+  pepperStash: [
+    ["{0} found Pepper's stash", '{0} encontró el escondite de Pepper'],
+  ],
   ram: [
     ['{0} is mowing the lawn with the truck', '{0} está podando el pasto con la troca'],
     ['{0}: five cows, one bumper', '{0}: cinco vacas, una defensa'],
