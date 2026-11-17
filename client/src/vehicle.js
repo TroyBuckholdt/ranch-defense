@@ -75,6 +75,7 @@ export class VehicleView {
     this.body = new THREE.Group();       // suspension: squat, dive, lean
     this.root.rotation.order = 'YXZ';
     this.root.add(this.body); this.body.add(model);
+    this.model = model;
     scene.add(this.root);
     this.wheels = findWheels(model);
     this.spin = 0; this.lastSpeed = 0; this.lean = 0; this.dive = 0; this.y = null;
@@ -115,5 +116,85 @@ export class VehicleView {
     return out.set(x, (this.y ?? heightAt(x, z)) + h, z);
   }
 
+  // First person in the cab. The truck models are hollow shells with nothing inside, so a
+  // rider up front gets a cab built here (dash, pillars, doors, roof, wheel, seats) and the
+  // shell stops drawing its inside faces: out of the windows you see the real hood and bed.
+  setCabin(on) {
+    if (on === !!this.cabinOn) return;
+    this.cabinOn = on;
+    if (on && !this.cabin) { this.cabin = buildCabin(this.def); this.body.add(this.cabin); }
+    if (this.cabin) this.cabin.visible = on;
+    this.model.traverse(o => {
+      if (!o.isMesh) return;
+      for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
+        if (m.userData.side0 === undefined) m.userData.side0 = m.side;
+        m.side = on ? THREE.FrontSide : m.userData.side0;
+        m.needsUpdate = true;
+      }
+    });
+  }
+
   dispose() { this.scene.remove(this.root); }
+}
+
+// The cab, in the truck's own frame: x to the left, z forward, y up from the ground.
+function buildCabin(def) {
+  const g = new THREE.Group();
+  const hw = def.w / 2 - 0.1, top = def.h - 0.07;
+  const trim = new THREE.MeshStandardMaterial({ color: 0x24262a, roughness: 0.85 });
+  const soft = new THREE.MeshStandardMaterial({ color: 0x3a3d43, roughness: 0.95 });
+  const liner = new THREE.MeshStandardMaterial({ color: 0x8d8f8c, roughness: 1 });
+  const cloth = new THREE.MeshStandardMaterial({ color: 0x4a4038, roughness: 1 });
+  const chrome = new THREE.MeshStandardMaterial({ color: 0xb9bcc0, roughness: 0.3, metalness: 0.8 });
+  const box = (mat, w, h, d, x, y, z, rx = 0, rz = 0) => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+    m.position.set(x, y, z); m.rotation.set(rx, 0, rz); g.add(m); return m;
+  };
+  const sill = 1.2;                                    // bottom of the windows
+  box(soft, hw * 2, 0.05, 2.1, 0, 0.42, 0.5);          // floor
+  box(trim, hw * 2, 0.5, 0.55, 0, sill - 0.27, 1.27);  // dashboard
+  box(soft, hw * 2, 0.05, 0.42, 0, sill - 0.01, 1.42, 0.12); // dash top, sloping to the glass
+  box(trim, 0.5, 0.11, 0.2, 0.45, sill + 0.04, 1.08);  // instrument hood
+  box(trim, 0.34, 0.22, 0.05, 0, sill - 0.2, 0.99);    // radio
+  box(chrome, 0.26, 0.012, 0.052, 0, sill - 0.13, 0.99);
+  box(trim, 0.42, 0.02, 0.052, -0.45, sill - 0.24, 0.995); // glovebox seam
+  for (const x of [-0.82, -0.2, 0.2, 0.82]) box(soft, 0.16, 0.07, 0.052, x, sill - 0.08, 0.995); // vents
+  box(liner, hw * 2, 0.05, 1.75, 0, top, 0.33);        // roof lining
+  box(trim, hw * 2, 0.09, 0.1, 0, top - 0.04, 1.16);   // windshield header
+  box(trim, hw * 2, 0.09, 0.1, 0, top - 0.04, -0.5);   // rear header
+  box(trim, hw * 2, 0.8, 0.08, 0, sill - 0.4, -0.52);  // back wall, under the rear window
+  box(trim, 0.3, 0.3, 1.0, 0, 0.6, 0.35);              // centre console
+  box(chrome, 0.07, 0.07, 0.07, 0, 0.82, 0.55);        // shifter knob
+  box(trim, 0.03, 0.16, 0.03, 0, 0.75, 0.55);
+  for (const s of [1, -1]) {
+    box(trim, 0.09, sill - 0.42, 2.0, s * (hw + 0.02), (sill + 0.42) / 2, 0.49);    // door
+    box(soft, 0.14, 0.05, 0.7, s * (hw - 0.07), sill - 0.22, 0.35);                 // armrest
+    box(chrome, 0.02, 0.03, 0.14, s * (hw - 0.03), sill - 0.1, 0.75);               // door handle
+    box(trim, 0.09, top - sill, 0.13, s * (hw + 0.02), (top + sill) / 2, -0.47);    // B pillar
+    box(trim, 0.09, 0.07, 1.7, s * (hw + 0.02), top - 0.05, 0.33);                  // roof rail
+    // A pillar: from the corner of the dash up and back to the roof
+    const a = new THREE.Mesh(new THREE.BoxGeometry(0.1, 1, 0.1), trim);
+    const lo = new THREE.Vector3(s * (hw + 0.02), sill, 1.6), hi = new THREE.Vector3(s * hw, top - 0.02, 1.16);
+    a.position.copy(lo).add(hi).multiplyScalar(0.5); a.scale.y = lo.distanceTo(hi);
+    a.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), hi.clone().sub(lo).normalize()); g.add(a);
+    box(cloth, 0.56, 0.14, 0.56, s * 0.45, 0.62, 0.2);                              // seat
+    box(cloth, 0.56, 0.72, 0.14, s * 0.45, 1.02, -0.22, -0.12);                     // seat back
+    box(cloth, 0.26, 0.2, 0.1, s * 0.45, 1.5, -0.3);                                // headrest
+    box(soft, 0.34, 0.012, 0.16, s * 0.45, top - 0.035, 1.02);                      // sun visor
+  }
+  // steering wheel and column on the left
+  const wheel = new THREE.Mesh(new THREE.TorusGeometry(0.19, 0.022, 8, 24), trim);
+  wheel.position.set(0.45, sill - 0.06, 0.9); wheel.rotation.x = -0.45; g.add(wheel);
+  box(trim, 0.34, 0.035, 0.03, 0.45, sill - 0.06, 0.9, -0.45);
+  box(trim, 0.07, 0.07, 0.32, 0.45, sill - 0.11, 1.03, -0.45);
+  // rear-view mirror, with a pine-tree air freshener hanging off it
+  box(trim, 0.26, 0.075, 0.03, 0, top - 0.2, 1.1);
+  box(chrome, 0.24, 0.06, 0.005, 0, top - 0.2, 1.083);
+  box(trim, 0.02, 0.12, 0.02, 0, top - 0.11, 1.12);
+  const pine = new THREE.Mesh(new THREE.ConeGeometry(0.045, 0.11, 3), new THREE.MeshStandardMaterial({ color: 0x2f8f3a, roughness: 0.9 }));
+  pine.scale.z = 0.15; pine.position.set(0.02, top - 0.36, 1.08); g.add(pine);
+  box(trim, 0.004, 0.1, 0.004, 0.02, top - 0.27, 1.08);
+  g.traverse(o => { if (o.isMesh) { o.castShadow = false; o.receiveShadow = true; } });
+  g.visible = false;
+  return g;
 }

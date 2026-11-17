@@ -320,7 +320,9 @@ export class Room {
     if (p.downed || p.dead || p.veh) return;
     const v = this.vehicles.find(o => o.id === (m.id | 0));
     if (!v || vehicleGap(v, v.def, p.x, p.z) > ENTER_RANGE + 0.6) return;
-    const seat = v.seats.indexOf(0);       // first free seat: the wheel if nobody has it
+    // first free seat: the wheel if nobody has it (RD_TEST_SEAT=1 puts a lone tester in another seat)
+    const want = +process.env.RD_TEST_SEAT || 0;
+    const seat = want && !v.seats[want] ? want : v.seats.indexOf(0);
     if (seat < 0) return;
     v.seats[seat] = p.id; p.veh = v.id; p.seat = seat;
     this.seatPlayer(v, p);
@@ -1180,7 +1182,10 @@ export class Room {
         if (Math.hypot(tx - c.x, tz - c.z) > speed * dt * 0.5) { nx = tx; nz = tz; c.side = s; c.sideT = 0.7; break round; }
       }
     }
-    const ny = groundHeight(nx, nz, r * 0.5, c.y, 0.5);
+    // c.y is height above the terrain (the client and the hit spheres add the terrain back):
+    // only floors, steps and the roof lift a cow; a rise in the pasture never does
+    const gNew = heightAt(nx, nz);
+    const ny = Math.max(0, groundHeight(nx, nz, r * 0.5, c.y + heightAt(c.x, c.z), 0.5) - gNew);
     if (insideHouse(nx, nz, ny) !== cIn && !stairAt(nx, nz) && !stairAt(c.x, c.z)) return; // walls only get crossed by vaulting
     c.x = nx; c.z = nz; c.y = ny;
     c.yaw = turnToward(c.yaw, Math.atan2(dir[0], dir[1]), dt * (c.type === 'runner' || c.type === 'local' ? 9 : def.boss ? 2.5 : 5));
