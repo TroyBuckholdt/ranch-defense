@@ -17,6 +17,7 @@ export class LocalPlayer {
     this.sprinting = false;
     this.eye = 1.62;
     this.landDip = 0;
+    this.stepLift = 0;    // eye offset that smooths going up and down steps
     this.recoil = 0;      // temporary upward kick that recovers
     this.crouching = false;
     this.sliding = 0;     // seconds of slide left
@@ -32,7 +33,7 @@ export class LocalPlayer {
     }
   }
 
-  teleport(x, y, z) { this.pos.set(x, y, z); this.vel.set(0, 0, 0); }
+  teleport(x, y, z) { this.pos.set(x, y, z); this.vel.set(0, 0, 0); this.stepLift = 0; }
 
   update(dt, keys, { aiming, downed, canMove, speedMul = 1 }) {
     let fwd = (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0);
@@ -68,12 +69,20 @@ export class LocalPlayer {
     let x = this.pos.x + this.vel.x * dt, z = this.pos.z + this.vel.z * dt, y = this.pos.y + this.vel.y * dt;
     [x, z] = resolveCircle(x, z, RADIUS, y, 0.45, playerPassable);
     const g = groundHeight(x, z, RADIUS, this.pos.y, 0.6);
+    const wasGrounded = this.grounded, prevY = this.pos.y;
     if (y <= g) {
       if (!this.grounded && prevVy < -6) this.landDip = Math.min(0.12, -prevVy * 0.012);
+      y = g; this.vel.y = 0; this.grounded = true;
+    } else if (wasGrounded && prevVy <= 0 && this.pos.y - g <= 0.5) {
+      // walking down a step (or off a kerb): stay on the ground instead of falling a frame at a time
       y = g; this.vel.y = 0; this.grounded = true;
     } else {
       this.grounded = y - g < 0.02;
     }
+    // each stair is a sudden change of height: the eye follows it smoothly instead (stepLift
+    // is how far the camera still lags behind the feet)
+    if (wasGrounded && this.grounded && Math.abs(y - prevY) > 0.01) this.stepLift = Math.max(-0.6, Math.min(0.6, this.stepLift - (y - prevY)));
+    this.stepLift -= this.stepLift * Math.min(1, dt * 12);
     this.pos.set(x, y, z);
     this.speed = Math.hypot(this.vel.x, this.vel.z);
 

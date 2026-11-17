@@ -20,6 +20,7 @@ import {
 const TICK = 1 / 20;
 const INTERMISSION = 15;
 const FIRST_WAVE_DELAY = +process.env.RD_FIRST_WAVE_DELAY || 10; // (override to look around in peace when testing)
+const PEPPER_STEALS = +process.env.RD_PEPPER_STEALS || 0.3;   // chance Pepper goes after a power-up left lying
 const GAMEOVER_TIME = 13;   // long enough to read the awards
 const BLEEDOUT = 30;
 const REVIVE_TIME = 3;
@@ -688,6 +689,7 @@ export class Room {
       if (!taker && pu.t > 0) continue;
       this.powerups.splice(i, 1);
       if (!taker) continue;
+      if (pu.carried) this.quip('pepperCaught', taker.name);
       if (pu.type === 'instakill') this.instakill = POWERUP_TIME;
       if (pu.type === 'double') this.doublePts = POWERUP_TIME;
       if (pu.type === 'nuke') {
@@ -1274,14 +1276,58 @@ export class Room {
 
   // Pepper doesn't fight: she bolts into the house, through to Troy's office, and crawls
   // under her blanket behind the desk (state 4), where she stays.
+  // ...except to steal: now and then a power-up left lying about is too much for her. She
+  // runs out, grabs it and carries it home (slower with her mouth full, so she can be caught:
+  // touching her takes it back). What reaches the blanket stays there until someone visits.
   hideDog(d, def, dt) {
-    if (d.hidden) { d.state = 4; d.x = BLANKET.x; d.z = BLANKET.z; d.yaw = BLANKET.yaw; return; }
-    const goal = this.dogRoute(d, BLANKET.x, BLANKET.z);
+    if (d.hidden) {
+      d.state = 4; d.x = BLANKET.x; d.z = BLANKET.z; d.yaw = BLANKET.yaw;
+      if (d.stash?.length) {
+        const p = [...this.players.values()].find(q => !q.dead && !q.downed && levelOf(q.y) === 0 && Math.hypot(q.x - BLANKET.x, q.z - BLANKET.z) < 1.7);
+        if (p) {
+          for (const type of d.stash) this.powerups.push({ id: this.nextPowerId++, type, x: p.x, z: p.z, t: 25, pepper: false });
+          d.stash = [];
+          this.quip('pepperStash', p.name);
+        }
+      }
+      if (this.time < (d.nextSteal || 0)) return;
+      for (const pu of this.powerups) {
+        if (pu.pepper !== undefined || pu.t > 20) continue;   // each one gets a single roll, once it has lain there five seconds
+        pu.pepper = Math.random() < PEPPER_STEALS;
+        if (!pu.pepper) continue;
+        d.thief = { id: pu.id, has: false, t: 30 }; d.hidden = false; d.via = null;
+        this.quip('pepperGo');
+        this.broadcastEvent({ t: 'bark', dog: d.id });
+        break;
+      }
+      if (d.hidden) return;
+    }
+    let tx = BLANKET.x, tz = BLANKET.z, speed = def.speed;
+    const th = d.thief, pu = th && this.powerups.find(u => u.id === th.id);
+    if (th) {
+      th.t -= dt;
+      if (!pu || (!th.has && th.t <= 0)) { d.thief = null; d.nextSteal = this.time + 40; }   // taken off her, picked up first, or out of reach
+      else {
+        pu.t = Math.max(pu.t, 15);
+        if (!th.has && Math.hypot(pu.x - d.x, pu.z - d.z) < 0.9) { th.has = true; pu.carried = true; d.via = null; this.broadcastEvent({ t: 'bark', dog: d.id }); }
+        if (th.has) { pu.x = d.x; pu.z = d.z; speed *= 0.7; } else { tx = pu.x; tz = pu.z; }
+      }
+    }
+    const goal = this.dogRoute(d, tx, tz);
     const gx = goal[0] - d.x, gz = goal[1] - d.z, gl = Math.hypot(gx, gz);
-    if (Math.hypot(BLANKET.x - d.x, BLANKET.z - d.z) < 0.35) { d.hidden = true; d.state = 4; return; }
+    if (tx === BLANKET.x && tz === BLANKET.z && Math.hypot(BLANKET.x - d.x, BLANKET.z - d.z) < 0.35) {
+      d.hidden = true; d.state = 4;
+      if (d.thief && pu) { // home with the loot
+        this.powerups.splice(this.powerups.indexOf(pu), 1);
+        (d.stash ||= []).push(pu.type);
+        d.thief = null; d.nextSteal = this.time + 40;
+        this.quip('pepperStole');
+      }
+      return;
+    }
     d.state = 1;
     if (gl < 1e-3) return;
-    let nx = d.x + (gx / gl) * def.speed * dt, nz = d.z + (gz / gl) * def.speed * dt;
+    let nx = d.x + (gx / gl) * speed * dt, nz = d.z + (gz / gl) * speed * dt;
     [nx, nz] = resolveCircle(nx, nz, def.radius, 0, 0.4, playerPassable);
     d.x = nx; d.z = nz;
     d.yaw = turnToward(d.yaw, Math.atan2(gx, gz), dt * 9);
