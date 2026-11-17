@@ -108,6 +108,15 @@ export class Audio {
   // must be called from a user gesture (the PLAY click)
   start() {
     if (this.ctx) return;
+    // wake the speech voice inside the click too (iOS only lets it talk after a gesture), and
+    // load the voice list now: Chrome returns none on the first ask
+    try {
+      const synth = window.speechSynthesis;
+      if (synth && window.SpeechSynthesisUtterance) {
+        synth.getVoices(); synth.addEventListener?.('voiceschanged', () => synth.getVoices());
+        const u = new SpeechSynthesisUtterance(' '); u.volume = 0; synth.speak(u);
+      }
+    } catch {}
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
     this.ctx = ctx;
     this.master = ctx.createGain();
@@ -314,6 +323,7 @@ export class Audio {
     if (!synth || !window.SpeechSynthesisUtterance) return;
     try {
       const voices = synth.getVoices();
+      if (synth.paused) synth.resume();
       const voice = voices.find(v => /^es[-_]MX/i.test(v.lang)) || voices.find(v => /^es[-_](US|419)/i.test(v.lang)) || voices.find(v => /^es/i.test(v.lang));
       synth.cancel(); // he interrupts himself
       const u = new SpeechSynthesisUtterance(text.replace(/[¡¿]/g, ''));

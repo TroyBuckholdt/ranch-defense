@@ -716,7 +716,7 @@ function onEvent(m) {
       tauntTimer = setTimeout(() => el.classList.remove('show'), m.k === 'death' ? 6000 : 4200);
       const c = view?.cows.get(m.cow);
       const dist = c ? Math.hypot(c[0] - me.pos.x, c[1] - me.pos.z) : 30;
-      audio.say(es, Math.max(0.25, 1 - dist / 90), m.k === 'death');
+      audio.say(es, Math.max(0.85, 1 - dist / 200), m.k === 'death');   // a 4.75 m drunk carries: loud from anywhere
       break;
     }
     case 'bottle': { // Rafael throws his empty: it arcs over and lands at m.to after m.time seconds
