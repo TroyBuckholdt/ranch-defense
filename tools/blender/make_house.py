@@ -650,7 +650,6 @@ def leaf_geom(kind, w, h, t=0.045):
         box('Mahogany', st, 0.62, -t / 2, w - st, 0.68, t / 2)
         g = 'Glass' if kind == 'glazed' else 'Frosted'
         add_geom(g, [(st, 0.68, 0), (w - st, 0.68, 0), (w - st, h - 0.11, 0), (st, h - 0.11, 0)], [(0, 1, 2, 3)])
-        add_geom(g, [(st, 0.68, 0), (st, h - 0.11, 0), (w - st, h - 0.11, 0), (w - st, 0.68, 0)], [(0, 1, 2, 3)])
         box('Brass', w - st - 0.035, 1.0, -t / 2 - 0.04, w - st - 0.02, 1.16, t / 2 + 0.04)
     elif kind in ('louver', 'cedar'):
         m = 'Mahogany' if kind == 'louver' else 'Cedar'
@@ -1292,6 +1291,8 @@ mat('Magazine', color=(0.75, 0.62, 0.45), rough=0.6)
 mat('Denim', color=(0.17, 0.24, 0.38), rough=0.9)
 mat('GreenGlaze', color=(0.12, 0.3, 0.2), rough=0.15)
 mat('Bougainvillea', color=(0.75, 0.05, 0.4), rough=0.7)
+mat('SageGreen', color=(0.36, 0.5, 0.42), rough=0.55)
+mat('NaturalWood', color=(0.72, 0.6, 0.42), rough=0.55)
 
 
 def pic(name, file, cx, cy, cz, nx, nz, w, h, frame='Gilt', fw=0.07, fd=0.04, liner=None):
@@ -1498,6 +1499,9 @@ def build_kitchen():
             for sz_ in (-1, 1):
                 add_geom('DarkWood', *legs(sx_ * (w / 2 - 0.1), sz_ * (d / 2 - 0.1), h - 0.05, 0.035, 0.022))
     transformed(table, (kt['x'], FLOOR_Y, kt['z']))
+    with detail():
+        for (dx, dz, yaw, green) in ((-0.35, -0.65, 0, True), (0.35, -0.68, 0.08, False), (-0.35, 0.66, math.pi, False), (0.38, 0.65, math.pi - 0.1, True), (-0.98, 0.05, math.pi / 2, True)):
+            transformed(lambda green=green: x_chair(green), (kt['x'] + dx, FLOOR_Y, kt['z'] + dz), yaw)
     box('Iron', kt['x'] - 0.05, kt['h'] + FLOOR_Y, kt['z'] - 0.05, kt['x'] + 0.05, kt['h'] + FLOOR_Y + 0.13, kt['z'] + 0.05)   # napkin holder
 
 
@@ -1654,6 +1658,74 @@ def build_sitting():
     straw_hat(xw - 0.03, 1.45, zc + 0.3, -1, 0, 0.22, 'Straw', 0.12)
 
 
+def saddle(k):
+    """a western saddle on top of a stand (local: horn toward +x, the stand's beam at y 0.84)"""
+    y0 = 0.84
+    # the saddle blanket, draped over the beam and hanging down both sides
+    if k != 1:
+        m = 'Blanket'
+        vs, faces = [], []
+        for i in range(9):
+            zz = -0.42 + 0.84 * i / 8
+            yy = y0 + 0.03 - max(0, abs(zz) - 0.12) * 0.9
+            vs += [(-0.34, yy, zz), (0.34, yy, zz)]
+        for i in range(8): faces.append((2 * i, 2 * i + 2, 2 * i + 3, 2 * i + 1))
+        add_geom(m, vs, faces, smooth=True)
+    # skirts: two broad leather flaps following the same drape
+    vs, faces = [], []
+    for i in range(9):
+        zz = -0.32 + 0.64 * i / 8
+        yy = y0 + 0.06 - max(0, abs(zz) - 0.1) * 0.85
+        vs += [(-0.3, yy, zz), (0.28, yy, zz)]
+    for i in range(8): faces.append((2 * i, 2 * i + 2, 2 * i + 3, 2 * i + 1))
+    add_geom('Leather', vs, faces, smooth=True)
+    # the seat: a dished saddle surface rising to the cantle at the back and the fork in front
+    n = 8
+    vs, faces = [], []
+    for i in range(n + 1):
+        u = -0.22 + 0.42 * i / n
+        for j in range(n + 1):
+            v = -0.17 + 0.34 * j / n
+            yy = y0 + 0.12 + 1.2 * u * u * (1.6 if u < 0 else 1.0) - 1.6 * v * v + (0.06 if u > 0.12 else 0)
+            vs.append((u, yy, v))
+    for i in range(n):
+        for j in range(n): faces.append((i * (n + 1) + j, (i + 1) * (n + 1) + j, (i + 1) * (n + 1) + j + 1, i * (n + 1) + j + 1))
+    add_geom('Leather', vs, faces, smooth=True)
+    # the cantle: a raised curved back; the horn on the fork
+    tube('Leather', [(-0.25 + 0.04 * (1 - math.cos(a)), y0 + 0.24, math.sin(a) * 0.17) for a in [-1.3 + 2.6 * t / 10 for t in range(11)]], 0.03, seg=6)
+    lathe('Leather', 0.2, y0 + 0.2, 0, [(0.05, 0.0), (0.035, 0.08), (0.035, 0.13), (0.07, 0.15), (0.06, 0.18), (0.0, 0.19)], seg=10)
+    lathe('Steel', 0.2, y0 + 0.37, 0, [(0.0, 0.0), (0.03, 0.0)], seg=8)
+    for s in (-1, 1):
+        # fender hanging down each side, a wooden stirrup at the bottom
+        add_geom('Leather', [(-0.08, y0 + 0.1, s * 0.2), (0.1, y0 + 0.1, s * 0.2), (0.12, y0 - 0.42, s * 0.3), (-0.12, y0 - 0.42, s * 0.3)], [(0, 1, 2, 3)])
+        tube('Wood', [(-0.07, y0 - 0.45, s * 0.31), (-0.08, y0 - 0.6, s * 0.32), (0.08, y0 - 0.6, s * 0.32), (0.07, y0 - 0.45, s * 0.31)], 0.018, seg=5)
+        # the cinch and a coiled rope on the near side
+    for t in range(3):
+        tube('Weave', [(0.05 + math.cos(a) * (0.1 + t * 0.012), y0 - 0.15 + math.sin(a) * (0.1 + t * 0.012), 0.33) for a in [2 * math.pi * q / 16 for q in range(17)]], 0.008, seg=3)
+    tube('Weave', [(0.0, y0 + 0.02, -0.31), (0.0, y0 - 0.35, -0.3)], 0.025, seg=4)
+
+
+def x_chair(green):
+    """the kitchen's X-back chairs: painted sage green or natural wood, rush-coloured seat"""
+    m = 'SageGreen' if green else 'NaturalWood'
+    for sx in (-1, 1):
+        box(m, sx * 0.2 - 0.022, 0, 0.17, sx * 0.2 + 0.022, 0.46, 0.21)              # front legs
+        add_geom(m, *legs_back(sx * 0.2))                                              # back legs, up into the back posts
+    box(m, -0.22, 0.43, -0.2, 0.22, 0.48, 0.22)                                       # seat frame
+    box('Shade', -0.19, 0.48, -0.17, 0.19, 0.5, 0.19)                                 # woven seat
+    for z in (-0.19, 0.19): box(m, -0.2, 0.18, z - 0.012, 0.2, 0.21, z + 0.012)       # stretchers
+    box(m, -0.21, 0.86, -0.25, 0.21, 0.94, -0.21)                                     # top rail
+    for a, b in (((-0.18, 0.52), (0.18, 0.84)), ((0.18, 0.52), (-0.18, 0.84))):      # the X
+        tube(m, [(a[0], a[1], -0.225), (b[0], b[1], -0.235)], 0.014, seg=4, kind='lit' if False else 'detail')
+    box(m, -0.2, 0.5, -0.24, 0.2, 0.53, -0.21)
+
+
+def legs_back(x):
+    vs = [(x - 0.02, 0, -0.2), (x + 0.02, 0, -0.2), (x + 0.02, 0, -0.17), (x - 0.02, 0, -0.17),
+          (x - 0.02, 0.95, -0.25), (x + 0.02, 0.95, -0.25), (x + 0.02, 0.95, -0.21), (x - 0.02, 0.95, -0.21)]
+    return vs, [(0, 1, 5, 4), (1, 2, 6, 5), (2, 3, 7, 6), (3, 0, 4, 7), (4, 5, 6, 7)]
+
+
 def build_office():
     dk = next(f for f in L['FURNITURE'] if f['kind'] == 'desk')
     w, d, h = dk['w'], dk['d'], dk['h']
@@ -1707,13 +1779,7 @@ def build_office():
             box('DarkWood', -0.25, 0, -0.2, 0.25, 0.05, 0.2)
             lathe('DarkWood', 0, 0.05, 0, [(0.07, 0), (0.05, 0.1), (0.07, 0.25), (0.04, 0.45), (0.06, 0.6), (0.045, 0.78)], seg=10)
             box('DarkWood', -0.22, 0.78, -0.08, 0.22, 0.84, 0.08)
-            if k == 0: box('Blanket', -0.3, 0.84, -0.32, 0.3, 0.86, 0.32)
-            sphere('Leather', 0, 0.95, 0, 0.25, seg=14, rings=8, sy=0.42)          # seat
-            lathe('Leather', 0.18, 0.95, 0, [(0.05, 0), (0.035, 0.12), (0.06, 0.15), (0.0, 0.17)], seg=10)  # horn
-            lathe('Leather', -0.2, 0.95, 0, [(0.12, 0), (0.12, 0.08), (0.0, 0.09)], seg=10, sz=1.2)    # cantle
-            for s in (-1, 1):  # fenders and stirrups
-                add_geom('Leather', [(-0.1, 0.92, s * 0.24), (0.12, 0.92, s * 0.24), (0.1, 0.35, s * 0.3), (-0.08, 0.35, s * 0.3)], [(0, 1, 2, 3), (3, 2, 1, 0)])
-                box('Weave', -0.04, 0.22, s * 0.28, 0.06, 0.34, s * 0.33)
+            saddle(k)
         transformed(stand, (sx, FLOOR_Y, sz), yaw)
     # on the north wall: the window with the yellow curtains, hats, posters, the certificate
     zf = Z0 + T / 2

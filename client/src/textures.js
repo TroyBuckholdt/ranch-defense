@@ -546,6 +546,87 @@ export function buySign(name, cost) {
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
 }
 
+// The round pebble mosaic in the front walk: white river pebbles set on edge, the ranch's
+// brand picked out in black pebbles (a wide arc with a stem rising from its middle to a hook,
+// and a cross hanging below), like the photo of the real one.
+export function pebbleBrand() {
+  const S = 1024, [c, g] = canvas(S, S);
+  g.fillStyle = '#8b8378'; g.fillRect(0, 0, S, S);               // mortar
+  const r = rand(5);
+  // the brand as a mask: pebbles inside it are black
+  const [mc, mg] = canvas(S, S);
+  mg.fillStyle = '#000'; mg.fillRect(0, 0, S, S);
+  mg.strokeStyle = '#fff'; mg.lineCap = 'round'; mg.lineWidth = 46;
+  mg.beginPath(); mg.arc(S / 2, S * 0.18, S * 0.43, Math.PI * 0.22, Math.PI * 0.78); mg.stroke();      // the arc
+  mg.beginPath(); mg.moveTo(S / 2, S * 0.61); mg.bezierCurveTo(S * 0.5, S * 0.45, S * 0.56, S * 0.33, S * 0.66, S * 0.27); mg.stroke();  // stem and hook
+  mg.beginPath(); mg.moveTo(S / 2, S * 0.61); mg.lineTo(S / 2, S * 0.86); mg.stroke();                 // the cross below
+  mg.beginPath(); mg.moveTo(S * 0.43, S * 0.75); mg.lineTo(S * 0.57, S * 0.75); mg.stroke();
+  for (const sx of [-1, 1]) { mg.beginPath(); mg.moveTo(S / 2 + sx * S * 0.33, S * 0.47); mg.lineTo(S / 2 + sx * S * 0.4, S * 0.38); mg.stroke(); }   // flicks at the arc's ends
+  const mask = mg.getImageData(0, 0, S, S).data;
+  for (let i = 0; i < 26000; i++) {
+    const x = r() * S, y = r() * S;
+    const rx = 7 + r() * 9, ry = 4 + r() * 5, a = r() * Math.PI;
+    const dark = mask[((y | 0) * S + (x | 0)) * 4] > 128;
+    const v = dark ? 20 + r() * 30 : 205 + r() * 45;
+    g.fillStyle = `rgb(${v | 0},${(v * (dark ? 1 : 0.98)) | 0},${(v * (dark ? 1 : 0.94)) | 0})`;
+    g.beginPath(); g.ellipse(x, y, rx, ry, a, 0, Math.PI * 2); g.fill();
+    g.fillStyle = dark ? 'rgba(255,255,255,0.10)' : 'rgba(255,255,255,0.35)';
+    g.beginPath(); g.ellipse(x - rx * 0.3, y - ry * 0.3, rx * 0.35, ry * 0.3, a, 0, Math.PI * 2); g.fill();
+  }
+  // a ring of black pebbles round the edge
+  g.strokeStyle = '#2a2622'; g.lineWidth = 16; g.beginPath(); g.arc(S / 2, S / 2, S / 2 - 12, 0, Math.PI * 2); g.stroke();
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8; return t;
+}
+
+// The ranch's name on a hand-painted Talavera tile plaque (by the front door): white glaze,
+// a cobalt border with yellow flowers at the corners, an emerald, the name in cobalt script.
+export function ranchPlaque() {
+  const [c, g] = canvas(768, 384);
+  g.fillStyle = '#f3efe4'; g.fillRect(0, 0, 768, 384);
+  const r = rand(77);
+  for (let i = 0; i < 260; i++) { g.strokeStyle = `rgba(150,140,120,${0.05 + r() * 0.08})`; g.lineWidth = 1; g.beginPath(); const x = r() * 768, y = r() * 384; g.moveTo(x, y); g.lineTo(x + (r() - 0.5) * 40, y + (r() - 0.5) * 40); g.stroke(); }
+  g.strokeStyle = 'rgba(120,115,105,0.55)'; g.lineWidth = 3;                    // the tile joints
+  for (const x of [192, 384, 576]) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x, 384); g.stroke(); }
+  g.beginPath(); g.moveTo(0, 192); g.lineTo(768, 192); g.stroke();
+  g.strokeStyle = '#1f3c8c'; g.lineWidth = 16; g.strokeRect(14, 14, 740, 356);
+  g.strokeStyle = '#d9a520'; g.lineWidth = 4; g.strokeRect(30, 30, 708, 324);
+  for (const [x, y] of [[44, 44], [724, 44], [44, 340], [724, 340]]) {          // corner flowers
+    for (let k = 0; k < 6; k++) { const a = k * Math.PI / 3; g.fillStyle = '#1f3c8c'; g.beginPath(); g.ellipse(x + Math.cos(a) * 14, y + Math.sin(a) * 14, 9, 6, a, 0, Math.PI * 2); g.fill(); }
+    g.fillStyle = '#e8b31c'; g.beginPath(); g.arc(x, y, 8, 0, Math.PI * 2); g.fill();
+  }
+  g.fillStyle = '#1f3c8c'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.font = 'italic bold 58px Georgia, "DejaVu Serif", serif'; g.fillText('Rancho', 384, 118);
+  g.font = 'italic bold 96px Georgia, "DejaVu Serif", serif'; g.fillText('La Esmeralda', 384, 238, 700);
+  // the emerald: a cut green gem under the name
+  const ex = 384, ey = 322;
+  g.fillStyle = '#138a52'; g.beginPath(); g.moveTo(ex - 34, ey - 10); g.lineTo(ex - 18, ey - 24); g.lineTo(ex + 18, ey - 24); g.lineTo(ex + 34, ey - 10); g.lineTo(ex, ey + 26); g.closePath(); g.fill();
+  g.fillStyle = '#3fd08a'; g.beginPath(); g.moveTo(ex - 18, ey - 24); g.lineTo(ex, ey - 10); g.lineTo(ex + 18, ey - 24); g.closePath(); g.fill();
+  g.strokeStyle = '#0b5c35'; g.lineWidth = 2; g.beginPath(); g.moveTo(ex - 34, ey - 10); g.lineTo(ex + 34, ey - 10); g.moveTo(ex, ey - 10); g.lineTo(ex, ey + 26); g.stroke();
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8; return t;
+}
+
+// The ranch's name burnt into a board of dark planks (the sign over the gate), with the
+// brand, an E in a diamond, at each end.
+export function ranchSign() {
+  const [c, g] = canvas(1024, 192);
+  const r = rand(91);
+  for (let i = 0; i < 3; i++) {
+    const base = 70 + r() * 18;
+    for (let y = i * 64; y < (i + 1) * 64; y++) for (let x = 0; x < 1024; x += 4) {
+      const v = base + 14 * Math.sin(x * 0.02 + y * 0.31 + i * 5) + r() * 10;
+      g.fillStyle = `rgb(${v | 0},${(v * 0.62) | 0},${(v * 0.38) | 0})`; g.fillRect(x, y, 4, 1);
+    }
+    g.fillStyle = 'rgba(20,10,5,0.8)'; g.fillRect(0, (i + 1) * 64 - 2, 1024, 2);
+  }
+  g.fillStyle = '#f0dfb8'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.font = 'bold 92px Georgia, "DejaVu Serif", serif'; g.fillText('RANCHO LA ESMERALDA', 512, 100, 820);   // squeezed to fit between the diamonds whatever the font
+  for (const x of [52, 972]) {
+    g.strokeStyle = '#f0dfb8'; g.lineWidth = 7; g.beginPath(); g.moveTo(x, 50); g.lineTo(x + 34, 96); g.lineTo(x, 142); g.lineTo(x - 34, 96); g.closePath(); g.stroke();
+    g.font = 'bold 50px Georgia, "DejaVu Serif", serif'; g.fillText('E', x, 100);
+  }
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8; return t;
+}
+
 // Floating power-up icon
 export function powerIcon(type) {
   const [c, g] = canvas(256);

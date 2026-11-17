@@ -1,6 +1,7 @@
 # Ranch Defense: notes for Claude sessions
 
 Multiplayer browser game: the family defends their real ranch house from zombie cows.
+The ranch is **Rancho La Esmeralda** (it has a Facebook page; see the end of this file).
 Three.js client (`client/`), Node + `ws` server (`server/`), map and rules shared by both
 (`shared/world.js`). Deployed from `main` (see `render.yaml`).
 
@@ -59,8 +60,9 @@ Update it when something here changes or a new standing preference comes up.
     the game instances), fans and lights: `shared/world.js` "The house". The Blender build reads
     the same numbers, so change the plan there and rebuild.
   - Rebuild: `tools/blender/build_house.sh` (dumps the layout, paints textures, builds and
-    light-bakes the full and phone versions, compresses). The full bake takes ~25 minutes on 4
-    CPU cores; `RD_BAKE_SAMPLES=16` for a quick look. Output: `models/house/house(.lo).glb`
+    light-bakes the full and phone versions, compresses). Both bakes took 8 minutes on 4 CPU
+    cores when nothing else ran (up to ~30 with a browser test alongside); `RD_BAKE_SAMPLES=16` for a quick look. The light map is 2048 (`LM_SIZE`); 4096 would
+    take about four times as long. Output: `models/house/house(.lo).glb`
     and `house(.lo)_light.webp`.
   - Node `House` carries the light map (UV set 2; sky + bounced sun, stored as sqrt; the game's
     `LIGHTMAP_GAIN` undoes it). `HouseDetail` is small stuff lit normally. `Leaf_<entry>_L/R`
@@ -82,6 +84,11 @@ Update it when something here changes or a new standing preference comes up.
 - **Scenery**: trees and palms are Blender-built models instanced across the map
   (`tools/blender/make_trees.py` -> `models/trees/trees.glb`). The ground shader tints each
   layer separately (pasture, leaf litter, sand, road); keep the terrain material white.
+- **Front walk** (from Troy's Facebook screenshots): terracotta path, a white-pebble mosaic
+  with the ranch's black brand (`T.pebbleBrand()`), a brass "Rancho La Esmeralda" plaque,
+  white gate pillars with open black iron gates, stepped wall ends. The iron arch with the
+  name over the gate and the wooden sign are my additions (`buildRanchSigns()` in
+  `client/src/world.js`).
 
 ## Where things are
 - `shared/world.js`: map layout, collision, enemy types (`COW_TYPES`), weapons, `VEHICLES`,
@@ -139,3 +146,5 @@ Update it when something here changes or a new standing preference comes up.
 - Google Drive: the connected Drive account (troy@doorraise.com) could not see a file Troy
   shared by link; downloading the public link with curl from drive.usercontent.google.com
   worked once the environment's network allowed it.
+- Facebook (Rancho La Esmeralda page, reels): fetching it from the container was refused
+  (the auto-mode classifier blocks scraping it). Ask Troy for screenshots, or photos on Drive.

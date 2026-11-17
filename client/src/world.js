@@ -205,7 +205,7 @@ export async function buildWorld(renderer, Q = { shadows: 2048, grass: 26000 }, 
   const sea = buildSea();
   scene.add(sea.group);
   updaters.push(sea.update);
-  scene.add(flat(2.6, 8, M.terracotta, 0, 0.03, 13.6, 1.2));
+  scene.add(flat(3.9, 9, M.terracotta, 0, 0.03, 14.2, 1.2));   // the wide front walk, hedged both sides
   scene.add(flat(6, 6, M.terracotta, 0, 0.025, 19, 1.2));
 
   // ---------- Hacienda + grounds ----------
@@ -217,6 +217,7 @@ export async function buildWorld(renderer, Q = { shadows: 2048, grass: 26000 }, 
   for (const s of STRUCTURES) { const m = buildStructure(s, updaters, models); if (m) scene.add(m); }
   for (const b of HAY_BALES) scene.add(hayBale(b));
   scene.add(buildGardenWall());
+  scene.add(buildRanchSigns());
   scene.add(buildHedges(models));
   for (const p of PENS) scene.add(buildPen(p));
   for (const b of WALL_BUYS) scene.add(buildBuySign(b));
@@ -714,7 +715,7 @@ function buildVeranda(models) {
     g.add(r);
   }
   const sq = worldBox(3.4, 0.03, 3.4, M.terracotta, 1.2); sq.position.set(0, 0.035, 15.2); g.add(sq);
-  const med = new THREE.Mesh(new THREE.CircleGeometry(1.35, 48), new THREE.MeshStandardMaterial({ map: T.compass(), roughness: 0.6 }));
+  const med = new THREE.Mesh(new THREE.CircleGeometry(1.35, 64), new THREE.MeshStandardMaterial({ map: T.pebbleBrand(), roughness: 0.7 }));
   med.rotation.x = -Math.PI / 2; med.position.set(0, 0.052, 15.2); med.receiveShadow = true; g.add(med);
   const tA = clothTable(2.0, 0.9, 0.76, std({ map: T.linen(), roughness: 0.95 })); tA.position.set(-5.6, vy, front + 2.1); g.add(tA);
   const tB = clothTable(1.2, 0.9, 0.76, std({ map: T.leafCloth(), roughness: 0.9 })); tB.position.set(5.6, vy, front + 2.1); g.add(tB);
@@ -857,6 +858,48 @@ function hayBale(b) {
   m.position.set(b.x, 0.8, b.z);
   m.castShadow = m.receiveShadow = true;
   return m;
+}
+
+// The ranch's name: the Talavera plaque on the front wall beside the door, and the sign on a
+// wrought-iron arch between two white pillars over the yard's front gate.
+function buildRanchSigns() {
+  const g = new THREE.Group();
+  const plaque = new THREE.Mesh(new THREE.PlaneGeometry(0.86, 0.43), new THREE.MeshStandardMaterial({ map: T.ranchPlaque(), roughness: 0.25 }));
+  plaque.position.set(-1.5, 1.75, HB.z1 + HOUSE.t / 2 + 0.012);
+  g.add(plaque);
+  const rim = box(0.92, 0.49, 0.02, std({ color: 0x1f3c8c, roughness: 0.3 }), -1.5, 1.75, HB.z1 + HOUSE.t / 2 + 0.002, g);
+  rim.castShadow = false;
+  const gx = (YARD.minX + YARD.maxX) / 2, gz = YARD.maxZ, half = 5.35, H = 4.6;
+  for (const s of [-1, 1]) {
+    const p = worldBox(0.7, H, 0.7, M.stucco, 2.4); p.position.set(gx + s * half, H / 2, gz); g.add(p);
+    box(0.86, 0.14, 0.86, M.stucco, gx + s * half, H + 0.07, gz, g);
+    const cap = new THREE.Mesh(new THREE.ConeGeometry(0.42, 0.45, 4), M.roof); cap.rotation.y = Math.PI / 4; cap.position.set(gx + s * half, H + 0.36, gz); cap.castShadow = true; g.add(cap);
+  }
+  // the iron arch: a curved bar over the top, a straight one under the sign, scrolls between
+  const pts = [];
+  for (let i = 0; i <= 24; i++) { const t = i / 24; pts.push(new THREE.Vector3(gx - half + t * half * 2, H - 0.25 + Math.sin(t * Math.PI) * 0.75, gz)); }
+  const arch = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 48, 0.04, 6), M.iron); arch.castShadow = true; g.add(arch);
+  box(half * 2, 0.06, 0.06, M.iron, gx, H - 0.35, gz, g);
+  for (let i = 1; i < 10; i++) { const x = gx - half + i * half * 0.2; const top = H - 0.25 + Math.sin((i / 10) * Math.PI) * 0.75; box(0.025, top - (H - 0.35), 0.025, M.iron, x, (top + H - 0.35) / 2, gz, g); }
+  const sign = new THREE.Mesh(new THREE.BoxGeometry(5.6, 1.05, 0.08), [M.darkWood, M.darkWood, M.darkWood, M.darkWood, new THREE.MeshStandardMaterial({ map: T.ranchSign(), roughness: 0.75 }), new THREE.MeshStandardMaterial({ map: T.ranchSign(), roughness: 0.75 })]);
+  sign.position.set(gx, H - 0.95, gz); sign.castShadow = true; g.add(sign);
+  for (const s of [-1, 1]) box(0.03, 0.3, 0.03, M.iron, gx + s * 2.4, H - 0.48, gz, g);   // the chains it hangs from
+  // black wrought-iron double gates, standing open against the inside of the wall
+  for (const s of [-1, 1]) {
+    const leaf = new THREE.Group();
+    const lw = 4.6, lh = 1.6;
+    box(lw, 0.05, 0.05, M.iron, lw / 2, lh, 0, leaf); box(lw, 0.05, 0.05, M.iron, lw / 2, 0.1, 0, leaf); box(lw, 0.04, 0.04, M.iron, lw / 2, lh * 0.55, 0, leaf);
+    for (let i = 0; i <= 30; i++) { const x = i * lw / 30; box(0.022, lh - 0.05, 0.022, M.iron, x, lh / 2 + 0.05, 0, leaf); const tip = new THREE.Mesh(new THREE.ConeGeometry(0.03, 0.09, 4), M.iron); tip.position.set(x, lh + 0.07, 0); leaf.add(tip); }
+    leaf.position.set(gx + s * (half - 0.35), 0, gz - 0.3);
+    leaf.rotation.y = Math.PI / 2 + s * 0.08;   // both swung in, lying along the inside of the wall
+    leaf.traverse(o => { if (o.isMesh) o.castShadow = true; });
+    g.add(leaf);
+  }
+  // the wall steps up to the gate in curved Mission steps
+  for (const s of [-1, 1]) for (const [dx, h, w] of [[0.95, 1.85, 0.9], [1.75, 1.55, 0.7]]) {
+    const st = worldBox(w, h, 0.3, M.stucco, 2.4); st.position.set(gx + s * (half + dx), h / 2, gz); g.add(st);
+  }
+  return g;
 }
 
 function buildGardenWall() {
