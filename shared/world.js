@@ -842,8 +842,7 @@ export const HOUSE_PROPS = (() => {
   out.push(['diningChair', dt.x - dt.w / 2 - 0.36, dt.z, Math.PI / 2, 1.22], ['diningChair', dt.x + dt.w / 2 + 0.36, dt.z, -Math.PI / 2, 1.22]);
   const ct = FURNITURE.find(f => f.kind === 'coffee');   // six cane rockers round the coffee table
   for (const [dx, dz, yaw] of [[-0.65, -1.35, 0.25], [0.65, -1.35, -0.25], [1.75, -0.45, -Math.PI / 2 + 0.25], [1.75, 0.7, -Math.PI / 2 - 0.2], [0.0, 1.55, Math.PI + 0.1], [1.2, 1.5, Math.PI + 0.35]]) out.push(['caneRocker', ct.x + dx, ct.z + dz, yaw, 1.05]);
-  const kt = FURNITURE.find(f => f.kind === 'ktable');   // kitchen chairs, green and natural, like the real ones
-  for (const [dx, dz, yaw, tint] of [[-0.35, -0.65, 0, [0.5, 0.68, 0.56]], [0.35, -0.65, 0, [1.05, 0.95, 0.8]], [-0.35, 0.65, Math.PI, [1.05, 0.95, 0.8]], [0.35, 0.65, Math.PI, [0.5, 0.68, 0.56]], [-0.95, 0.05, Math.PI / 2, [0.5, 0.68, 0.56]]]) out.push(['xchair', kt.x + dx, kt.z + dz, yaw, 0.92, tint]);
+  // (the kitchen's green and natural X-back chairs are part of the house model)
   const dk = FURNITURE.find(f => f.kind === 'desk');     // bentwood chairs at Troy's desk
   out.push(['xchair', dk.x - 0.4, dk.z + 0.75, Math.PI, 0.92, [0.95, 0.85, 0.7]], ['xchair', dk.x + 0.55, dk.z + 0.8, Math.PI + 0.35, 0.92, [0.95, 0.85, 0.7]]);
   out.push(['pot', -12.3, 6.3, 0, 1.0], ['pot', 10.3, 6.35, 0, 1.0], ['pot', -7.6, 6.3, 0, 0.85], ['pot', 3.9, -1.6, 0, 0.9]);

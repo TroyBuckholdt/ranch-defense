@@ -6,7 +6,7 @@
 // text to Spanish. Anything missing from ES simply shows in English.
 const ES = {
   // ---- start screen
-  'The cows came back wrong. Hold the ranch.': 'Las vacas regresaron mal. Defiende el rancho.',
+  'The cows came back wrong. Hold Rancho La Esmeralda.': 'Las vacas regresaron mal. Defiende el Rancho La Esmeralda.',
   'Your name': 'Tu nombre',
   'Rancher': 'Ranchero',
   'Room code': 'Código de sala',
