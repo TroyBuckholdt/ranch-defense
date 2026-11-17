@@ -298,6 +298,7 @@ export class Room {
     const nx = +m.p?.[0], ny = +m.p?.[1], nz = +m.p?.[2];
     if (![nx, ny, nz].every(Number.isFinite)) return;
     p.yaw = +m.yaw || 0;
+    p.eye = Math.max(0.4, Math.min(1.7, +m.e || 1.62)); p.ads = m.a ? 1 : 0;   // for whoever spectates them
     if (p.veh) { // riding: the truck carries them (and the driver's client steers the truck)
       p.pitch = +m.pitch || 0; p.using = false;
       const v = this.vehicles.find(o => o.id === p.veh);
@@ -1365,7 +1366,7 @@ export class Room {
       dogs: this.dogs.map(d => [d.id, d.kind === 'little' ? 1 : 0, r(d.x), r(d.z), r(d.yaw), d.state]),
       players: [...this.players.values()].map(p => ({
         id: p.id, n: p.name, c: p.char, x: r(p.x), y: r(p.y), z: r(p.z), yaw: r(p.yaw), pitch: r(p.pitch),
-        hp: Math.round(p.hp), dn: p.downed ? 1 : 0, sr: p.selfRevive ? 1 : 0, dd: p.dead ? 1 : 0,
+        hp: Math.round(p.hp), dn: p.downed ? 1 : 0, sr: p.selfRevive ? 1 : 0, dd: p.dead ? 1 : 0, e: p.eye, ad: p.ads,
         rv: Math.round((p.revive / REVIVE_TIME) * 100), bl: Math.ceil(p.bleed), s: p.score, k: p.kills,
         rp: Math.round((p.repairT / REPAIR_TIME) * 100), rd: p.veh ? p.seat + 1 : 0, pk: p.perks, up: p.upg, mh: maxHealth(p.perks), w: p.weapons, cw: p.weapons[p.cur] || p.weapons[0], g: p.grenades,
       })),
