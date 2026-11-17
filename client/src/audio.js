@@ -440,6 +440,14 @@ export class Audio {
     this.noise(this.out(pos, 3), { dur: 0.22, type: 'bandpass', freq: 2500, freqEnd: 600, q: 1.5, gain: 0.5, attack: 0.04 });
   }
 
+  // a stampede: a long low rumble of hooves that swells and fades
+  rumble() {
+    if (!this.ctx) return;
+    const out = this.out(null);
+    this.noise(out, { dur: 4.5, type: 'lowpass', freq: 160, freqEnd: 90, gain: 1.6, attack: 1.2 });
+    for (let i = 0; i < 24; i++) this.noise(out, { dur: 0.12, type: 'lowpass', freq: 240, gain: 0.5 + Math.random() * 0.5, start: 0.3 + i * 0.16 + Math.random() * 0.08 });
+  }
+
   explosion(pos) {
     if (!this.ctx) return;
     const out = this.out(pos, 15);

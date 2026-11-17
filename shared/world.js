@@ -513,6 +513,13 @@ export const HEDGES = [
   { x: -9, z1: 12.5, z2: 13.2, along: 'x', x1: -11, x2: -3.5 }, { x: 9, z1: 12.5, z2: 13.2, along: 'x', x1: 3.5, x2: 11 },
 ];
 export const PENS = [{ x: 72, z: -6, w: 14, d: 22 }, { x: -74, z: -20, w: 12, d: 16 }];
+// Barbed wire on crooked wooden posts (Troy's trough photo): paddock lines across the pasture
+// and both sides of the road down to the beach. Decoration only, no collision; posts leave a
+// gap wherever a trail or the road crosses, and skip trees.
+export const WIRE_FENCES = [
+  [[-130, -72], [130, -72]], [[-112, -72], [-112, 118]], [[104, -72], [104, 118]], [[-112, 118], [104, 118]],
+];
+export const ROAD_FENCE_OFFSET = ROAD_HALF + 2.6;
 
 // (the real ranch has no hay bales around the house, so there are none)
 export const HAY_BALES = [];
@@ -853,8 +860,35 @@ export const COW_TYPES = {
   bull: { hp: 900, speed: 3.4, scale: 1.55, radius: 1.2, damage: 38, reach: 3.0, score: 500, tear: 0.35, heavy: true },
   local: { hp: 120, speed: 4.3, scale: 1.0, radius: 0.45, damage: 18, reach: 1.9, score: 90, tear: 0.9, human: true, hs: 0.95 },
   rafael: { hp: 9000, speed: 3.3, scale: 2.7, radius: 1.5, damage: 50, reach: 4.4, score: 5000, tear: 0.5, human: true, hs: 2.7, heavy: true, boss: true },
+  // Rafael's prize cow, gilded: she runs from you, never fights, and gets away if you're slow
+  gold: { hp: 450, speed: 6.4, scale: 1.05, radius: 0.8, damage: 0, reach: 0, score: 1000, tear: 1, flee: true },
 };
-export const COW_TYPE_LIST = ['walker', 'runner', 'bull', 'local', 'rafael'];
+export const COW_TYPE_LIST = ['walker', 'runner', 'bull', 'local', 'rafael', 'gold'];
+
+// ---- Special rounds ---------------------------------------------------------------
+// On top of every 5th round's bulls, round 10's locals and round 20's Rafael, some rounds
+// have a twist, and each comes back every ten rounds:
+//   gold      (4, 14, 24...)  the golden cow is loose among the herd: she runs from you, and
+//                             catching her (shoot her, or run her down in a truck) pays
+//                             everyone and drops a power-up. She gets away after GOLD.escape s.
+//   stampede  (7, 17, 27...)  the whole herd comes at once from one side, all runners, a bit
+//                             frailer than usual.
+//   bomb      (12, 22, 32...) bloated cows: each one bursts a moment after it dies, hurting
+//                             players and setting off the cows next to it.
+//   fog       (16, 26, 36...) fog rolls in off the pond; you hear them before you see them.
+export function roundTwist(n) {
+  if (n % 5 === 0) return '';
+  const k = n % 10;
+  if (k === 4) return 'gold';
+  if (k === 7) return 'stampede';
+  if (n > 10 && k === 2) return 'bomb';
+  if (n > 10 && k === 6) return 'fog';
+  return '';
+}
+export const GOLD = { escape: 75, reward: 400, killerBonus: 600 };
+export const BLOAT = { delay: 0.55, radius: 4.2, cowDamage: 170, playerRadius: 3.4, playerDamage: 28 };
+export const STAMPEDE = { hp: 0.7, speed: 1.15, every: 0.18, spread: 0.55 };
+export const FOG_DENSITY = 0.022;   // the marsh fog (the usual haze is 0.0034)
 export const LOCALS_WAVE = 10;   // the locals attack instead of the herd
 export const BOSS_WAVE = 20;     // Rafael. After that it's back to the herd, bigger every round
 // Rafael lobs his empties: they land where you were standing when he threw

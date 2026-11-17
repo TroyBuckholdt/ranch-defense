@@ -320,7 +320,11 @@ const LEGS = [                      // name, hip x, hip z, front?
   ['BL', -0.136, -0.599, false], ['BR', 0.135, -0.599, false],
 ];
 
-const TINT = { walker: 0xd8d4c8, runner: 0xc4bfb2, bull: 0x8a857e };
+const TINT = { walker: 0xd8d4c8, runner: 0xc4bfb2, bull: 0x8a857e, gold: 0xffd75e };
+// set by main.js for the round: bloated cows are swollen and sickly green
+export const COW_LOOK = { bloat: false };
+const BLOAT_TINT = new THREE.Color(0xb4cf86);
+const bloats = (type) => COW_LOOK.bloat && (type === 'walker' || type === 'runner');
 const qTmp = new THREE.Quaternion(), eTmp = new THREE.Euler();
 
 class BrahmanRig {
@@ -332,6 +336,7 @@ class BrahmanRig {
     this.root.add(this.body);
     this.model = SkeletonUtils.clone(ASSET.scene);
     this.model.scale.setScalar(s);
+    if (bloats(type)) this.model.scale.set(s * 1.3, s * 1.08, s * 1.04);
     this.body.add(this.model);
     this.uniforms = {
       uFlash: { value: 0 },
@@ -344,13 +349,15 @@ class BrahmanRig {
       if (!o.isMesh) return;
       o.material = o.material.clone();
       o.material.color.set(TINT[type]);
+      if (bloats(type)) o.material.color.multiply(BLOAT_TINT);
       if (hide) {
         o.material.map = hide.map;
         o.material.alphaTest = 0.5; // the ragged ear notch
         if (hide.rough) { o.material.roughnessMap = hide.rough; o.material.roughness = 1; }
         o.material.metalnessMap = null;
       }
-      zombieHide(o.material, this.uniforms);
+      if (type === 'gold') { o.material.metalness = 1; o.material.roughness = 0.2; o.material.roughnessMap = null; o.material.emissive = new THREE.Color(0xb07a10); o.material.emissiveIntensity = 0.55; o.material.envMapIntensity = 2.2; }
+      else zombieHide(o.material, this.uniforms);
       this.mats.push(o.material);
       this.meshes.push(o);
       // a fixed bound around the animated cow, so off-screen cows are culled
@@ -395,8 +402,11 @@ class SimpleRig {
     const m = buildCowModel(type);
     Object.assign(this, { root: m.root, body: m.body, m });
     this.mat = m.hideMat.clone();
+    if (type === 'gold') { this.mat.color.set(TINT.gold); this.mat.metalness = 1; this.mat.roughness = 0.2; this.mat.emissive = new THREE.Color(0xb07a10); this.mat.emissiveIntensity = 0.55; }
+    if (bloats(type)) this.mat.color.multiply(BLOAT_TINT);
     m.root.traverse(o => { if (o.isMesh && o.material === m.hideMat) o.material = this.mat; });
     m.body.scale.setScalar(COW_TYPES[type].scale);
+    if (bloats(type)) m.body.scale.set(COW_TYPES[type].scale * 1.3, COW_TYPES[type].scale * 1.08, COW_TYPES[type].scale);
   }
   set(name, x = 0, y = 0, z = 0) {
     const { m } = this;
@@ -435,6 +445,7 @@ const STYLE = {
   walker: { walkTo: 1.7, gallopAt: 9, headLow: 0.22, lurch: 1.0, bounce: 0.035, stomp: 0.02, limp: true, frantic: 0 },
   runner: { walkTo: 1.2, gallopAt: 4.6, headLow: 0.1, lurch: 0.35, bounce: 0.05, stomp: 0.015, limp: false, frantic: 1 },
   bull: { walkTo: 2.8, gallopAt: 9, headLow: 0.32, lurch: 0.25, bounce: 0.02, stomp: 0.06, limp: false, frantic: 0 },
+  gold: { walkTo: 1.3, gallopAt: 4.4, headLow: 0.0, lurch: 0.1, bounce: 0.055, stomp: 0.015, limp: false, frantic: 0 },
 };
 
 // Damped spring (for flinches and soft-body wobble)

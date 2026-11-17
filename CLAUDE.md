@@ -32,6 +32,16 @@ Update it when something here changes or a new standing preference comes up.
 - **Round 10**: locals with machetes replace the herd. **Round 20**: boss fight with a giant
   drunk Rafael (4.75 m, Grey Goose bottle as a club, throws empties, curses in Spanish with
   subtitles and browser speech). **Round 21 on**: cows again.
+- **Round twists** (Troy: "make some of the rounds more interesting"; `roundTwist(n)` in
+  `shared/world.js`, every ten rounds, never on bull/locals/Rafael rounds):
+  - 4, 14, 24: **the golden cow** (`gold` type): Rafael's prize cow, gilded, runs from the
+    players and never fights. Catching her (shooting her, running her down in a truck, or the
+    dogs) pays everyone and drops a power-up; after 75 s she gets away.
+  - 7, 17, 27: **stampede**: the whole herd as runners, all from one side, fast and a bit frailer.
+  - 12, 22, 32: **bloated cows**: swollen and green; each bursts a moment after dying, hurting
+    players within ~3.4 m and blowing up the cows beside it (chain reactions).
+  - 16, 26, 36: **marsh fog**: the fog thickens for the round (client only; `FOG_DENSITY`).
+  - The twist rides on the `wave` event and in the snapshot (`tw`). Test: `scripts/twisttest.js`.
 - **Trucks**: the F-150 and Chevy are drivable (E to get in; driver, front passenger, two in
   the bed). Driving faster than a jog kills cows and locals; bulls and Rafael stop the truck.
 - **Road**: white caliche road from the driveway out of the south gate to the beach.
@@ -66,8 +76,9 @@ Update it when something here changes or a new standing preference comes up.
     the same numbers, so change the plan there and rebuild.
   - Rebuild: `tools/blender/build_house.sh` (dumps the layout, paints textures, builds and
     light-bakes the full and phone versions, compresses). Both bakes took 8 minutes on 4 CPU
-    cores when nothing else ran (up to ~30 with a browser test alongside); `RD_BAKE_SAMPLES=16` for a quick look. The light map is 2048 (`LM_SIZE`); 4096 would
-    take about four times as long. Output: `models/house/house(.lo).glb`
+    cores when nothing else ran (up to ~30 with a browser test alongside); `RD_BAKE_SAMPLES=16`
+    for a quick look. The light map is 2048; `RD_LM_SIZE=4096` bakes a sharper one (about four
+    times as long). Output: `models/house/house(.lo).glb`
     and `house(.lo)_light.webp`.
   - Node `House` carries the light map (UV set 2; sky + bounced sun, stored as sqrt; the game's
     `LIGHTMAP_GAIN` undoes it). `HouseDetail` is small stuff lit normally. `Leaf_<entry>_L/R`
@@ -98,7 +109,8 @@ Update it when something here changes or a new standing preference comes up.
   sunrise video: brown water, mud banks, grass tussocks. The server blocks it on the path
   grid, so cows walk round; trucks crawl through it. Players can wade.
 - **Water trough** (x 40, z 18): red corrugated roof on concrete posts, dirt round it, after
-  Troy's photo. The photo also shows barbed-wire fences on crooked posts: not built yet.
+  Troy's photo. Barbed-wire fences on crooked posts (`WIRE_FENCES`, `buildWireFences()`) run
+  in paddock lines across the pasture and along both sides of the road; decoration only.
 - **Front walk** (from Troy's Facebook screenshots): terracotta path, a white-pebble mosaic
   with the ranch's black brand (`T.pebbleBrand()`), a brass "Rancho La Esmeralda" plaque,
   white gate pillars with open black iron gates, stepped wall ends. The iron arch with the
@@ -121,7 +133,7 @@ Update it when something here changes or a new standing preference comes up.
   `weapontest.js`, `bosstest.js` (rounds 10 and 20), `drivetest.js` (trucks and road),
   `zombiestest.js` (power, perks, box, El Taller, trap, coconut cannon, carpenter),
   `housetest.js` (cows and dogs get from every room to every other, Pepper reaches her
-  blanket, players fit through every doorway).
+  blanket, players fit through every doorway), `twisttest.js` (the round twists).
 - Server test switches: `RD_START_WAVE=20` starts at a later round;
   `RD_FIRST_WAVE_DELAY=3000` keeps the cows away while looking around;
   `RD_START_POINTS=20000` gives everyone points to try the machines.
