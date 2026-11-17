@@ -44,6 +44,41 @@ Update it when something here changes or a new standing preference comes up.
   - Electric fence trap (1000) across the south gate.
   - Power-ups: max ammo, insta-kill, double points, nuke, carpenter, fire sale.
 - Phone support: touch controls, full screen, Low graphics preset with `*.lo.glb` models.
+- **The house** (Nov 2026) is a Blender model traced from the family's walk-through video
+  (Troy shared `ranch.mp4` on Google Drive; no narration, pictures only): kitchen with the
+  brick hood and brick-arched counters; a passage with the side door; the bar room (mahogany
+  and black-marble bar, glass double doors facing the kitchen door); the stair hall with its
+  tiled corridor; Troy's office (saddles, hats, yellow curtains, Brahman expo posters); and one
+  big front room, long dining table at the west end, cane rockers at the east end, stone
+  columns and plaster arches. Family photos (from the character pictures) hang on the walls.
+  Troy asked for it "as realistic and close to the real house as possible, down to small
+  details", "pictures, everything", "their clutter on tables, kitchen, grill": keep adding
+  detail rather than simplifying. The kettle grill outside the side door is my addition (the
+  video shows no grill).
+  - Floor plan, collision, doorways (`PORTALS`), furniture boxes, `HOUSE_PROPS` (chairs etc.
+    the game instances), fans and lights: `shared/world.js` "The house". The Blender build reads
+    the same numbers, so change the plan there and rebuild.
+  - Rebuild: `tools/blender/build_house.sh` (dumps the layout, paints textures, builds and
+    light-bakes the full and phone versions, compresses). The full bake takes ~25 minutes on 4
+    CPU cores; `RD_BAKE_SAMPLES=16` for a quick look. Output: `models/house/house(.lo).glb`
+    and `house(.lo)_light.webp`.
+  - Node `House` carries the light map (UV set 2; sky + bounced sun, stored as sqrt; the game's
+    `LIGHTMAP_GAIN` undoes it). `HouseDetail` is small stuff lit normally. `Leaf_<entry>_L/R`
+    and `Grille_<entry>` are the French-door glass and grilles the cows break open.
+  - **Upstairs** (Troy asked: "so we can go upstairs", "an open door we can go in and out
+    of", "exit through the 2nd floor"). The video never goes up, so the rooms are my design:
+    a gallery round the stairwell under the skylight, two bedrooms, the arched loggia (hammock),
+    and a door at the gallery's east end (entry 9, a 'door': players pass, cows tear its boards)
+    onto the flat roof, where a masonry stair runs down the back wall to the yard.
+    Collision has floors now: boxes may have `y0` (start above the ground); `resolveCircle`
+    ignores boxes starting a metre above your feet, `groundHeight` lets you stand on them.
+    Each step of both stairs is a box. `insideHouse(x, z, y)` and `roomAt(x, z, y)` take the
+    height; `levelOf(y)` says which floor. Dogs stay downstairs (they wait at the stair foot).
+  - Cows find their way on the server's path grid: the ground at 1 m, and a second layer for
+    the upper floor and roof at 0.5 m, joined at the two stairs (`STAIRS`, foot and head).
+    Doorways are carved open (`PORTALS`), cows squeeze through indoors and sidestep tables.
+    Rooms narrower than about 3 m (1.6 m upstairs), or furniture leaving less than ~1.2 m, cut
+    the grid: run `node scripts/housetest.js` after any change to the plan.
 - **Scenery**: trees and palms are Blender-built models instanced across the map
   (`tools/blender/make_trees.py` -> `models/trees/trees.glb`). The ground shader tints each
   layer separately (pasture, leaf litter, sand, road); keep the terrain material white.
@@ -62,7 +97,9 @@ Update it when something here changes or a new standing preference comes up.
 - `npx vite build`, then `PORT=3000 node server/index.js`.
 - Sim tests (no browser): `node scripts/simtest.js`, `dogtest.js`, `entrytest.js`,
   `weapontest.js`, `bosstest.js` (rounds 10 and 20), `drivetest.js` (trucks and road),
-  `zombiestest.js` (power, perks, box, El Taller, trap, coconut cannon, carpenter).
+  `zombiestest.js` (power, perks, box, El Taller, trap, coconut cannon, carpenter),
+  `housetest.js` (cows and dogs get from every room to every other, Pepper reaches her
+  blanket, players fit through every doorway).
 - Server test switches: `RD_START_WAVE=20` starts at a later round;
   `RD_FIRST_WAVE_DELAY=3000` keeps the cows away while looking around;
   `RD_START_POINTS=20000` gives everyone points to try the machines.
@@ -86,7 +123,11 @@ Update it when something here changes or a new standing preference comes up.
 - Cycles on CPU renders quick previews; use them to check a model before putting it in game.
 - `gltf-transform optimize` strips texture coordinates from materials with no texture. If the
   game paints a texture on later (the perk labels), give it a placeholder texture in Blender.
-- `tools/blender/make_machines.py` builds the machines and the coconut cannon.
+- `tools/blender/make_machines.py` builds the machines and the coconut cannon;
+  `make_house.py` (+ `make_house_textures.py`, `build_house.sh`) the house.
+- Keep the second UV set when compressing a light-mapped model: `--prune-attributes false`.
+- The furniture models in `models/house/` (chairs, rockers, fan) were generated in an earlier
+  session; uncompressed copies are in git at `bc0bbc3`.
 - Every `foo.glb` needs a `foo.lo.glb` beside it: Low graphics loads that name instead.
 - A set of High-quality stills takes about 3 minutes each here; check on Low first.
 
@@ -95,3 +136,6 @@ Update it when something here changes or a new standing preference comes up.
   out by hand with Pillow instead.
 - No text-to-speech or image/3D generation service is connected. New people or animal
   models have to come from the existing ones or from Blender.
+- Google Drive: the connected Drive account (troy@doorraise.com) could not see a file Troy
+  shared by link; downloading the public link with curl from drive.usercontent.google.com
+  worked once the environment's network allowed it.

@@ -14,7 +14,7 @@ import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import { gltfLoader, texURL, isLowDetail } from './gltf.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import {
-  HOUSE, HOUSE_WALLS, ENTRIES, FURNITURE, STRUCTURES, HAY_BALES, TREES, UNDERGROWTH, FENCE_SEGMENTS,
+  HOUSE, HB, UPPER, HOUSE_PROPS, HOUSE_FANS, HOUSE_LIGHTS, ENTRIES, STRUCTURES, HAY_BALES, TREES, UNDERGROWTH, FENCE_SEGMENTS,
   FENCE_HEIGHT, YARD, MAX_BOARDS, VERANDA, HEDGES, PENS, WALL_BUYS, WEAPONS, heightAt, shoreZ, SAND_WIDTH, trailDist, solidsNear, ROAD, ROAD_HALF, roadDist, VEHICLES as TRUCKS, STATIONS, stationBox,
 } from '../../shared/world.js';
 import * as T from './textures.js';
@@ -123,73 +123,6 @@ function fitReal(model, height, tint) {
   return holder;
 }
 
-// Wrought iron: curling scrolls as tubes, merged into one mesh.
-function ironTable(w, d, h, topMat) {
-  const g = new THREE.Group();
-  const tubes = [];
-  const tube = (pts, r = 0.011) => tubes.push(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), Math.max(16, pts.length * 6), r, 6, false));
-  const V = (x, y, z) => new THREE.Vector3(x, y, z);
-  const spiral = (cx, cy, r0, r1, a0, turns, n, toWorld) => {
-    const pts = [];
-    for (let i = 0; i <= n; i++) {
-      const t = i / n, a = a0 + t * turns * Math.PI * 2, r = r0 + (r1 - r0) * t;
-      pts.push(toWorld(cx + Math.cos(a) * r, cy + Math.sin(a) * r));
-    }
-    return pts;
-  };
-  const hw = w / 2 - 0.04, hd = d / 2 - 0.04;
-  for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
-    // S-curved leg ending in an outward curl at the foot
-    const pts = [V(sx * hw, h - 0.03, sz * hd), V(sx * (hw + 0.035), h * 0.62, sz * (hd + 0.035)), V(sx * (hw - 0.02), h * 0.28, sz * (hd - 0.02)), V(sx * (hw + 0.01), 0.07, sz * (hd + 0.01))];
-    const foot = spiral(0, 0.05, 0.045, 0.012, Math.PI, 1.3, 14, (u, v) => V(sx * (hw + 0.01 + u * 0.7), v, sz * (hd + 0.01 + u * 0.7)));
-    tube([...pts, ...foot.slice(1)]);
-  }
-  // apron scrolls on each side, mirrored from the middle
-  for (const [len, place] of [[w, (u, v, side) => V(u, v, side * hd)], [d, (u, v, side) => V(side * hw, v, u)]]) {
-    for (const side of [-1, 1]) for (const m of [-1, 1]) {
-      const L = len / 2 - 0.1;
-      tube(spiral(m * L * 0.62, h - 0.09, 0.05, 0.012, m > 0 ? Math.PI / 2 : Math.PI / 2, m * 1.25, 20, (u, v) => place(u, v, side)), 0.008);
-      tube([place(0, h - 0.035, side), place(m * L * 0.3, h - 0.06, side), place(m * L * 0.62, h - 0.04, side)], 0.008);
-    }
-  }
-  // low cross stretcher with a centre ring
-  tube([V(-hw, 0.2, -hd), V(-hw * 0.4, 0.15, -hd * 0.4), V(0, 0.17, 0), V(hw * 0.4, 0.15, hd * 0.4), V(hw, 0.2, hd)], 0.009);
-  tube([V(-hw, 0.2, hd), V(-hw * 0.4, 0.15, hd * 0.4), V(0, 0.17, 0), V(hw * 0.4, 0.15, -hd * 0.4), V(hw, 0.2, -hd)], 0.009);
-  const iron = new THREE.Mesh(mergeGeometries(tubes), M.iron);
-  iron.castShadow = iron.receiveShadow = true;
-  g.add(iron);
-  const top = box(w, 0.035, d, topMat, 0, h + 0.0175, 0, g);
-  top.geometry.attributes.uv.array.forEach((v, i, a) => { a[i] = v * 0.6; });
-  return g;
-}
-
-// A long dark-wood dining table with lathe-turned legs.
-function diningTable(w, d, h) {
-  const g = new THREE.Group();
-  const top = worldBox(w, 0.06, d, M.darkWoodTable, 1.5); top.position.y = h - 0.03; g.add(top);
-  for (const [x, z, len] of [[0, d / 2 - 0.06, w - 0.25], [0, -d / 2 + 0.06, w - 0.25]]) box(len, 0.1, 0.03, M.darkWoodTable, x, h - 0.11, z, g);
-  for (const x of [w / 2 - 0.06, -w / 2 + 0.06]) box(0.03, 0.1, d - 0.25, M.darkWoodTable, x, h - 0.11, 0, g);
-  const prof = [[0, 0], [0.045, 0], [0.045, 0.06], [0.035, 0.09], [0.05, 0.2], [0.03, 0.32], [0.042, 0.42], [0.026, 0.52], [0.034, 0.6], [0.04, 0.62], [0.04, h - 0.16], [0, h - 0.16]].map(([a, b]) => new THREE.Vector2(a, b));
-  const legG = new THREE.LatheGeometry(prof, 14);
-  const legs = w > 2.6 ? [-w / 2 + 0.12, 0, w / 2 - 0.12] : [-w / 2 + 0.12, w / 2 - 0.12];
-  for (const x of legs) for (const z of [d / 2 - 0.12, -d / 2 + 0.12]) {
-    const l = new THREE.Mesh(legG, M.darkWoodTable); l.position.set(x, 0, z); l.castShadow = l.receiveShadow = true; g.add(l);
-  }
-  return g;
-}
-
-// Framed painting (front faces +Z)
-function painting(file, w, h, frameMat, liner) {
-  const g = new THREE.Group();
-  const canvasM = new THREE.MeshStandardMaterial({ map: loadTex(file), roughness: 0.55 });
-  canvasM.map.wrapS = canvasM.map.wrapT = THREE.ClampToEdgeWrapping;
-  const c = new THREE.Mesh(new THREE.PlaneGeometry(w, h), canvasM); c.position.z = 0.02; g.add(c);
-  const fw = 0.11, fd = 0.06;
-  for (const [bw, bh, x, y] of [[w + fw * 2, fw, 0, h / 2 + fw / 2], [w + fw * 2, fw, 0, -h / 2 - fw / 2], [fw, h, -w / 2 - fw / 2, 0], [fw, h, w / 2 + fw / 2, 0]]) box(bw, bh, fd, frameMat, x, y, fd / 2, g);
-  if (liner) for (const [bw, bh, x, y] of [[w, 0.025, 0, h / 2 - 0.012], [w, 0.025, 0, -h / 2 + 0.012], [0.025, h, -w / 2 + 0.012, 0], [0.025, h, w / 2 - 0.012, 0]]) box(bw, bh, 0.012, liner, x, y, 0.026, g);
-  return g;
-}
-
 // A table with a draped cloth (veranda)
 function clothTable(w, d, h, clothMat) {
   const g = new THREE.Group();
@@ -278,7 +211,7 @@ export async function buildWorld(renderer, Q = { shadows: 2048, grass: 26000 }, 
   // ---------- Hacienda + grounds ----------
   onProgress('Building the hacienda...');
   const models = await loadAllModels();
-  const house = buildHouse(updaters, models);
+  const house = await buildHouse(updaters, models, Q);
   scene.add(house.group);
   scene.add(buildVeranda(models));
   for (const s of STRUCTURES) { const m = buildStructure(s, updaters, models); if (m) scene.add(m); }
@@ -315,7 +248,7 @@ export async function buildWorld(renderer, Q = { shadows: 2048, grass: 26000 }, 
 
   return {
     trucks, machineModel: models.machines,
-    scene, sun, sunDir: sunDir.raw, lightDir: sunDir.clone(), boards: house.boards, grilles: house.grilles,
+    scene, sun, sunDir: sunDir.raw, lightDir: sunDir.clone(), boards: house.boards, grilles: house.grilles, leaves: house.leaves,
     update(dt, t, camPos) { for (const u of updaters) u(dt, t, camPos); },
   };
 }
@@ -359,22 +292,36 @@ uniform float fogNear; uniform float fogFar;
   // Indoors the sky can't see you: cut sky/ambient light inside the house (and partly under
   // the veranda roof) to a dim, warm bounce, the way baked lighting would. Sun patches
   // through doors and windows then read properly against the darker room.
-  const HX = (HOUSE.w / 2).toFixed(2), HZ = (HOUSE.d / 2).toFixed(2), WH = (HOUSE.wallH + 0.25).toFixed(2);
+  const f2 = (v) => v.toFixed(2), WH = f2(HOUSE.wallH + 0.25);
   THREE.ShaderChunk.lights_fragment_maps = THREE.ShaderChunk.lights_fragment_maps.split('// RD-INDOOR')[0] + `// RD-INDOOR
 #ifdef USE_FOG
 {
   vec3 wpI = cameraPosition + vFogRay;
-  float inHouse = step(abs(wpI.x), ${HX}) * step(abs(wpI.z), ${HZ}) * step(wpI.y, ${WH});
-  float inPorch = step(abs(wpI.x), ${HX} + 0.4) * step(${HZ}, wpI.z) * step(wpI.z, ${HZ} + 4.9) * step(wpI.y, ${WH});
-  float inLog = step(${LOGGIA.x0.toFixed(2)}, wpI.x) * step(wpI.x, ${LOGGIA.x1.toFixed(2)}) * step(${LOGGIA.z0.toFixed(2)} - 0.1, wpI.z) * step(wpI.z, ${(LOGGIA.z1 - 0.25).toFixed(2)}) * step(${(HOUSE.wallH + 0.3).toFixed(2)}, wpI.y) * step(wpI.y, ${(HOUSE.wallH + 3.2).toFixed(2)});
-  float occI = 1.0 - inHouse * 0.74 - inPorch * 0.42 - inLog * 0.5;
+  float inHouse = step(${f2(HB.x0)}, wpI.x) * step(wpI.x, ${f2(HB.x1)}) * step(${f2(HB.z0)}, wpI.z) * step(wpI.z, ${f2(HB.z1)}) * step(wpI.y, ${WH});
+  float inPorch = step(${f2(HB.x0 - 0.4)}, wpI.x) * step(wpI.x, ${f2(HB.x1 + 0.4)}) * step(${f2(HB.z1)}, wpI.z) * step(wpI.z, ${f2(HB.z1 + 4.9)}) * step(wpI.y, ${WH});
+  float inUp = step(${f2(UPPER.x0)}, wpI.x) * step(wpI.x, ${f2(UPPER.x1)}) * step(${f2(UPPER.z0)}, wpI.z) * step(wpI.z, ${f2(UPPER.loggiaZ)}) * step(${f2(UPPER.y - 0.1)}, wpI.y) * step(wpI.y, ${f2(UPPER.y + UPPER.h)});
+  float occI = 1.0 - inHouse * 0.6 - inPorch * 0.4 - inUp * 0.5;
   vec3 warmI = mix(vec3(1.0), vec3(1.1, 0.97, 0.84), 1.0 - occI);
+#ifdef RD_BAKED
+  // the house's own surfaces: the light map already holds the sky and the bounced light.
+  // Indoors it's lifted the way eyes adjust coming in out of the sun (the real rooms read
+  // bright and white), with a little fill so ceilings don't go black.
+#if defined( RE_IndirectDiffuse )
+  iblIrradiance *= 0.0;
+  float insideB = clamp(inHouse + inUp, 0.0, 1.0);
+  irradiance = irradiance * (1.0 + insideB * 3.2) + insideB * vec3(0.22, 0.21, 0.19);
+#endif
+#if defined( RE_IndirectSpecular ) && defined( USE_LIGHTMAP )
+  radiance *= clamp(dot(lightMapIrradiance, vec3(0.3, 0.59, 0.11)) * 0.5, 0.04, 1.0);
+#endif
+#else
 #if defined( RE_IndirectDiffuse )
   iblIrradiance *= occI * warmI;
   irradiance *= mix(1.0, occI, 0.85) * warmI;
 #endif
 #if defined( RE_IndirectSpecular )
   radiance *= occI * 0.7 + 0.3;
+#endif
 #endif
 #ifndef USE_SHADOWMAP
   reflectedLight.directDiffuse *= mix(1.0, 0.3, inHouse);
@@ -411,9 +358,9 @@ async function loadAllModels() {
   const names = {
     pot: 'potted_plant_02/potted_plant_02_lod.glb', fern: 'fern_02/fern_02_lod.glb',
     shrub: 'shrub_04/shrub_04_lod.glb',
-    // the real house's furniture, generated from the family photos
-    bench: 'house/bench.glb', caneRocker: 'house/rocker.glb', fan: 'house/fan.glb',
-    diningChair: 'house/diningchair.glb', bar: 'house/bar.glb', xchair: 'house/xchair.glb',
+    // the house itself (tools/blender/make_house.py) and the furniture generated from the family photos
+    house: 'house/house.glb',
+    caneRocker: 'house/rocker.glb', fan: 'house/fan.glb', diningChair: 'house/diningchair.glb', xchair: 'house/xchair.glb',
     f150: 'vehicles/f150.glb', chevy: 'vehicles/chevy.glb', boat: 'vehicles/boat.glb',
     trees: 'trees/trees.glb',   // tools/blender/make_trees.py
     machines: 'machines/machines.glb',   // tools/blender/make_machines.py
@@ -617,107 +564,69 @@ varying float vDepth; varying float vSea; varying vec3 vWPos; varying vec3 vWNor
 }
 
 // ---------------------------------------------------------------- house
-function buildHouse(updaters, models) {
+// The house is a Blender model (tools/blender/make_house.py, built by build_house.sh) traced
+// from the family's walk-through video and generated from the same floor plan as the collision
+// in shared/world.js. Its big surfaces carry a baked light map: the sky's light through the
+// doors and windows and the sun's light bounced round the rooms (the sun's own light and
+// shadows are drawn live). Here the game adds what moves or is shared: the boards over the
+// doors and windows, the glazed leaves and grilles the cows break open, the furniture models
+// (instanced), the spinning fans and the lights.
+const LIGHTMAP_GAIN = 1.5 * Math.PI * 1.9;   // undo the bake's 8-bit packing (see make_house.py), plus a lift for the eye
+async function buildHouse(updaters, models, Q) {
   const group = new THREE.Group();
-  const { wallH, t } = HOUSE;
-  const HX = HOUSE.w / 2, HZ = HOUSE.d / 2;
-
-  // the real ochre tile floor, with its patterned border around each room
-  group.add(flat(HOUSE.w, HOUSE.d, M.floor, 0, 0.04, 0, 2.0));
-  const bw = 0.36, inset = 0.5;
-  for (const [x0, x1] of [[-HX, -3], [-3, HX]]) {
-    const cx = (x0 + x1) / 2, w = x1 - x0 - inset * 2, d = HOUSE.d - inset * 2;
-    for (const s of [-1, 1]) {
-      group.add(stripe(w, bw, cx, s * (d / 2), false));
-      group.add(stripe(d, bw, cx + s * (w / 2), 0, true));
+  const house = models.house;
+  group.add(house);
+  const lm = await new Promise((res) => texLoader.load(`${A}models/house/${isLowDetail() ? 'house.lo' : 'house'}_light.webp`, res, undefined, () => res(null)));
+  if (lm) { lm.flipY = false; lm.channel = 1; lm.colorSpace = THREE.SRGBColorSpace; }
+  const baked = new Map();
+  const under = (o, name) => { for (let p = o; p; p = p.parent) if (p.name === name) return true; return false; };
+  house.traverse((o) => {
+    if (!o.isMesh) return;
+    o.castShadow = o.receiveShadow = true;
+    const m = o.material;
+    if (m.transparent) { m.depthWrite = false; o.castShadow = false; }
+    if (lm && under(o, 'House')) {
+      if (!baked.has(m)) {
+        const b = m.clone();
+        b.lightMap = lm; b.lightMapIntensity = LIGHTMAP_GAIN;
+        b.defines = { ...(b.defines || {}), RD_BAKED: '' };
+        baked.set(m, b);
+      }
+      o.material = baked.get(m);
     }
-  }
-  function stripe(len, wid, x, z, alongZ) {
-    const g = new THREE.PlaneGeometry(len, wid);
-    const uv = g.attributes.uv; for (let i = 0; i < uv.count; i++) uv.setX(i, uv.getX(i) * len / 0.9);
-    const m = new THREE.Mesh(g, M.border);
-    m.rotation.set(-Math.PI / 2, 0, alongZ ? Math.PI / 2 : 0);
-    m.position.set(x, 0.045, z);
-    m.receiveShadow = true;
-    return m;
-  }
-  const found = box(HOUSE.w + 0.5, 0.35, HOUSE.d + 0.5, std({ color: 0xbcb4a4, roughness: 1 }), 0, -0.16, 0, group);
-  found.castShadow = false;
+  });
 
-  for (const wpiece of HOUSE_WALLS) {
-    if (wpiece.kind === 'iwall') {
-      const m = worldBox(wpiece.w, wpiece.h, wpiece.d, M.stuccoIn, 2.4);
-      m.position.set(wpiece.x, wpiece.h / 2, wpiece.z);
-      group.add(m);
-      continue;
-    }
-    const alongX = wpiece.d === t;
-    const nx = alongX ? 0 : Math.sign(wpiece.x), nz = alongX ? Math.sign(wpiece.z) : 0;
-    const half = t / 2;
-    for (const [mat, off] of [[M.stucco, half / 2], [M.stuccoIn, -half / 2]]) {
-      const m = worldBox(alongX ? wpiece.w : half, wpiece.h, alongX ? half : wpiece.d, mat, 2.4);
-      m.position.set(wpiece.x + nx * off, wpiece.h / 2, wpiece.z + nz * off);
-      group.add(m);
-    }
-    box(alongX ? wpiece.w : 0.02, 0.16, alongX ? 0.02 : wpiece.d, M.dado, wpiece.x - nx * (half + 0.01), 0.12, wpiece.z - nz * (half + 0.01), group);
-    box(alongX ? wpiece.w : 0.03, 0.45, alongX ? 0.03 : wpiece.d, std({ color: 0xa89a88, roughness: 1 }), wpiece.x + nx * (half + 0.015), 0.22, wpiece.z + nz * (half + 0.015), group);
-  }
-
-  // the wide arched opening between the living and dining rooms, like the photo
-  {
-    const w = 4.2, y0 = 2.55, rise = 0.55;
-    const sh = new THREE.Shape();
-    sh.moveTo(-w / 2, y0); sh.lineTo(-w / 2, wallH); sh.lineTo(w / 2, wallH); sh.lineTo(w / 2, y0);
-    sh.quadraticCurveTo(0, y0 + rise * 2, -w / 2, y0);
-    const g = new THREE.ExtrudeGeometry(sh, { depth: 0.2, bevelEnabled: true, bevelSize: 0.02, bevelThickness: 0.02, bevelSegments: 1, curveSegments: 28 });
-    g.translate(0, 0, -0.1);
-    { const uv = g.attributes.uv; for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) / 2.4, uv.getY(i) / 2.4); }
-    const arch = new THREE.Mesh(g, M.stuccoIn);
-    arch.rotation.y = Math.PI / 2; arch.position.set(-3, 0, 0);
-    arch.castShadow = arch.receiveShadow = true;
-    group.add(arch);
-    for (const sz of [-1, 1]) { // plaster pilasters framing the opening
-      const p = worldBox(0.3, y0, 0.22, M.stuccoIn, 2.4); p.position.set(-3, y0 / 2, sz * (w / 2 + 0.03)); group.add(p);
-      const cap = worldBox(0.36, 0.1, 0.3, M.stuccoIn, 2.4); cap.position.set(-3, y0 + 0.02, sz * (w / 2 + 0.03)); group.add(cap);
-    }
-  }
-
-  const boards = [], grilles = [];
+  // the French doors the cows come through: glazed leaves (shut until the last board goes,
+  // then they swing in) and the grille outside
+  const leaves = [], grilles = [];
   for (const e of ENTRIES) {
-    const alongX = e.nx === 0;
-    const W = e.width, sx = alongX ? W : t, sz = alongX ? t : W;
-    if (e.sill > 0) {
-      const sill = worldBox(sx, e.sill, sz, M.stucco, 2.4);
-      sill.position.set(e.x, e.sill / 2, e.z); group.add(sill);
-      box(alongX ? W + 0.2 : t + 0.12, 0.06, alongX ? t + 0.12 : W + 0.2, M.darkWood, e.x, e.sill, e.z, group);
+    grilles[e.id] = house.getObjectByName(`Grille_${e.id}`) || null;
+    const pair = ['L', 'R'].map((s) => house.getObjectByName(`Leaf_${e.id}_${s}`)).filter(Boolean);
+    if (!pair.length) continue;
+    const ent = { nodes: pair, open: false, k: 0, dir: [] };
+    for (const n of pair) { // which way round opens it into the room
+      const c = new THREE.Box3().setFromObject(n).getCenter(new THREE.Vector3());
+      const tx = c.x - n.position.x, tz = c.z - n.position.z;
+      ent.dir.push(Math.sign(tz * -e.nx - tx * -e.nz) || 1);
     }
-    const head = worldBox(sx, wallH - e.top, sz, M.stucco, 2.4);
-    head.position.set(e.x, (wallH + e.top) / 2, e.z); group.add(head);
-    for (const s of [-1, 1]) {
-      const px = e.x + (alongX ? s * (W / 2 + 0.05) : 0), pz = e.z + (alongX ? 0 : s * (W / 2 + 0.05));
-      box(alongX ? 0.1 : t + 0.06, e.top - e.sill, alongX ? t + 0.06 : 0.1, M.darkWood, px, (e.top + e.sill) / 2, pz, group);
+    leaves[e.id] = ent;
+  }
+  updaters.push((dt) => {
+    for (const ent of leaves) {
+      if (!ent) continue;
+      const goal = ent.open ? 1 : 0;
+      if (ent.k === goal) continue;
+      ent.k = ent.open ? Math.min(1, ent.k + dt * 2.5) : Math.max(0, ent.k - dt * 1.5);
+      const a = (1 - Math.pow(1 - ent.k, 3)) * 1.75;   // bursts open, slows as it swings
+      ent.nodes.forEach((n, i) => { n.rotation.y = ent.dir[i] * a; });
     }
-    box(alongX ? W + 0.3 : t + 0.06, 0.12, alongX ? t + 0.06 : W + 0.3, M.darkWood, e.x, e.top + 0.06, e.z, group);
+  });
 
-    // like the real house: louvered dark-wood shutters (glazed leaves on the doors) folded
-    // open against the inside wall, and a wrought-iron grille across each window
-    const leafH = e.top - e.sill - 0.04, leafW = W / 2;
-    const inOff = t / 2 + 0.028;
-    for (const sd of [-1, 1]) {
-      const leaf = e.kind === 'door' ? glazedLeaf(leafW, leafH) : louveredLeaf(leafW, leafH);
-      const along = sd * (W / 2 + leafW / 2 + 0.02);
-      leaf.position.set(e.x + (alongX ? along : 0) - e.nx * inOff, e.sill + leafH / 2 + 0.02, e.z + (alongX ? 0 : along) - e.nz * inOff);
-      leaf.rotation.y = alongX ? 0 : Math.PI / 2;
-      group.add(leaf);
-    }
-    if (e.kind !== 'door') {
-      const gr = ironGrille(W, e.top - e.sill);
-      gr.position.set(e.x + e.nx * (t / 2 + 0.03), e.sill, e.z + e.nz * (t / 2 + 0.03));
-      gr.rotation.y = alongX ? 0 : Math.PI / 2;
-      group.add(gr);
-      grilles[e.id] = gr;
-    }
-
+  // boards over every door and window, nailed on the inside
+  const boards = [];
+  const { t } = HOUSE;
+  for (const e of ENTRIES) {
+    const alongX = e.nx === 0, W = e.width;
     const list = [];
     const span = e.top - e.sill;
     const boardH = Math.min(0.32, (span / MAX_BOARDS) * 0.62);
@@ -725,9 +634,10 @@ function buildHouse(updaters, models) {
       const g = new THREE.BoxGeometry(W + 0.45, boardH, 0.05);
       const uv = g.attributes.uv; for (let k = 0; k < uv.count; k++) uv.setXY(k, uv.getX(k) * 1.2 + i * 0.37, uv.getY(k) * 0.15 + i * 0.13);
       const b = new THREE.Mesh(g, M.planks);
-      const y = e.sill + span * ((i + 0.5) / MAX_BOARDS);
+      const y = e.y + e.sill + span * ((i + 0.5) / MAX_BOARDS);
       const tilt = Math.sin(e.id * 7.1 + i * 3.3) * 0.22;
-      b.position.set(e.x - e.nx * (t / 2 + 0.04), y, e.z - e.nz * (t / 2 + 0.04));
+      const wt = e.level ? 0.25 : t;
+      b.position.set(e.x - e.nx * (wt / 2 + 0.06), y, e.z - e.nz * (wt / 2 + 0.06));
       b.rotation.set(0, alongX ? 0 : Math.PI / 2, tilt);
       b.castShadow = true;
       group.add(b);
@@ -736,190 +646,86 @@ function buildHouse(updaters, models) {
     boards.push(list);
   }
 
-  // ceiling: smooth white plaster with a crown moulding, like the photos of the rooms
-  // (ceilings get almost no direct light; a soft emissive lift stands in for the light bouncing off the floor)
-  const ceilM = M.stuccoIn.clone(); ceilM.emissive = new THREE.Color(0xb3a796); ceilM.emissiveIntensity = 0.32;
-  const ceil = new THREE.Mesh(new THREE.PlaneGeometry(HOUSE.w, HOUSE.d), ceilM);
-  ceil.geometry.attributes.uv.array.forEach((v, i, a) => { a[i] = v * (i % 2 === 0 ? HOUSE.w : HOUSE.d) / 2.5; });
-  ceil.rotation.x = Math.PI / 2; ceil.position.y = wallH - 0.01;
-  ceil.receiveShadow = true;
-  group.add(ceil);
-  const crown = (w, d, x, z) => { const c = worldBox(w, 0.14, d, ceilM, 2); c.position.set(x, wallH - 0.08, z); group.add(c); };
-  crown(HOUSE.w - 0.3, 0.12, 0, -HZ + 0.21); crown(HOUSE.w - 0.3, 0.12, 0, HZ - 0.21);
-  crown(0.12, HOUSE.d - 0.3, -HX + 0.21, 0); crown(0.12, HOUSE.d - 0.3, HX - 0.21, 0);
-  for (const sx of [-1, 1]) crown(0.12, HOUSE.d - 0.3, -3 + sx * 0.16, 0);
+  group.add(placeProps(models));
 
-  buildHaciendaTop(group, updaters);
-
-  for (const f of FURNITURE) group.add(furniture(f, models));
-  group.add(houseDecor(models));
-
-  // the real bronze ceiling fans, with warm bulbs that flicker when the power wavers
-  for (const [x, z] of [[-7, -0.8], [4.2, 3.4], [4.5, -2.6]]) {
+  // the bronze ceiling fans, each with a warm bulb that flickers when the power wavers, and
+  // the hanging lanterns and the stairwell chandelier
+  const lights = Q.shadows > 0 ? 7 : 3;
+  HOUSE_FANS.forEach(([x, z, ceil = HOUSE.wallH], i) => {
     const fan = new THREE.Group();
     const model = fitModel(models.fan.clone(), 1.3, false);
     const fh = new THREE.Box3().setFromObject(model).getSize(new THREE.Vector3()).y;
     model.position.y = -fh;
     model.traverse(o => { if (o.isMesh) { o.castShadow = false; o.receiveShadow = true; } });
     fan.add(model);
-    fan.position.set(x, wallH - 0.02, z);
-    const light = new THREE.PointLight(0xffc890, 6, 12, 1.6);
-    light.position.y = -fh - 0.05; fan.add(light);
+    fan.position.set(x, ceil - 0.02, z);
     group.add(fan);
+    let light = null;
+    if (i < lights - 2) { light = new THREE.PointLight(0xffc890, 5, 11, 1.6); light.position.y = -fh - 0.05; fan.add(light); }
     const seed = x * 13.1 + z;
     updaters.push((dt, time) => {
       model.rotation.y += dt * 4.5;
-      const f = Math.sin(time * 23 + seed) * Math.sin(time * 7.3 + seed * 2) > 0.93 ? 0.15 : 1;
-      light.intensity = 6 * f;
+      if (light) light.intensity = (Math.sin(time * 23 + seed) * Math.sin(time * 7.3 + seed * 2) > 0.93 ? 0.15 : 1) * 5;
     });
-  }
-  return { group, boards, grilles };
+  });
+  HOUSE_LIGHTS.slice(0, 2).forEach(([x, y, z]) => {
+    const l = new THREE.PointLight(0xffd29a, 4, 9, 1.6); l.position.set(x, y + 0.1, z); group.add(l);
+  });
+  return { group, boards, grilles, leaves };
 }
 
-function furniture(f, models) {
+// The furniture the house shares with other places (dining chairs, cane rockers, bentwood
+// chairs, potted plants), placed from shared/world.js HOUSE_PROPS, one instanced mesh per part.
+function placeProps(models) {
   const g = new THREE.Group();
-  g.position.set(f.x, 0.04, f.z);
-  switch (f.kind) {
-    case 'bench': g.add(fitReal(models.bench, 0.95)); break; // against the north wall, facing the room
-    case 'bar': { const b = fitReal(models.bar, 2.2); b.rotation.y = -Math.PI / 2; g.add(b); break; } // on the partition, facing west
-    case 'dining': {
-      const tw = 3.3, td = 1.05;
-      g.add(diningTable(tw, td, 0.78));
-      // ten carved high-back chairs: four down each side, one at each end
-      for (let i = 0; i < 4; i++) {
-        const x = -tw / 2 + 0.45 + i * ((tw - 0.9) / 3);
-        for (const [z, ry] of [[-td / 2 - 0.32, 0], [td / 2 + 0.32, Math.PI]]) {
-          const c = fitReal(models.diningChair, 1.18); c.position.set(x, 0, z); c.rotation.y = ry; g.add(c);
-        }
-      }
-      for (const [x, ry] of [[-tw / 2 - 0.3, Math.PI / 2], [tw / 2 + 0.3, -Math.PI / 2]]) {
-        const c = fitReal(models.diningChair, 1.18); c.position.set(x, 0, 0); c.rotation.y = ry; g.add(c);
-      }
-      // embroidered runner like the one on the real table
-      const run = new THREE.Mesh(new THREE.PlaneGeometry(tw - 0.3, 0.34), new THREE.MeshStandardMaterial({ map: T.leafCloth(), color: 0xd9a050, roughness: 0.9 }));
-      run.rotation.x = -Math.PI / 2; run.position.y = 0.786; g.add(run);
-      break;
+  const byModel = {};
+  for (const p of HOUSE_PROPS) (byModel[p[0]] ||= []).push(p);
+  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0);
+  for (const [key, list] of Object.entries(byModel)) {
+    const src = models[key];
+    if (!src) continue;
+    const b = new THREE.Box3().setFromObject(src), size = b.getSize(new THREE.Vector3()), c = b.getCenter(new THREE.Vector3());
+    for (const part of meshOf(src)) {
+      const mesh = new THREE.InstancedMesh(part.geometry, part.material, list.length);
+      list.forEach(([, x, z, yaw, h, tint], i) => {
+        const k = (key === 'pot' ? h / Math.max(size.x, size.z) : h / size.y);
+        m4.compose(new THREE.Vector3(x, 0.04, z), q.setFromAxisAngle(up, yaw), new THREE.Vector3(k, k, k));
+        m4.multiply(new THREE.Matrix4().makeTranslation(-c.x, -b.min.y, -c.z));
+        mesh.setMatrixAt(i, m4);
+        if (tint) mesh.setColorAt(i, new THREE.Color(...tint));
+        else if (list.some(l => l[5])) mesh.setColorAt(i, new THREE.Color(1, 1, 1));
+      });
+      mesh.castShadow = mesh.receiveShadow = true;
+      g.add(mesh);
     }
-    case 'island': case 'counter': case 'stove': {
-      box(f.w, f.h - 0.05, f.d, f.kind === 'stove' ? std({ color: 0xd8d4c8 }) : M.darkWoodTable, 0, (f.h - 0.05) / 2, 0, g);
-      box(f.w + 0.05, 0.05, f.d + 0.05, f.kind === 'stove' ? std({ color: 0x222222, roughness: 0.4 }) : M.marble, 0, f.h - 0.02, 0, g);
-      if (f.kind !== 'stove') {
-        // raised-panel cabinet doors with brass pulls on the long sides
-        const brass = std({ color: 0xb08a4a, roughness: 0.35, metalness: 0.8 });
-        const n = Math.max(2, Math.round(f.w / 0.55)), dw = f.w / n;
-        for (const sz of f.kind === 'island' ? [-1, 1] : [1]) for (let i = 0; i < n; i++) {
-          const x = -f.w / 2 + dw * (i + 0.5), z = sz * (f.d / 2 + 0.008);
-          box(dw - 0.06, f.h - 0.22, 0.016, M.darkWoodTable, x, (f.h - 0.05) / 2 - 0.02, z, g);
-          box(dw - 0.2, f.h - 0.42, 0.012, M.darkWood, x, (f.h - 0.05) / 2 - 0.02, z + sz * 0.012, g);
-          box(0.02, 0.12, 0.025, brass, x + (i % 2 ? -1 : 1) * (dw / 2 - 0.08), f.h - 0.32, z + sz * 0.02, g);
-        }
-        box(f.w + 0.02, 0.08, f.d + 0.02, std({ color: 0x1a120c, roughness: 0.8 }), 0, 0.04, 0, g); // toe kick
-      }
-      break;
-    }
-    case 'fridge':
-      box(f.w, f.h, f.d, std({ color: 0xd8d4c8, roughness: 0.3, metalness: 0.3 }), 0, f.h / 2, 0, g);
-      break;
   }
-  g.traverse(o => { if (o.isMesh) o.castShadow = o.receiveShadow = true; });
   return g;
 }
 
-// Decoration that doesn't block movement: cane rockers, iron & marble tables, paintings.
-function houseDecor(models) {
-  const g = new THREE.Group();
-  const at = (o, x, y, z, ry = 0) => { o.position.set(x, y, z); o.rotation.y = ry; g.add(o); return o; };
-  // living room: two cane rockers facing the bench across an iron coffee table, iron side table
-  at(fitReal(models.caneRocker, 1.05), -9.7, 0.04, -3.9, Math.PI + 0.35);
-  at(fitReal(models.caneRocker, 1.05), -7.4, 0.04, -3.8, Math.PI - 0.35);
-  at(ironTable(1.15, 0.62, 0.46, M.marble), -8.6, 0.04, -5.05);
-  at(ironTable(0.55, 0.55, 0.62, M.marble), -10.2, 0.04, -6.25);
-  at(ironTable(0.55, 0.55, 0.62, M.marble), -6.85, 0.04, -6.25);
-  // the horse painting on the west wall, the big sepia portrait in the dining room
-  const frameDark = std({ color: 0x2a1a12, roughness: 0.5 });
-  at(painting('painting_horse.jpg', 0.6, 0.8, std({ color: 0x1d3a44, roughness: 0.5 }), std({ color: 0xb08a4a, roughness: 0.35, metalness: 0.6 })), -10.83, 1.75, 0.4, Math.PI / 2);
-  at(painting('painting_portrait.jpg', 1.15, 1.55, frameDark), -2.88, 1.9, 4.55, Math.PI / 2);
-  // rugs: the charcoal geometric one under the seating, a red runner by the bar
-  const rugM = (st) => new THREE.MeshStandardMaterial({ map: T.rug(st), roughness: 0.95 });
-  const r1 = new THREE.Mesh(new THREE.PlaneGeometry(3.4, 2.5), rugM('living')); r1.rotation.x = -Math.PI / 2; r1.rotation.z = Math.PI / 2; at(r1, -8.6, 0.047, -4.7);
-  const r2 = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 2.2), rugM('oriental')); r2.rotation.x = -Math.PI / 2; at(r2, -4.45, 0.047, -4.7);
-  // potted plants by the windows
-  for (const [x, z, sc] of [[-10.35, 6.35, 1.0], [-3.6, 6.4, 0.9], [10.35, 6.3, 1.0], [-10.4, -1.2, 0.85]]) at(fitModel(models.pot.clone(), sc, false), x, 0.04, z);
-  g.traverse(o => { if (o.isMesh) o.castShadow = o.receiveShadow = true; });
-  return g;
-}
-
+// The veranda's furniture (the veranda itself is part of the house model): cane rockers,
+// the tables with their cloths and the X-back chairs, potted plants, and the path's
+// compass-rose medallion.
 function buildVeranda(models) {
   const g = new THREE.Group();
-  const HZ = HOUSE.d / 2, HX = HOUSE.w / 2;
-  const v = STRUCTURES.find(s => s.kind === 'veranda');
-  const deck = worldBox(v.w, v.h, v.d, M.terracotta, 1.6);
-  deck.position.set(v.x, v.h / 2, v.z);
-  g.add(deck);
-  
-  const colH = 3.05;
-  for (const c of VERANDA.columns) {
-    const col = worldBox(0.4, colH, 0.4, M.stucco, 2.4);
-    col.position.set(c.x, colH / 2, c.z);
-    g.add(col);
-    box(0.55, 0.15, 0.55, M.stucco, c.x, colH - 0.08, c.z, g);
-    box(0.55, 0.12, 0.55, M.stucco, c.x, 0.3, c.z, g);
-  }
-  const positions = [];
-  for (const r of VERANDA.rails) {
-    box(r.w, 0.06, 0.08, M.iron, r.x, r.h, r.z, g);
-    box(r.w, 0.04, 0.05, M.iron, r.x, 0.32, r.z, g);
-    for (let x = r.x - r.w / 2 + 0.15; x < r.x + r.w / 2; x += 0.16) positions.push([x, r.z]);
-  }
-  const m4 = new THREE.Matrix4();
-  const bal = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.022, 0.022, 0.82, 6), M.iron, positions.length);
-  positions.forEach(([x, z], i) => bal.setMatrixAt(i, m4.makeTranslation(x, 0.62, z)));
-  bal.castShadow = true;
-  const knobs = new THREE.InstancedMesh(new THREE.SphereGeometry(0.042, 8, 6), M.iron, positions.length);
-  positions.forEach(([x, z], i) => knobs.setMatrixAt(i, m4.makeTranslation(x, 0.62, z)));
-  g.add(bal, knobs);
-
-  const depth = VERANDA.z - HZ + 0.6, drop = 0.3, roofTop = HOUSE.wallH + 0.25;
-  const slope = Math.atan2(drop, depth), len = Math.hypot(depth, drop);
-  for (const [mat, yOff, up] of [[M.roof, 0.04, true], [M.terracotta, -0.02, false]]) {
-    const pg = new THREE.PlaneGeometry(HOUSE.w + 1.2, len);
-    pg.attributes.uv.array.forEach((val, i, a) => { a[i] = val * (i % 2 === 0 ? (HOUSE.w + 1.2) / 2.5 : len / 2.5); });
-    const p = new THREE.Mesh(pg, mat);
-    p.rotation.x = up ? -Math.PI / 2 + slope : Math.PI / 2 + slope;
-    p.position.set(0, roofTop - drop / 2 + yOff, HZ + depth / 2);
-    p.castShadow = up; p.receiveShadow = true;
-    g.add(p);
-  }
-  for (let x = -HX; x <= HX; x += 1.1) box(0.1, 0.14, len, M.darkWood, x, roofTop - 0.1 - drop / 2, HZ + depth / 2, g).rotation.x = slope;
-  box(HOUSE.w + 0.4, 0.3, 0.3, M.darkWood, 0, colH + 0.13, VERANDA.z, g);
-
-  for (const [x, z, ry] of [[-9.6, 8.7, 0.35], [9.6, 8.8, -0.35]]) {
+  const front = HB.z1, vy = 0.25;
+  for (const [x, z, ry] of [[-10.6, front + 1.7, 0.35], [8.6, front + 1.8, -0.35], [-9.4, front + 2.6, 0.1]]) {
     const r = fitReal(models.caneRocker, 1.05);
-    r.position.set(x, 0.25, z); r.rotation.y = ry;
+    r.position.set(x, vy, z); r.rotation.y = ry;
     g.add(r);
   }
-  // iron lanterns on the front wall between the openings
-  for (const x of [-9.0, -3.5, 3.5, 9.0]) { const l = lantern(); l.position.set(x, 2.25, HZ + HOUSE.t / 2 + 0.03); g.add(l); }
-  // curved front steps down to the path (the drone photo shows a half-round flight)
-  for (const [r, h] of [[2.0, 0.09], [1.55, 0.18]]) {
-    const st = new THREE.Mesh(new THREE.CylinderGeometry(r, r, h, 40, 1, false, -Math.PI / 2, Math.PI), M.terracotta);
-    st.position.set(0, h / 2, VERANDA.z + 0.25); st.castShadow = st.receiveShadow = true; g.add(st);
-  }
-  // compass-rose medallion set into a widened square of the path
-  const sq = worldBox(3.4, 0.03, 3.4, M.terracotta, 1.2); sq.position.set(0, 0.035, 14.6); g.add(sq);
+  const sq = worldBox(3.4, 0.03, 3.4, M.terracotta, 1.2); sq.position.set(0, 0.035, 15.2); g.add(sq);
   const med = new THREE.Mesh(new THREE.CircleGeometry(1.35, 48), new THREE.MeshStandardMaterial({ map: T.compass(), roughness: 0.6 }));
-  med.rotation.x = -Math.PI / 2; med.position.set(0, 0.052, 14.6); med.receiveShadow = true; g.add(med);
-  // the long table with the white cloth (by the barred windows) and the leaf-print one
-  const tA = clothTable(2.0, 0.9, 0.76, std({ map: T.linen(), roughness: 0.95 })); tA.position.set(-5.6, 0.25, 9.1); g.add(tA);
-  const tB = clothTable(1.2, 0.9, 0.76, std({ map: T.leafCloth(), roughness: 0.9 })); tB.position.set(5.6, 0.25, 9.1); g.add(tB);
-  for (const [x, z, ry] of [[-6.2, 8.25, 0], [-5.0, 8.25, 0], [-6.2, 9.95, Math.PI], [-5.0, 9.95, Math.PI], [5.6, 8.25, 0], [5.6, 9.95, Math.PI], [6.55, 9.1, -Math.PI / 2]]) {
+  med.rotation.x = -Math.PI / 2; med.position.set(0, 0.052, 15.2); med.receiveShadow = true; g.add(med);
+  const tA = clothTable(2.0, 0.9, 0.76, std({ map: T.linen(), roughness: 0.95 })); tA.position.set(-5.6, vy, front + 2.1); g.add(tA);
+  const tB = clothTable(1.2, 0.9, 0.76, std({ map: T.leafCloth(), roughness: 0.9 })); tB.position.set(5.6, vy, front + 2.1); g.add(tB);
+  for (const [x, dz, ry] of [[-6.2, 1.25, 0], [-5.0, 1.25, 0], [-6.2, 2.95, Math.PI], [-5.0, 2.95, Math.PI], [5.6, 1.25, 0], [5.6, 2.95, Math.PI], [6.55, 2.1, -Math.PI / 2]]) {
     const c = fitReal(models.xchair, 0.9, [0.72, 0.62, 0.55]);
-    c.position.set(x, 0.25, z); c.rotation.y = ry;
+    c.position.set(x, vy, front + dz); c.rotation.y = ry;
     g.add(c);
   }
-  for (const [x, z] of [[-2.4, 11.2], [2.4, 11.2], [-10.6, 10.6], [10.6, 10.6]]) {
+  for (const [x, dz] of [[-2.9, 4.1], [2.9, 4.1], [-12.4, 3.8], [10.4, 3.8]]) {
     const p = fitModel(models.pot.clone(), 0.9, false);
-    p.position.set(x, 0.25, z);
+    p.position.set(x, vy, front + dz);
     g.add(p);
   }
   return g;
@@ -1215,184 +1021,6 @@ function carport(s) {
   return g;
 }
 
-// Porch lanterns (black iron with glowing glass) for the veranda wall
-function lantern() {
-  const g = new THREE.Group();
-  const iron = M.iron;
-  box(0.05, 0.3, 0.05, iron, 0, 0, -0.02, g);
-  box(0.04, 0.04, 0.22, iron, 0, 0.12, 0.08, g);
-  const glow = new THREE.MeshStandardMaterial({ color: 0xffe2b0, emissive: 0xffc070, emissiveIntensity: 2.2, roughness: 0.3 });
-  box(0.16, 0.24, 0.16, glow, 0, -0.02, 0.2, g);
-  for (const [x, z] of [[-0.085, 0.115], [0.085, 0.115], [-0.085, 0.285], [0.085, 0.285]]) box(0.018, 0.28, 0.018, iron, x, -0.02, z, g);
-  const cap = new THREE.Mesh(new THREE.ConeGeometry(0.15, 0.12, 4), iron); cap.rotation.y = Math.PI / 4; cap.position.set(0, 0.16, 0.2); g.add(cap);
-  return g;
-}
-
-// ---------------------------------------------------------------- doors & windows
-// (all built in local space: width along X, facing +Z, centred, bottom at y = -h/2 for leaves)
-function boxGeo(w, h, d, x, y, z, rx = 0) {
-  const g = new THREE.BoxGeometry(w, h, d);
-  if (rx) g.rotateX(rx);
-  g.translate(x, y, z);
-  return g;
-}
-function louveredLeaf(w, h) {
-  const parts = [];
-  const st = 0.06;
-  parts.push(boxGeo(st, h, 0.045, -w / 2 + st / 2, 0, 0), boxGeo(st, h, 0.045, w / 2 - st / 2, 0, 0));
-  for (const y of [-h / 2 + 0.05, h / 2 - 0.05, -h * 0.08]) parts.push(boxGeo(w - st * 2, y === -h * 0.08 ? 0.07 : 0.1, 0.045, 0, y, 0));
-  for (let y = -h / 2 + 0.13; y < h / 2 - 0.12; y += 0.055) if (Math.abs(y + h * 0.08) > 0.06) parts.push(boxGeo(w - st * 2, 0.05, 0.008, 0, y, 0, 0.75));
-  const m = new THREE.Mesh(mergeGeometries(parts), M.darkWood);
-  m.castShadow = m.receiveShadow = true;
-  return m;
-}
-function glazedLeaf(w, h) {
-  const g = new THREE.Group();
-  const parts = [];
-  const st = 0.08;
-  parts.push(boxGeo(st, h, 0.05, -w / 2 + st / 2, 0, 0), boxGeo(st, h, 0.05, w / 2 - st / 2, 0, 0));
-  parts.push(boxGeo(w, 0.12, 0.05, 0, h / 2 - 0.06, 0), boxGeo(w, 0.22, 0.05, 0, -h / 2 + 0.11, 0), boxGeo(w, 0.03, 0.03, 0, h * 0.12, 0));
-  for (let i = 1; i < 2; i++) parts.push(boxGeo(0.03, h - 0.3, 0.03, -w / 2 + st + (w - st * 2) * i / 2, 0.05, 0));
-  const frame = new THREE.Mesh(mergeGeometries(parts), M.darkWood);
-  frame.castShadow = frame.receiveShadow = true;
-  g.add(frame);
-  const glass = new THREE.Mesh(new THREE.PlaneGeometry(w - st * 2, h - 0.34), new THREE.MeshStandardMaterial({ color: 0x8fa3a8, roughness: 0.05, metalness: 0.2, transparent: true, opacity: 0.35 }));
-  glass.position.y = 0.05;
-  g.add(glass);
-  return g;
-}
-// Wrought-iron window grille: round bars with forged collars, flat bands top and bottom
-function ironGrille(w, h) {
-  const parts = [];
-  const n = Math.max(5, Math.round(w / 0.12));
-  for (let i = 0; i <= n; i++) {
-    const x = -w / 2 + 0.04 + (w - 0.08) * i / n;
-    const bar = new THREE.CylinderGeometry(0.011, 0.011, h - 0.02, 6); bar.translate(x, h / 2, 0); parts.push(bar);
-    for (const y of [h * 0.33, h * 0.66]) { const c = new THREE.CylinderGeometry(0.021, 0.021, 0.07, 8); c.translate(x, y, 0); parts.push(c); }
-    const tip = new THREE.ConeGeometry(0.02, 0.07, 6); tip.translate(x, h - 0.02, 0); parts.push(tip);
-  }
-  for (const y of [0.04, h * 0.5, h - 0.09]) parts.push(boxGeo(w, 0.03, 0.012, 0, y, 0.012));
-  const m = new THREE.Mesh(mergeGeometries(parts), M.iron);
-  m.castShadow = true; m.receiveShadow = true;
-  return m;
-}
-
-// ---------------------------------------------------------------- hacienda upper levels
-// After the drone photo: flat roof terraces with parapets and a cornice, terracotta shed roofs
-// along the front (running into the veranda roof) and down the west wing, and a white upper
-// storey with a three-arch loggia and balustrade looking over the garden. Visual only: the
-// playable house is the ground floor.
-const LOGGIA = { x0: -5, x1: 6.5, z0: 2.4, z1: 3.8 };
-function shedRoof(corners, parent) {
-  // corners: 4 [x,y,z] points, high edge first; UVs in world units so the tiles keep scale
-  const g = new THREE.BufferGeometry();
-  const [a, b, c, d] = corners;
-  const across = Math.hypot(b[0] - a[0], b[2] - a[2]), down = Math.hypot(d[0] - a[0], d[1] - a[1], d[2] - a[2]);
-  g.setAttribute('position', new THREE.Float32BufferAttribute([...a, ...b, ...c, ...d], 3));
-  g.setAttribute('uv', new THREE.Float32BufferAttribute([0, down / 2.2, across / 2.2, down / 2.2, across / 2.2, 0, 0, 0], 2));
-  g.setIndex([0, 3, 1, 1, 3, 2]);
-  g.computeVertexNormals();
-  const m = new THREE.Mesh(g, M.roof);
-  m.castShadow = m.receiveShadow = true;
-  parent.add(m);
-  // fascia along the low edge
-  const len = Math.hypot(c[0] - d[0], c[2] - d[2]);
-  const f = box(len + 0.1, 0.14, 0.12, M.darkWood, (c[0] + d[0]) / 2, (c[1] + d[1]) / 2 - 0.05, (c[2] + d[2]) / 2, parent);
-  f.rotation.y = -Math.atan2(c[2] - d[2], c[0] - d[0]);
-  return m;
-}
-
-function archWall(w, h, depth, arches, mat) {
-  // a wall w x h with semicircular-headed openings: arches = [{cx, w, sill, h}]
-  const sh = new THREE.Shape();
-  sh.moveTo(-w / 2, 0); sh.lineTo(w / 2, 0); sh.lineTo(w / 2, h); sh.lineTo(-w / 2, h); sh.lineTo(-w / 2, 0);
-  for (const a of arches) {
-    const r = a.w / 2, spring = a.sill + a.h - r;
-    const hole = new THREE.Path();
-    hole.moveTo(a.cx - r, a.sill); hole.lineTo(a.cx + r, a.sill); hole.lineTo(a.cx + r, spring);
-    hole.absarc(a.cx, spring, r, 0, Math.PI, false); hole.lineTo(a.cx - r, a.sill);
-    sh.holes.push(hole);
-  }
-  const g = new THREE.ExtrudeGeometry(sh, { depth, bevelEnabled: true, bevelSize: 0.015, bevelThickness: 0.015, bevelSegments: 1, curveSegments: 16 });
-  g.translate(0, 0, -depth / 2);
-  const uv = g.attributes.uv; for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) / 2, uv.getY(i) / 2);
-  const m = new THREE.Mesh(g, mat);
-  m.castShadow = m.receiveShadow = true;
-  return m;
-}
-
-function balustrade(x0, x1, z, y, parent) {
-  const prof = [[0, 0], [0.07, 0], [0.07, 0.05], [0.045, 0.1], [0.075, 0.32], [0.04, 0.5], [0.06, 0.56], [0.06, 0.62], [0, 0.62]].map(([a, b]) => new THREE.Vector2(a, b));
-  const lathe = new THREE.LatheGeometry(prof, 10);
-  const n = Math.floor((x1 - x0) / 0.19);
-  const inst = new THREE.InstancedMesh(lathe, M.stucco, n);
-  const m4 = new THREE.Matrix4();
-  for (let i = 0; i < n; i++) inst.setMatrixAt(i, m4.makeTranslation(x0 + 0.1 + i * ((x1 - x0 - 0.2) / (n - 1)), y + 0.1, z));
-  inst.castShadow = inst.receiveShadow = true;
-  parent.add(inst);
-  const rail = worldBox(x1 - x0, 0.12, 0.24, M.stucco, 2); rail.position.set((x0 + x1) / 2, y + 0.78, z); parent.add(rail);
-  const plinth = worldBox(x1 - x0, 0.1, 0.24, M.stucco, 2); plinth.position.set((x0 + x1) / 2, y + 0.05, z); parent.add(plinth);
-}
-
-function buildHaciendaTop(group) {
-  const { wallH } = HOUSE, HX = HOUSE.w / 2, HZ = HOUSE.d / 2, top = wallH;
-  const glass = std({ color: 0x0c1418, roughness: 0.08, metalness: 0.6 });
-  const add = (m, x, y, z) => { m.position.set(x, y, z); group.add(m); return m; };
-
-  // roof slab and a projecting cornice where the walls end
-  add(worldBox(HOUSE.w + 0.3, 0.3, HOUSE.d + 0.3, M.stucco, 2), 0, top + 0.15, 0);
-  for (const [w, d, x, z] of [[HOUSE.w + 0.55, 0.2, 0, -HZ - 0.1], [0.2, HOUSE.d + 0.55, HX + 0.1, 0]]) add(worldBox(w, 0.14, d, M.stucco, 2), x, top + 0.02, z);
-
-  // terracotta shed roofs: across the front (into the veranda roof) and down the west wing
-  const hiF = top + 1.35, lo = top + 0.34, zf = HZ - 3.2, xw = -HX + 4.6;
-  shedRoof([[-HX - 0.3, hiF, zf], [HX + 0.3, hiF, zf], [HX + 0.3, lo, HZ + 0.3], [-HX - 0.3, lo, HZ + 0.3]], group);
-  shedRoof([[xw, hiF, -HZ - 0.3], [xw, hiF, zf], [-HX - 0.3, lo, zf], [-HX - 0.3, lo, -HZ - 0.3]], group);
-  // end walls closing the gaps under the high edges
-  add(worldBox(HX * 2 + 0.6, hiF - top - 0.3, 0.22, M.stucco, 2), 0, (hiF + top + 0.3) / 2, zf - 0.11);
-
-  // parapet around the open terrace (back and east sides)
-  for (const [w, d, x, z] of [[HX - xw + 0.2, 0.22, (xw + HX) / 2, -HZ - 0.04], [0.22, zf + HZ, HX + 0.04, (zf - HZ) / 2]]) {
-    add(worldBox(w, 0.75, d, M.stucco, 2), x, top + 0.3 + 0.375, z);
-    add(worldBox(w + 0.12, 0.08, d + 0.12, M.stucco, 2), x, top + 0.3 + 0.79, z);
-  }
-
-  // upper storey
-  const L = LOGGIA, uy = top + 0.3, uh = 3.1, ux = (L.x0 + L.x1) / 2, uw = L.x1 - L.x0, zb = -4.6;
-  add(worldBox(uw, uh, L.z0 - zb, M.stucco, 2), ux, uy + uh / 2, (L.z0 + zb) / 2);
-  // loggia: arched front wall, side walls, ceiling, balustrades, dark doors at the back
-  const arches = [-1, 0, 1].map(i => ({ cx: i * 3.55, w: 2.5, sill: 0, h: 2.55 }));
-  const aw = archWall(uw, uh, 0.4, arches, M.stucco);
-  add(aw, ux, uy, L.z1 - 0.2);
-  for (const x of [L.x0 + 0.2, L.x1 - 0.2]) add(worldBox(0.4, uh, L.z1 - L.z0, M.stucco, 2), x, uy + uh / 2, (L.z0 + L.z1) / 2);
-  add(worldBox(uw, 0.25, L.z1 - L.z0, M.stucco, 2), ux, uy + uh - 0.125, (L.z0 + L.z1) / 2);
-  add(flat(uw - 0.8, L.z1 - L.z0, M.terracotta, ux, uy + 0.02, (L.z0 + L.z1) / 2, 1.2));
-  for (const a of arches) balustrade(ux + a.cx - a.w / 2, ux + a.cx + a.w / 2, L.z1 - 0.2, uy, group);
-  for (const a of arches) {
-    const door = box(1.3, 2.3, 0.06, glass, ux + a.cx, uy + 1.15, L.z0 + 0.04, group);
-    for (const dx of [-0.68, 0.68]) box(0.08, 2.4, 0.1, M.darkWood, ux + a.cx + dx, uy + 1.2, L.z0 + 0.06, group);
-    box(1.44, 0.08, 0.1, M.darkWood, ux + a.cx, uy + 2.38, L.z0 + 0.06, group);
-    door.castShadow = false;
-  }
-  // upper cornice, parapet and rooftop details (water tank, white dome skylight)
-  add(worldBox(uw + 0.4, 0.16, L.z1 - zb + 0.4, M.stucco, 2), ux, uy + uh + 0.02, (L.z1 + zb) / 2);
-  for (const [w, d, x, z] of [[uw, 0.2, ux, zb + 0.1], [uw, 0.2, ux, L.z1 - 0.1], [0.2, L.z1 - zb, L.x0 + 0.1, (L.z1 + zb) / 2], [0.2, L.z1 - zb, L.x1 - 0.1, (L.z1 + zb) / 2]]) add(worldBox(w, 0.55, d, M.stucco, 2), x, uy + uh + 0.35, z);
-  const dome = new THREE.Mesh(new THREE.SphereGeometry(1.15, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2), M.stucco);
-  dome.castShadow = dome.receiveShadow = true; add(dome, ux + 2.2, uy + uh + 0.1, zb + 2.6);
-  add(worldBox(1.6, 1.1, 1.4, M.stucco, 2), ux - 3.1, uy + uh + 0.65, zb + 1.6);
-  // windows on the upper side and back walls: dark glass in deep stucco reveals with wood frames
-  const win = (x, z, rotY) => {
-    const g = new THREE.Group(); g.position.set(x, uy + 1.55, z); g.rotation.y = rotY;
-    box(1.0, 1.4, 0.05, glass, 0, 0, -0.02, g);
-    for (const dx of [-0.52, 0.52]) box(0.07, 1.5, 0.12, M.darkWood, dx, 0, 0, g);
-    for (const dy of [-0.72, 0.72]) box(1.1, 0.07, 0.12, M.darkWood, 0, dy, 0, g);
-    box(0.05, 1.4, 0.06, M.darkWood, 0, 0, 0.01, g);
-    box(1.25, 0.08, 0.22, M.stucco, 0, -0.78, 0.08, g);
-    group.add(g);
-  };
-  for (const x of [-3, 0.5, 4]) win(x, zb - 0.01, Math.PI);
-  for (const z of [-3, -0.3]) { win(L.x0 - 0.01, z, -Math.PI / 2); win(L.x1 + 0.01, z, Math.PI / 2); }
-}
-
 // ---------------------------------------------------------------- vegetation
 // Living foliage: matte leaves, wind sway (stronger higher up), per-leaf flutter, and light
 // glowing through the leaves when you look toward the sun.
@@ -1571,7 +1199,7 @@ function buildGrass(COUNT) {
     let d = (1 - smooth(sz - SAND_WIDTH - 2, sz - SAND_WIDTH + 5, z)) * (1 - smooth(72, 96, r) * 0.8);
     if (d > 0 && r > 45) d *= smooth(1.4, 3.2, trailDist(x, z));
     if (d > 0) d *= smooth(ROAD_HALF - 0.6, ROAD_HALF + 0.8, roadDist(x, z));
-    if (Math.abs(x) < HOUSE.w / 2 + 0.6 && z > -HOUSE.d / 2 - 0.6 && z < VERANDA.z + 0.8) d = 0;
+    if (x > HB.x0 - 0.6 && x < HB.x1 + 0.6 && z > HB.z0 - 0.6 && z < VERANDA.z + 0.8) d = 0;
     else if (Math.abs(x) < 1.6 && z > 9 && z < 22.5) d = 0;
     else if (Math.abs(x) < 2.4 && Math.abs(z - 19) < 2.4) d = 0;
     else if (PENS.some(p => Math.abs(x - p.x) < p.w / 2 + 0.6 && Math.abs(z - p.z) < p.d / 2 + 0.6)) d = 0;
