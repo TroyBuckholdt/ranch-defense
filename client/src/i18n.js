@@ -42,6 +42,7 @@ const ES = {
   'RELOADING': 'RECARGANDO', 'NO AMMO': 'SIN BALAS', 'RELOAD': 'RECARGA', 'R  RELOAD': 'R  RECARGAR',
   'INSTA-KILL': 'MUERTE INSTANTÁNEA', 'DOUBLE POINTS': 'PUNTOS DOBLES', 'MAX AMMO': 'BALAS AL MÁXIMO', 'KABOOM': 'KABÚM',
   "YOU'RE DOWN": 'ESTÁS HERIDO', 'SPECTATING': 'OBSERVANDO',
+  'Spectating {0}': 'Observando a {0}', 'Click for the next player': 'Clic para ver al siguiente', 'Tap for the next player': 'Toca para ver al siguiente',
   'Being revived... {0}%': 'Te están reviviendo... {0}%',
   'Bleeding out in {0}s. A teammate can hold {1} next to you to revive.': 'Te desangras en {0}s. Un compañero puede mantener {1} a tu lado para revivirte.',
   'You come back when this wave is cleared.': 'Regresas cuando termine esta oleada.',

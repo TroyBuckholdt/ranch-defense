@@ -82,6 +82,13 @@ kbd {
 }
 #downed-overlay.show { display: grid; }
 #downed-overlay .big { font-size: 64px; color: #ff4040; letter-spacing: 6px; }
+#spectate-label {
+  position: absolute; left: 50%; bottom: 15%; transform: translateX(-50%); display: none; pointer-events: auto;
+  padding: 6px 16px; font-size: 20px; letter-spacing: 2px; text-align: center; white-space: nowrap;
+  background: rgba(0, 0, 0, 0.35); border-radius: 6px;
+}
+#spectate-label.show { display: block; }
+#spectate-label small { display: block; font-family: system-ui, sans-serif; font-size: 12px; letter-spacing: 0; opacity: 0.8; }
 #downed-sub { font-family: system-ui, sans-serif; font-size: 17px; margin-top: 8px; }
 
 #wave-banner {

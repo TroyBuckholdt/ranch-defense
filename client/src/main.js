@@ -263,6 +263,9 @@ const shellViews = new Map();
 const shellGeo = new THREE.SphereGeometry(0.13, 12, 10), shellMat = new THREE.MeshStandardMaterial({ color: 0x4e3218, roughness: 0.95 });
 let perkKey = '';
 const chase = { pos: new THREE.Vector3(), ready: false };
+// dead and watching through a teammate's eyes: who, and the eased camera that follows them
+const spec = { id: 0, on: false, fresh: true, drive: false, ads: false, pos: new THREE.Vector3(), last: new THREE.Vector3(), yaw: 0, pitch: 0, eye: 1.62, speed: 0, fov: 74, vm: null };
+let specLabel = '';
 let view = null;            // latest interpolated world
 let mySnap = null;          // my own state from the server
 let playing = false;
@@ -330,7 +333,7 @@ const active = () => locked() || (touchMode && playing);
 const KEY_USE = touchMode ? `<kbd>${tr('USE')}</kbd>` : '<kbd>E</kbd>';
 const touch = touchMode ? new TouchControls({
   keys,
-  fire(down) { mouseDown = down; if (!down) triggerHeld = false; },
+  fire(down) { mouseDown = down; if (!down) triggerHeld = false; else if (mySnap?.dd) specNext(); },
   toggleAim() { aiming = !aiming; },
   reload: () => startReload(),
   grenade: () => throwGrenade(),
@@ -348,7 +351,7 @@ document.addEventListener('pointerlockchange', () => {
 renderer.domElement.addEventListener('mousedown', (e) => {
   if (!playing) return;
   if (!locked()) { lockPointer(); return; }
-  if (e.button === 0) mouseDown = true;
+  if (e.button === 0) { mouseDown = true; if (mySnap?.dd) specNext(); }
   if (e.button === 2) aiming = true;
 });
 addEventListener('mouseup', (e) => { if (e.button === 0) { mouseDown = false; triggerHeld = false; } if (e.button === 2) aiming = false; });
@@ -633,6 +636,80 @@ function stepDriving(dt) {
   weapon.root.visible = false;
 }
 
+// ---------------------------------------------------------------- spectating
+// Dead players watch through a teammate's eyes: their gun in view, their eye height, their
+// shots; a chase camera when they drive. Fire (click / FIRE button) moves to the next one.
+const specList = () => (view ? [...view.players.values()].filter(p => p.id !== net.id && !p.dd) : []);
+const specSnap = () => (spec.on && view?.players.get(spec.id)) || null;
+function specNext() {
+  const l = specList();
+  if (l.length < 2) return;
+  spec.id = l[(l.findIndex(p => p.id === spec.id) + 1) % l.length].id;
+  spec.fresh = true;
+  audio.click();
+}
+function stepSpectate(dt) {
+  const l = specList();
+  let t = l.find(p => p.id === spec.id);
+  if (!t) { t = l.find(p => !p.dn) || l[0]; spec.fresh = true; }
+  if (!t) { spec.on = false; spec.id = 0; weapon.root.visible = false; return; }   // nobody left to watch
+  spec.id = t.id; spec.on = true;
+  const seat = (t.rd | 0) - 1, fresh = spec.fresh;
+  const veh = seat >= 0 ? net.latest?.veh?.find(v => v[6 + seat] === t.id) : null;
+  const tv = veh ? truckViews.get(veh[0]) : null;
+  spec.drive = seat === 0 && !!tv;
+  if (tv) tv.seatWorld(seat, spec.pos); else spec.pos.set(t.x, t.y, t.z);
+  if (fresh) { spec.last.copy(spec.pos); spec.speed = 0; chase.ready = false; camSwing = 0; }
+  const sp = tv ? 0 : Math.min(9, Math.hypot(spec.pos.x - spec.last.x, spec.pos.z - spec.last.z) / Math.max(dt, 1e-3));
+  spec.speed += (sp - spec.speed) * Math.min(1, dt * 6);
+  spec.last.copy(spec.pos);
+  // ease towards where they look, so 20 snapshots a second don't judder
+  const k = fresh ? 1 : Math.min(1, dt * 12);
+  const dYaw = Math.atan2(Math.sin(t.yaw - spec.yaw), Math.cos(t.yaw - spec.yaw)) * k, dPitch = (t.pitch - spec.pitch) * k;
+  spec.yaw += dYaw; spec.pitch += dPitch;
+  const eye = t.dn ? 0.45 : tv ? (seat < 2 ? 1.3 : 1.62) : (t.e || 1.62);
+  spec.eye += (eye - spec.eye) * (fresh ? 1 : Math.min(1, dt * 10));
+  spec.ads = !!t.ad && !t.dn && !spec.drive;
+  const sprinting = !tv && !t.dn && !spec.ads && spec.speed > 5.6;
+  shake = Math.max(0, shake - dt * 4);
+
+  if (spec.drive) { // the driver looks at their truck from behind: so do we (the mouse swings it round)
+    camSwing -= lookDX * 0.0022;
+    camSwingIdle = lookDX ? 0 : camSwingIdle + dt;
+    if (camSwingIdle > 1.2) camSwing -= camSwing * Math.min(1, dt * 2.5);
+    camSwing = Math.max(-2.6, Math.min(2.6, camSwing));
+    const a = tv.yaw + camSwing, vy = tv.y ?? heightAt(tv.x, tv.z), back = 7.4 + Math.abs(tv.speed || 0) * 0.12;
+    const target = tmpV.set(tv.x, vy + 1.5, tv.z);
+    const want = tmpV2.set(tv.x - Math.sin(a) * back, vy + 3.1, tv.z - Math.cos(a) * back);
+    const dir = want.clone().sub(target), len = dir.length(); dir.divideScalar(len);
+    const clear = raySolids([target.x, target.y, target.z], [dir.x, dir.y, dir.z], len);
+    if (clear < len) want.copy(target).addScaledVector(dir, Math.max(1.5, clear - 0.4));
+    want.y = Math.max(want.y, heightAt(want.x, want.z) + 1.0);
+    if (!chase.ready) { chase.pos.copy(want); chase.ready = true; }
+    chase.pos.lerp(want, Math.min(1, dt * 7));
+    camera.position.copy(chase.pos);
+    camera.lookAt(tv.x + Math.sin(tv.yaw) * 2.5, vy + 1.3, tv.z + Math.cos(tv.yaw) * 2.5);
+    spec.fov = 70 + Math.min(14, Math.abs(tv.speed || 0) * 0.8);
+  } else {
+    chase.ready = false;
+    const bob = tv ? 0 : Math.sin(weapon.bob) * 0.03 * Math.min(1, spec.speed / 4) * (1 - weapon.aim * 0.8);
+    camera.position.set(spec.pos.x, spec.pos.y + spec.eye + Math.abs(bob), spec.pos.z);
+    camera.rotation.set(spec.pitch + (Math.random() - 0.5) * shake * 0.01, spec.yaw + (Math.random() - 0.5) * shake * 0.01, t.dn ? 0.35 : 0, 'YXZ');
+    spec.fov = spec.ads ? weaponStats(t.cw || 'rifle', !!t.up?.includes(t.cw), t.pk || []).zoom : sprinting ? 80 : 74;
+  }
+  // their gun in my hands
+  if (t.cw && weapon.id !== t.cw) weapon.setGun(t.cw, fresh);
+  weapon.root.visible = !t.dn && !spec.drive;
+  spec.vm = { aiming: spec.ads, moveSpeed: spec.speed, sprinting, lookDX: -dYaw / 0.0022, lookDY: -dPitch / 0.0022, time: elapsed, grounded: true };
+  spec.fresh = false;
+}
+$('spectate-label').addEventListener('click', () => { if (mySnap?.dd) specNext(); });
+function endSpectate() { // back in the game: my own gun again
+  spec.on = false; spec.id = 0; spec.fresh = true; spec.vm = null;
+  chase.ready = false; camSwing = 0;
+  weapon.setGun(curId(), true);
+}
+
 // ---------------------------------------------------------------- server events
 function onEvent(m) {
   switch (m.t) {
@@ -689,11 +766,15 @@ function onEvent(m) {
     }
     case 'fx': {
       const av = avatars.get(m.id);
-      const from = av ? av.muzzleWorld(new THREE.Vector3()) : new THREE.Vector3(...m.o);
-      fx.muzzleFlash(from);
+      const seen = spec.on && m.id === spec.id && !spec.drive;   // the shot of whoever I'm watching through
+      const from = seen ? weapon.muzzleWorld(new THREE.Vector3()) : av ? av.muzzleWorld(new THREE.Vector3()) : new THREE.Vector3(...m.o);
+      if (seen) {
+        const heavy = WEAPONS[m.w]?.projectile || m.w === 'shotgun' || m.w === 'hunting' ? 2.2 : m.w === 'revolver' ? 1.5 : 1;
+        weapon.kick(heavy); shake = Math.min(1, shake + 0.12 * heavy);
+      } else fx.muzzleFlash(from);
       const dist = raySolids(m.o, m.d, WEAPON.range);
       if (!WEAPONS[m.w]?.projectile) fx.tracer(from, new THREE.Vector3(...m.o).addScaledVector(new THREE.Vector3(...m.d), dist));
-      audio.gunshot(m.o, insideHouse(m.o[0], m.o[2], m.o[1] - 1.5), m.w);
+      audio.gunshot(seen ? null : m.o, insideHouse(m.o[0], m.o[2], m.o[1] - 1.5), m.w);
       break;
     }
     case 'board': {
@@ -918,14 +999,15 @@ function updateHud(dt) {
   for (const c of s.cows) if (COW_TYPES[COW_TYPE_LIST[c[1]]].boss && c[6] !== 2) bossHp = c[5];
   $('boss-bar').classList.toggle('show', bossHp >= 0);
   if (bossHp >= 0) $('boss-fill').style.width = `${bossHp}%`;
-  $('hp-fill').style.width = `${(mySnap.hp / (mySnap.mh || 100)) * 100}%`;
+  const pov = specSnap() || mySnap;   // spectating: their health and their gun's sheen
+  $('hp-fill').style.width = `${(pov.hp / (pov.mh || 100)) * 100}%`;
   const pk = myPerks().join();
   if (pk !== perkKey) {
     perkKey = pk;
     $('perks').innerHTML = myPerks().map(id => `<span style="--c:${PERKS[id].color}" title="${escapeHtml(tr(PERKS[id].name))}">${escapeHtml(tr(PERKS[id].name).split(' ').map(w => w[0]).join(''))}</span>`).join('');
   }
-  weapon.setUpgraded(mySnap.up || []);
-  $('hp-fill').classList.toggle('low', mySnap.hp < 35);
+  weapon.setUpgraded(pov.up || []);
+  $('hp-fill').classList.toggle('low', pov.hp < 35);
   $('score').textContent = mySnap.s;
   const am = ammo(), w = W();
   $('ammo-mag').textContent = reloadT > 0 ? '--' : am.mag;
@@ -937,9 +1019,9 @@ function updateHud(dt) {
   $('powerups').innerHTML = (s.ik ? `<span class="pu ik">${tr('INSTA-KILL')} ${s.ik}</span>` : '') + (s.dp ? `<span class="pu dp">${tr('DOUBLE POINTS')} ${s.dp}</span>` : '') + (s.fs ? `<span class="pu fs">${tr('FIRE SALE')} ${s.fs}</span>` : '');
   const spread = aiming ? 2 : 6 + Math.min(1, me.speed / 4) * 10 + weapon.recoil * 10;
   $('crosshair').style.setProperty('--spread', `${spread}px`);
-  $('crosshair').style.opacity = aiming || driving ? 0 : 1;
-  $('scope').classList.toggle('show', weapon.scoped && weapon.aim > 0.85 && alive());
-  $('damage').style.opacity = Math.max(hurtT, mySnap.hp < 35 ? 0.35 + Math.sin(performance.now() / 300) * 0.1 : 0);
+  $('crosshair').style.opacity = (spec.on ? spec.ads || spec.drive : aiming || driving) ? 0 : 1;
+  $('scope').classList.toggle('show', weapon.scoped && weapon.aim > 0.85 && (alive() || spec.on));
+  $('damage').style.opacity = Math.max(hurtT, pov.hp < 35 ? 0.35 + Math.sin(performance.now() / 300) * 0.1 : 0);
   if ($('scoreboard').classList.contains('show')) renderScoreboard();
 
   // downed / dead overlays
@@ -948,11 +1030,15 @@ function updateHud(dt) {
     ov.classList.add('show');
     ov.querySelector('.big').textContent = mySnap.sr ? tr('SECOND WIND') : tr("YOU'RE DOWN");
     $('downed-sub').textContent = mySnap.sr ? tr('Getting back up... {0}%', mySnap.rv) : mySnap.rv > 0 ? tr('Being revived... {0}%', mySnap.rv) : tr('Bleeding out in {0}s. A teammate can hold {1} next to you to revive.', mySnap.bl, touchMode ? tr('USE') : 'E');
-  } else if (mySnap.dd && s.phase !== 'gameover') {
+  } else if (mySnap.dd && s.phase !== 'gameover' && !spec.on) {
     ov.classList.add('show');
     ov.querySelector('.big').textContent = tr('SPECTATING');
     $('downed-sub').textContent = tr('You come back when this wave is cleared.');
   } else ov.classList.remove('show');
+  // watching through a teammate: just a small label, the view stays clear
+  const specText = spec.on && mySnap.dd && s.phase !== 'gameover'
+    ? `${tr('Spectating {0}', escapeHtml(pov.n))}${specList().length > 1 ? `<small>${tr(touchMode ? 'Tap for the next player' : 'Click for the next player')}</small>` : ''}` : '';
+  if (specText !== specLabel) { specLabel = specText; $('spectate-label').innerHTML = specText; $('spectate-label').classList.toggle('show', !!specText); }
 
   // context prompt: revive > repair
   let prompt = '';
@@ -1034,6 +1120,7 @@ function frame() {
     syncCows(dt);
     stepTwist(dt);
     syncAvatars(dt);
+    if (spec.on && !spec.drive) { const a = avatars.get(spec.id); if (a) a.group.visible = false; }   // I'm inside their head
     syncDogs(dt);
     syncPickups(dt);
     syncBoards();
@@ -1074,7 +1161,7 @@ function frame() {
   hurtT = Math.max(0, hurtT - dt * 2.2);
   grade.uniforms.uTime.value = elapsed;
   grade.uniforms.uHurt.value = hurtT;
-  grade.uniforms.uDown.value += (((mySnap?.dn || mySnap?.dd) ? 1 : 0) - grade.uniforms.uDown.value) * Math.min(1, dt * 3);
+  grade.uniforms.uDown.value += ((((spec.on ? specSnap()?.dn : mySnap?.dn || mySnap?.dd)) ? 1 : 0) - grade.uniforms.uDown.value) * Math.min(1, dt * 3);
   flashlight.intensity = flashlightOn ? 60 : 0;
   camera.updateMatrixWorld();
   sunPass?.setSun(camera, world.sunDir);
@@ -1131,14 +1218,9 @@ function stepLocal(dt) {
   else if (mouseDown && canShoot && am.mag === 0 && !triggerHeld) { startReload(); triggerHeld = true; }
 
   // camera
+  if (!dead && spec.vm) endSpectate();
   if (dead && view) {
-    // spectate the first teammate still standing
-    const t = [...view.players.values()].find(p => p.id !== net.id && !p.dn && !p.dd);
-    if (t) {
-      camera.position.set(t.x, t.y + 1.62, t.z);
-      camera.rotation.set(t.pitch, t.yaw, 0, 'YXZ');
-    }
-    weapon.root.visible = false;
+    stepSpectate(dt);   // through a living teammate's eyes (or left where it was when nobody is up)
   } else if (riding && driving) {
     shake = Math.max(0, shake - dt * 4); // (the chase camera was placed by stepDriving)
   } else {
@@ -1154,19 +1236,20 @@ function stepLocal(dt) {
       'YXZ');
     weapon.root.visible = !downed;
   }
-  const targetFov = driving ? 70 + Math.min(14, Math.abs(driving.speed) * 0.8) : aiming && !downed ? W().zoom : me.sprinting ? 80 : me.sliding ? 82 : 74;
+  const targetFov = spec.on ? spec.fov : driving ? 70 + Math.min(14, Math.abs(driving.speed) * 0.8) : aiming && !downed ? W().zoom : me.sprinting ? 80 : me.sliding ? 82 : 74;
   camera.fov += (targetFov - camera.fov) * Math.min(1, dt * 12);
   camera.updateProjectionMatrix();
 
-  weapon.update(dt, { aiming: aiming && !downed, moveSpeed: me.speed, sprinting: me.sprinting, lookDX, lookDY, time: elapsed, grounded: me.grounded });
+  weapon.update(dt, spec.on ? spec.vm : { aiming: aiming && !downed, moveSpeed: me.speed, sprinting: me.sprinting, lookDX, lookDY, time: elapsed, grounded: me.grounded });
   // light the arms/gun like the world around them: dim indoors, under roofs and in the jungle
   {
     let lit = 1;
-    if (insideHouse(me.pos.x, me.pos.z, me.pos.y)) lit = 0.3;
+    const at = spec.on ? spec.pos : me.pos;
+    if (insideHouse(at.x, at.z, at.y)) lit = 0.3;
     else {
-      const eye = [me.pos.x, me.pos.y + me.eye, me.pos.z], L = world.lightDir;
+      const eye = [at.x, at.y + (spec.on ? spec.eye : me.eye), at.z], L = world.lightDir;
       if (raySolids(eye, [L.x, L.y, L.z], 60) < 60) lit = 0.4;
-      else if (Math.hypot(me.pos.x, me.pos.z * 1.1) > 92 && me.pos.z < shoreZ(me.pos.x) - SAND_WIDTH) lit = 0.6;
+      else if (Math.hypot(at.x, at.z * 1.1) > 92 && at.z < shoreZ(at.x) - SAND_WIDTH) lit = 0.6;
     }
     vmLight += (lit - vmLight) * Math.min(1, dt * 4);
     weapon.setLight(vmLight);
@@ -1174,7 +1257,7 @@ function stepLocal(dt) {
   lookDX = lookDY = 0;
 
   audio.setListener(camera.position, tmpV.set(0, 0, -1).applyQuaternion(camera.quaternion));
-  audio.setEnv(insideHouse(me.pos.x, me.pos.z, me.pos.y), shoreZ(me.pos.x) - me.pos.z);
+  { const at = spec.on ? spec.pos : me.pos; audio.setEnv(insideHouse(at.x, at.z, at.y), shoreZ(at.x) - at.z); }
 
   // low health heartbeat
   heartbeatT -= dt;
@@ -1183,7 +1266,7 @@ function stepLocal(dt) {
   // tell the server where we are
   if (elapsed - lastStateSend > 0.05 && !dead) {
     lastStateSend = elapsed;
-    const st = { t: 'state', p: [r2(me.pos.x), r2(me.pos.y), r2(me.pos.z)], yaw: r2(me.yaw), pitch: r2(me.pitch), use: !!keys.KeyE && !ride };
+    const st = { t: 'state', p: [r2(me.pos.x), r2(me.pos.y), r2(me.pos.z)], yaw: r2(me.yaw), pitch: r2(me.pitch), use: !!keys.KeyE && !ride, e: r2(me.eye), a: aiming && !downed ? 1 : 0 };
     if (driving) st.v = [r2(driving.x), r2(driving.z), r3(driving.yaw), r2(driving.speed), r2(driving.steer)];
     net.send(st);
   }
@@ -1322,4 +1405,4 @@ function ambientSounds(dt) {
 frame();
 
 // expose a little for automated testing / debugging
-window.__rd = { machines, net, me, scene, camera, cowViews, renderer, CowView, COW_LOOK, HumanView, DogView, Avatar, weapon, world, vmScene, audio, fx, keys, truckViews, get driving() { return driving; }, get ride() { return ride; } };
+window.__rd = { machines, net, me, scene, camera, cowViews, renderer, CowView, COW_LOOK, HumanView, DogView, Avatar, weapon, world, vmScene, audio, fx, keys, truckViews, get driving() { return driving; }, get ride() { return ride; }, spec };

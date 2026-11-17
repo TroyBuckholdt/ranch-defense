@@ -54,6 +54,16 @@ Update it when something here changes or a new standing preference comes up.
   Any player can; Rafael walks out of the jungle into whatever round is running (between
   rounds he becomes the round). 3 s cooldown, so several can be stacked. `onSummon` in
   `server/game.js`; test: `scripts/summontest.js`.
+- **Spectating** (Troy, Nov 17: "if you die and are spectating you watch from their actual
+  first person and see what they see"): a dead player looks through a living teammate's eyes
+  (`stepSpectate` in `client/src/main.js`): their gun as the view model (snapshot `cw`), kick
+  and tracers on their shots (the `fx` event), their eye height (downed, crouched, seated) and
+  aim zoom, eased rotation; a chase camera when they drive. Their avatar is hidden while you
+  are inside it. Click / FIRE / tapping the label moves to the next teammate; a small
+  "Spectating NAME" label replaces the big red overlay (which still shows when nobody is up).
+  Clients send their eye height and aiming in `state` (`e`, `a`); the snapshot carries them as
+  `e`, `ad`. Reloads, melee swings and grenade throws of the watched player are not shown
+  (not broadcast in a usable form), and the ammo counter stays your own.
 - **Trucks**: the F-150 and Chevy are drivable (E to get in; driver, front passenger, two in
   the bed). Driving faster than a jog kills cows and locals; bulls and Rafael stop the truck.
 - **Road**: white caliche road from the driveway out of the south gate to the beach.
