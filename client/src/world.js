@@ -300,12 +300,16 @@ uniform float fogNear; uniform float fogFar;
   float inHouse = step(${f2(HB.x0)}, wpI.x) * step(wpI.x, ${f2(HB.x1)}) * step(${f2(HB.z0)}, wpI.z) * step(wpI.z, ${f2(HB.z1)}) * step(wpI.y, ${WH});
   float inPorch = step(${f2(HB.x0 - 0.4)}, wpI.x) * step(wpI.x, ${f2(HB.x1 + 0.4)}) * step(${f2(HB.z1)}, wpI.z) * step(wpI.z, ${f2(HB.z1 + 4.9)}) * step(wpI.y, ${WH});
   float inUp = step(${f2(UPPER.x0)}, wpI.x) * step(wpI.x, ${f2(UPPER.x1)}) * step(${f2(UPPER.z0)}, wpI.z) * step(wpI.z, ${f2(UPPER.loggiaZ)}) * step(${f2(UPPER.y - 0.1)}, wpI.y) * step(wpI.y, ${f2(UPPER.y + UPPER.h)});
-  float occI = 1.0 - inHouse * 0.74 - inPorch * 0.42 - inUp * 0.6;
+  float occI = 1.0 - inHouse * 0.6 - inPorch * 0.4 - inUp * 0.5;
   vec3 warmI = mix(vec3(1.0), vec3(1.1, 0.97, 0.84), 1.0 - occI);
 #ifdef RD_BAKED
-  // the house's own surfaces: the light map already holds the sky and the bounced light
+  // the house's own surfaces: the light map already holds the sky and the bounced light.
+  // Indoors it's lifted the way eyes adjust coming in out of the sun (the real rooms read
+  // bright and white), with a little fill so ceilings don't go black.
 #if defined( RE_IndirectDiffuse )
   iblIrradiance *= 0.0;
+  float insideB = clamp(inHouse + inUp, 0.0, 1.0);
+  irradiance = irradiance * (1.0 + insideB * 3.2) + insideB * vec3(0.22, 0.21, 0.19);
 #endif
 #if defined( RE_IndirectSpecular ) && defined( USE_LIGHTMAP )
   radiance *= clamp(dot(lightMapIrradiance, vec3(0.3, 0.59, 0.11)) * 0.5, 0.04, 1.0);
