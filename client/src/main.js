@@ -15,7 +15,7 @@ import { CowView, loadCowAsset, COW_LOOK } from './cow.js';
 import { HumanView, preloadHumans, bottleMesh } from './humanoid.js';
 import { tauntLine } from './taunts.js';
 import { tr, lang, translateDom } from './i18n.js';
-import { Driving, VehicleView } from './vehicle.js';
+import { Driving, VehicleView, CAB } from './vehicle.js';
 import { Machines } from './machines.js';
 import { DogView, loadDogAssets } from './dog.js';
 import { Avatar, CHARACTERS, loadCharacter } from './avatar.js';
@@ -257,7 +257,7 @@ const flyingBottles = [];
 const truckViews = new Map(world.trucks.map(t => [t.def.id, new VehicleView(t.def, t.model, scene)]));
 for (const v of truckViews.values()) v.apply({ ...v.def, speed: 0, steer: 0 }, 0);
 let ride = null, driving = null, camSwing = 0, camSwingIdle = 0, dustT = 0;
-const CAB_EYE = 1.42;   // a front passenger's eye above the seat's foot height
+const CAB_EYE = CAB.eye - VEHICLE_SEATS[1][2];   // a front passenger's eye above the seat's foot height
 const machines = new Machines(scene, world.machineModel, weapon);
 machines.onStrike = (p) => audio.hammer([p.x, 1.2, p.z]);
 const shellViews = new Map();
@@ -1224,7 +1224,9 @@ function syncAvatars(dt) {
     if (id === net.id) continue;
     let a = avatars.get(id);
     if (!a) { a = new Avatar(id, p.n, scene, p.c); avatars.set(id, a); }
-    a.apply(p, dt);
+    // riders sit facing the way their truck points
+    const truck = p.rd ? [...truckViews.values()].find(v => net.latest?.vehMap?.get(v.def.id)?.slice(6).includes(id)) : null;
+    a.apply(p, dt, truck?.yaw);
   }
   for (const [id, a] of avatars) if (!view.players.has(id)) { a.dispose(); avatars.delete(id); }
 }
