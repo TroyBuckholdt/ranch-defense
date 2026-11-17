@@ -97,6 +97,16 @@ kbd {
   text-shadow: 0 0 30px rgba(255, 40, 0, 0.6), var(--shadow);
 }
 #wave-banner.show { opacity: 1; }
+#awards {
+  position: absolute; top: 47%; left: 50%; transform: translateX(-50%); display: none; min-width: min(520px, 90vw);
+  padding: 10px 18px; background: rgba(0, 0, 0, 0.55); border-radius: 8px; font-family: system-ui, sans-serif; font-size: 15px;
+}
+#awards.show { display: block; }
+#awards h3 { margin: 0 0 6px; text-align: center; letter-spacing: 4px; font-size: 14px; color: var(--accent); }
+#awards div { display: flex; gap: 8px; align-items: baseline; padding: 2px 0; }
+#awards b { color: #ffd76a; min-width: 11.5em; }
+#awards i { margin-left: auto; opacity: 0.8; font-size: 13px; }
+#feed div.said { font-style: italic; color: #ffe9a8; }
 #wave-banner small { display: block; font-size: 0.3em; letter-spacing: 3px; color: var(--hud); }
 
 #top-left { position: absolute; left: 24px; top: 18px; }

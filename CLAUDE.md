@@ -58,6 +58,21 @@ Update it when something here changes or a new standing preference comes up.
   Any player can; Rafael walks out of the jungle into whatever round is running (between
   rounds he becomes the round). 3 s cooldown, so several can be stacked. `onSummon` in
   `server/game.js`; test: `scripts/summontest.js`.
+- **Jokes** (Troy, Nov 17: "how can we make the game funnier", then "start with what you
+  recommend"). All the text is in `shared/banter.js`, each entry `[English, Spanish]`:
+  - Feed quips: random lines when someone joins, goes down (different for cows, bulls, the
+    locals and Rafael), bleeds out, is revived ("(again)" from the third time), gets a toy cow,
+    or runs five cows down inside ten seconds. The "is down! Hold E" line is still sent first.
+  - The family talks: `Name: "line"` in the feed (gold italics) when a player goes down, gets
+    back up, drinks a perk or gets the toy cow. Lines are per character (`p1` Troy and `p4`
+    Rafael have their own; the rest share the `any` pool). **I invented these lines**; Troy
+    was asked for real catchphrases per person, add them under the character's id.
+  - End-of-game awards: the server keeps `p.st` (downs, revives, shots, hits, headshots, truck
+    kills, toy cows, points spent) and sends `awards` with `gameover`; the client lists them
+    under the banner (`#awards`). Game over lasts 13 s so they can be read.
+  - Test: `scripts/bantertest.js`. Ideas not built yet: spectator heckle buttons, Rafael
+    calling out between rounds, coconuts that make Rafael yell, cow ragdolls off the truck,
+    silly cow variants (sombrero, moonwalk, screaming calf), joke power-ups, a chancla melee.
 - **Spectating** (Troy, Nov 17: "if you die and are spectating you watch from their actual
   first person and see what they see"): a dead player looks through a living teammate's eyes
   (`stepSpectate` in `client/src/main.js`): their gun as the view model (snapshot `cw`), kick
@@ -175,6 +190,7 @@ Update it when something here changes or a new standing preference comes up.
 - Sim tests (no browser): `node scripts/simtest.js`, `dogtest.js`, `entrytest.js`,
   `weapontest.js`, `bosstest.js` (rounds 10 and 20), `drivetest.js` (trucks and road),
   `zombiestest.js` (power, perks, box, El Taller, trap, coconut cannon, carpenter),
+  `bantertest.js` (jokes and awards),
   `housetest.js` (cows and dogs get from every room to every other, Pepper reaches her
   blanket, players fit through every doorway), `twisttest.js` (the round twists).
 - Server test switches: `RD_TEST_SEAT=1` seats a lone tester as front passenger (2, 3: the bed);

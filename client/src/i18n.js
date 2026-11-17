@@ -1,3 +1,4 @@
+import { BANTER_ES } from '../../shared/banter.js';
 // English / Spanish. The language is picked with the two buttons at the top of the start
 // screen and remembered; changing it reloads the page, so everything (including signs
 // painted into the world) is built in the chosen language.
@@ -138,6 +139,8 @@ const ES = {
 };
 // ("3 cows left" and "Ana left" need different Spanish, so the second has its own key)
 ES['{0} left the ranch'] = '{0} se fue';
+Object.assign(ES, BANTER_ES); // kill-feed quips, the family's lines, the awards
+ES['AWARDS'] = 'PREMIOS';
 
 function pick() {
   try {
