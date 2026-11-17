@@ -15,7 +15,7 @@ import { CowView, loadCowAsset, COW_LOOK } from './cow.js';
 import { HumanView, preloadHumans, bottleMesh } from './humanoid.js';
 import { tauntLine } from './taunts.js';
 import { tr, lang, translateDom } from './i18n.js';
-import { Driving, VehicleView } from './vehicle.js';
+import { Driving, VehicleView, CAB } from './vehicle.js';
 import { Machines } from './machines.js';
 import { DogView, loadDogAssets } from './dog.js';
 import { Avatar, CHARACTERS, loadCharacter } from './avatar.js';
@@ -257,6 +257,7 @@ const flyingBottles = [];
 const truckViews = new Map(world.trucks.map(t => [t.def.id, new VehicleView(t.def, t.model, scene)]));
 for (const v of truckViews.values()) v.apply({ ...v.def, speed: 0, steer: 0 }, 0);
 let ride = null, driving = null, camSwing = 0, camSwingIdle = 0, dustT = 0;
+const CAB_EYE = CAB.eye - VEHICLE_SEATS[1][2];   // a front passenger's eye above the seat's foot height
 const machines = new Machines(scene, world.machineModel, weapon);
 machines.onStrike = (p) => audio.hammer([p.x, 1.2, p.z]);
 const shellViews = new Map();
@@ -588,6 +589,8 @@ function syncTrucks(dt) {
     audio.click();
   }
   for (const [id, view_] of truckViews) {
+    // the cab interior is drawn only for me, sat up front in first person (the driver sees the truck from behind)
+    view_.setCabin(!!ride && ride.id === id && ride.seat === 1 && !mySnap?.dn && !mySnap?.dd);
     if (driving && ride.id === id) { view_.apply(driving, dt); continue; }
     const v = view?.veh?.get(id);
     if (v) view_.apply(v, dt);
@@ -1227,7 +1230,7 @@ function stepLocal(dt) {
     shake = Math.max(0, shake - dt * 4);
     const bob = me.grounded ? Math.sin(weapon.bob) * 0.03 * Math.min(1, me.speed / 4) * (1 - weapon.aim * 0.8) : 0;
     // seated up front the eye is lower than standing; in the bed you stand
-    const eye = riding ? (ride.seat < 2 ? 1.3 : 1.62) : me.eye;
+    const eye = riding ? (ride.seat < 2 ? CAB_EYE : 1.62) : me.eye;
     camera.position.set(me.pos.x, me.pos.y + eye - me.landDip + Math.abs(bob), me.pos.z);
     camera.rotation.set(
       Math.min(1.5, me.pitch + me.recoil) + (Math.random() - 0.5) * shake * 0.01,
@@ -1304,7 +1307,9 @@ function syncAvatars(dt) {
     if (id === net.id) continue;
     let a = avatars.get(id);
     if (!a) { a = new Avatar(id, p.n, scene, p.c); avatars.set(id, a); }
-    a.apply(p, dt);
+    // riders sit facing the way their truck points
+    const truck = p.rd ? [...truckViews.values()].find(v => net.latest?.vehMap?.get(v.def.id)?.slice(6).includes(id)) : null;
+    a.apply(p, dt, truck?.yaw);
   }
   for (const [id, a] of avatars) if (!view.players.has(id)) { a.dispose(); avatars.delete(id); }
 }

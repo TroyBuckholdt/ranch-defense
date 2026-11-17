@@ -14,6 +14,10 @@ Update it when something here changes or a new standing preference comes up.
 - Requests come as short, casual one-liners, often several mid-task. Take each as a real
   request and fold it in; say what you did and anything you chose on his behalf.
 - He asked to **use Blender to make things look good** (see Blender below).
+- He asked (2026-11-17) to **spin up multiple agents / more sessions to work faster**: split
+  independent pieces across forked agents (own git worktree and port each) or separate cloud
+  sessions. This container has 4 cores, and three headless browsers at once crawl; separate
+  cloud sessions are the faster route for anything that needs screenshots.
 - The game is for family: the playable characters are real relatives (Troy, Maria, Rafael,
   Rafa, Julio, Tere). Humour is welcome, especially about Rafael.
 - Rafael's lines: lots of Mexican cursing ("chinga..." and friends) about people stealing his
@@ -66,6 +70,18 @@ Update it when something here changes or a new standing preference comes up.
   (not broadcast in a usable form), and the ammo counter stays your own.
 - **Trucks**: the F-150 and Chevy are drivable (E to get in; driver, front passenger, two in
   the bed). Driving faster than a jog kills cows and locals; bulls and Rafael stop the truck.
+  A front passenger rides in first person inside a cab built in code (`buildCabin` in
+  `client/src/vehicle.js`: dash, pillars, doors, roof lining, wheel, seats, mirror with a pine
+  air freshener, plus its own hood and bed), because the truck models are hollow shells with
+  opaque windows; while it shows, the truck model is hidden for that player (`setCabin`). The
+  trucks ride tall (`CAB`: floor 0.75 m, windows from 1.36 m). The driver keeps the chase camera.
+- **Other players** (`client/src/avatar.js`, Troy: "their gun doesn't look right in their
+  hands"): the gun is placed butt-in-shoulder each frame and both arms reach to it (no finger
+  bones, so hands stay open); each weapon id has its own simple shape. Riders in the cab sit
+  (hips at `SEAT_HIP`), facing the truck's heading, turning chest and head to look.
+- **Cow gait** (`client/src/cow.js`, Troy: "their walking animations should be better"): each
+  end of the body rides as high as its legs allow, a hoof is always down (gallop included),
+  the cow tilts to the slope outdoors, footfall jolts are springs, the bull trots.
 - **Road**: white caliche road from the driveway out of the south gate to the beach.
 - **Language**: English / Español buttons on the start screen (`client/src/i18n.js`; Spanish
   is keyed by the English text; add new strings there).
@@ -114,6 +130,9 @@ Update it when something here changes or a new standing preference comes up.
     ignores boxes starting a metre above your feet, `groundHeight` lets you stand on them.
     Each step of both stairs is a box. `insideHouse(x, z, y)` and `roomAt(x, z, y)` take the
     height; `levelOf(y)` says which floor. Dogs stay downstairs (they wait at the stair foot).
+  - A cow's `y` on the server is its height **above the terrain** (the client and the hit
+    spheres add `heightAt` back). Only floors, steps and the roof lift a cow. (It used to be
+    absolute, so cows floated above every rise in the pasture: Troy's "cows never fly".)
   - Cows find their way on the server's path grid: the ground at 1 m, and a second layer for
     the upper floor and roof at 0.5 m, joined at the two stairs (`STAIRS`, foot and head).
     Doorways are carved open (`PORTALS`), cows squeeze through indoors and sidestep tables.
@@ -150,13 +169,16 @@ Update it when something here changes or a new standing preference comes up.
   cow rigging). `scripts/`: headless tests.
 
 ## Testing
+- `npm install` first (a fresh container has no `node_modules`, and `npx vite build` then fails
+  with only npm notices at the end of its output: check that it prints "built").
 - `npx vite build`, then `PORT=3000 node server/index.js`.
 - Sim tests (no browser): `node scripts/simtest.js`, `dogtest.js`, `entrytest.js`,
   `weapontest.js`, `bosstest.js` (rounds 10 and 20), `drivetest.js` (trucks and road),
   `zombiestest.js` (power, perks, box, El Taller, trap, coconut cannon, carpenter),
   `housetest.js` (cows and dogs get from every room to every other, Pepper reaches her
   blanket, players fit through every doorway), `twisttest.js` (the round twists).
-- Server test switches: `RD_START_WAVE=20` starts at a later round;
+- Server test switches: `RD_TEST_SEAT=1` seats a lone tester as front passenger (2, 3: the bed);
+  `RD_START_WAVE=20` starts at a later round;
   `RD_FIRST_WAVE_DELAY=3000` keeps the cows away while looking around;
   `RD_START_POINTS=20000` gives everyone points to try the machines.
 - Browser checks: Playwright + headless Chromium works but renders under 1 fps (software
@@ -164,6 +186,9 @@ Update it when something here changes or a new standing preference comes up.
   truckViews, driving...). `window.__rdShot = { pos, look }` pins the menu camera for stills.
   A tester left alone gets killed by the cows within a minute or two and the room resets,
   so set `RD_FIRST_WAVE_DELAY` for anything slow.
+- To move a browser tester, send the server `state` messages in steps under 6 m (it ignores
+  bigger jumps and the client snaps back), then `me.teleport`. Playwright resolves from a
+  `.cjs` script with `require`, not from an `.mjs` import outside the repo.
 - Nothing has been tried on a real phone or by hand at full frame rate from these sessions:
   say so when reporting.
 
