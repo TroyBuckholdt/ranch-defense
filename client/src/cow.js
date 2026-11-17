@@ -562,18 +562,24 @@ const ABD = 22;                                                // 4 x leg sidewa
 const NCH = 26;
 
 // Gaits: footfall phase per leg [FL, FR, BL, BR], duty factor (share of the cycle a hoof
-// is on the ground), cadence (cycles/s at model speed v'), stride cap, hoof lift.
+// is on the ground), cadence (cycles/s at model speed v'), stride cap, hoof lift, and how far
+// a leg gives under the cow's weight at mid-stance (none in the walk, where the body vaults
+// stiff-legged over each hoof; springy in the trot and gallop).
 const GAITS = [
-  { off: [0.25, 0.75, 0.0, 0.5], duty: 0.64, f0: 0.7, f1: 0.32, smax: 0.72, lift: 0.13 },  // walk (4-beat lateral)
-  { off: [0.0, 0.5, 0.5, 0.0], duty: 0.46, f0: 1.2, f1: 0.16, smax: 0.74, lift: 0.17 },     // trot (diagonal pairs)
-  { off: [0.52, 0.62, 0.0, 0.1], duty: 0.32, f0: 1.65, f1: 0.09, smax: 0.8, lift: 0.24 }, // gallop (rotary)
+  { off: [0.25, 0.75, 0.0, 0.5], duty: 0.64, f0: 0.7, f1: 0.32, smax: 0.72, lift: 0.13, give: 0.008 },  // walk (4-beat lateral)
+  { off: [0.0, 0.5, 0.5, 0.0], duty: 0.46, f0: 1.2, f1: 0.16, smax: 0.74, lift: 0.17, give: 0.025 },    // trot (diagonal pairs)
+  // (the gallop keeps a hoof on the ground at every moment: hind pair, then front pair, no leap)
+  { off: [0.5, 0.6, 0.0, 0.1], duty: 0.4, f0: 1.65, f1: 0.09, smax: 0.95, lift: 0.24, give: 0.035 },   // gallop (rotary)
 ];
+// How much of a lifted hoof's height that end of the body may rise by while both its hooves are
+// off the ground: a little in front, more behind (the croup kicks up as the hind legs gather).
+const AIR_RISE = [0.3, 0.3, 0.7, 0.7];
 // Character per cow type: gait thresholds (model speed), how it carries itself.
 const STYLE = {
-  walker: { walkTo: 1.7, gallopAt: 9, headLow: 0.22, lurch: 1.0, bounce: 0.035, stomp: 0.02, limp: true, frantic: 0 },
-  runner: { walkTo: 1.2, gallopAt: 4.6, headLow: 0.1, lurch: 0.35, bounce: 0.05, stomp: 0.015, limp: false, frantic: 1 },
-  bull: { walkTo: 2.8, gallopAt: 9, headLow: 0.32, lurch: 0.25, bounce: 0.02, stomp: 0.06, limp: false, frantic: 0 },
-  gold: { walkTo: 1.3, gallopAt: 4.4, headLow: 0.0, lurch: 0.1, bounce: 0.055, stomp: 0.015, limp: false, frantic: 0 },
+  walker: { walkTo: 1.7, gallopAt: 9, headLow: 0.22, lurch: 1.0, give: 1.1, stomp: 0.02, limp: true, frantic: 0 },
+  runner: { walkTo: 1.2, gallopAt: 4.6, headLow: 0.1, lurch: 0.35, give: 1.0, stomp: 0.015, limp: false, frantic: 1 },
+  bull: { walkTo: 1.6, gallopAt: 9, headLow: 0.32, lurch: 0.25, give: 1.3, stomp: 0.05, limp: false, frantic: 0 },
+  gold: { walkTo: 1.3, gallopAt: 4.4, headLow: 0.0, lurch: 0.1, give: 0.9, stomp: 0.015, limp: false, frantic: 0 },
 };
 
 // Damped spring (for flinches and soft-body wobble)
@@ -591,7 +597,9 @@ class Spring {
 }
 
 const tmpHump = new THREE.Vector3(), tmpDew = new THREE.Vector3();
-const HIP = [0, 0, 0], FZ = [0, 0, 0, 0], FY = [0, 0, 0, 0];
+const HIP = [0, 0, 0], FZ = [0, 0, 0, 0], FY = [0, 0, 0, 0], GIVE = [0, 0, 0, 0], SLACK = [0, 0, 0, 0];
+// smooth minimum (never above the true minimum, so a leg that must reach always can)
+const smin = (a, b, k) => { const h = Math.max(k - Math.abs(a - b), 0); return Math.min(a, b) - h * h / (4 * k); };
 const STATE_N = 5;
 
 // One cow on screen. `apply` takes the interpolated server state each frame:
@@ -623,7 +631,8 @@ export class CowView {
     this.pose = new Float32Array(NCH);
     this.tmp = new Float32Array(NCH);
     this.prevU = new Float32Array(4);
-    this.impact = 0;
+    this.jolt = new Spring(20, 0.6);     // the body's give at each footfall
+    this.gait0 = null;
     this.flashV = 0;
     this.deathT = 0;
     this.deathSide = r() < 0.5 ? -1 : 1;
@@ -638,6 +647,9 @@ export class CowView {
     this.twitchTimer = 1 + r() * 3;
     this.prevBody = [0, 0];           // body height / roll last frame (soft-body drive)
     this.prevBodyV = [0, 0];
+    this.slope = [0, 0]; this.slopeAt = null;   // ground tilt under the cow (pitch, roll) and where it was measured
+    this.frontAvg = 0; this.nod = 0;            // withers height, averaged, and the head's answer to it
+    this.root.rotation.order = 'YXZ';
   }
 
   apply(s, dt, t) {
@@ -656,8 +668,23 @@ export class CowView {
       this.yawRate += (clamp(dy / dt, -6, 6) - this.yawRate) * Math.min(1, dt * 6);
     }
     this.lastPos = [x, z]; this.lastYaw = yaw;
-    root.position.set(x, (y || 0) + heightAt(x, z), z);
+    const ground = heightAt(x, z);
+    root.position.set(x, (y || 0) + ground, z);
     root.rotation.y = yaw;
+    // stand square on a slope: tilt the whole cow to the ground under it (not on floors or
+    // stairs, where y is above the terrain). Re-measured only as it moves or turns.
+    const at = this.slopeAt;
+    if (!at || Math.abs(x - at[0]) + Math.abs(z - at[1]) > 0.3 || Math.abs(yaw - at[2]) > 0.2) {
+      const sy = Math.sin(yaw), cy = Math.cos(yaw), a = 0.7 * sc, b = 0.3 * sc;
+      const onLand = (y || 0) < 0.05 ? 1 : 0;
+      this.slope[0] = onLand * -Math.atan2(heightAt(x + sy * a, z + cy * a) - heightAt(x - sy * a, z - cy * a), 2 * a);
+      this.slope[1] = onLand * Math.atan2(heightAt(x + cy * b, z - sy * b) - heightAt(x - cy * b, z + sy * b), 2 * b);
+      this.slopeAt = [x, z, yaw];
+      if (!at) { root.rotation.x = this.slope[0]; root.rotation.z = this.slope[1]; }
+    }
+    const tk = Math.min(1, dt * 5);
+    root.rotation.x += (clamp(this.slope[0], -0.45, 0.45) - root.rotation.x) * tk;
+    root.rotation.z += (clamp(this.slope[1], -0.45, 0.45) - root.rotation.z) * tk;
 
     // level of detail: far cows drop their shadow, skip the soft-body wobble, and pose
     // every other frame (their position still updates every frame, so nothing stutters)
@@ -760,14 +787,16 @@ export class CowView {
   }
 
   // Foot path for one leg in one gait: returns [forward offset, lift] (model m)
-  foot(g, u, stride, lift) {
+  foot(g, u, stride, lift, late = 1) {
     if (u < g.duty) return [stride * (0.5 - u / g.duty), 0];
     const s = (u - g.duty) / (1 - g.duty);
     // the hoof eases from still to still *in the world* (it leaves and lands without
-    // sliding), so relative to the moving body it starts and ends at body speed
-    const e = s * s * s * (s * (s * 6 - 15) + 10); // smootherstep
+    // sliding), so relative to the moving body it starts and ends at body speed. Smoothstep
+    // rather than anything gentler: a leg that lingers behind trails out straight at a run.
+    const e = s * s * (3 - 2 * s);
     const W = stride / g.duty;                     // ground covered per stride cycle
-    return [stride * -0.5 + W * (e - (1 - g.duty) * s), lift * Math.pow(Math.sin(Math.PI * s), 0.8)];
+    // (`late` > 1 lifts the hoof later in the swing: a hind leg trails low before it gathers)
+    return [stride * -0.5 + W * (e - (1 - g.duty) * s), lift * Math.pow(Math.sin(Math.PI * Math.pow(s, late)), 0.8)];
   }
 
   // Where a hip/shoulder joint is in the ground frame (model m), for the body pose in Q.
@@ -798,7 +827,10 @@ export class CowView {
     t = dx * cr + dy * sr; dy = -dx * sr + dy * cr; dx = t;
     const lean = Math.atan2(dx, -dy);
     dy = -Math.hypot(dx, dy);
-    const D = clamp(Math.hypot(dy, dz), 0.25, (L1 + L2) * 0.999);
+    // (a lifted leg only folds so far: with two bones a tight fold throws the hock out behind.
+    // Unfolding it lowers the hoof a little, but never to the ground)
+    const D0 = Math.hypot(dy, dz), room = (h[1] - Math.min(fy, 0.03)) / Math.max(0.05, h[1] - fy);
+    const D = clamp(Math.max(D0, Math.min(front ? 0.66 : 0.92, D0 * room)), 0.25, (L1 + L2) * 0.999);
     const phi = Math.atan2(dz, -dy);
     const a = Math.acos(clamp((L1 * L1 + D * D - L2 * L2) / (2 * L1 * D), -1, 1));
     const bend = Math.PI - Math.acos(clamp((L1 * L1 + L2 * L2 - D * D) / (2 * L1 * L2), -1, 1));
@@ -807,16 +839,34 @@ export class CowView {
     Q[ABD + l] = -lean;
   }
 
-  // Lower the body just enough that every hoof on the ground can still reach it.
-  settle(Q, fz, fy) {
-    const R = (L1 + L2) * 0.985;
+  // Carry the body on its legs. Each end (shoulders, hips) rides as high as its legs allow:
+  // it vaults up over a planted hoof and sinks as the legs spread at each footfall, the two
+  // ends out of step with each other, which is what makes a walking cow rock and roll its
+  // shoulders. `give` shortens a loaded leg (the spring of a trot, a bad leg buckling);
+  // an end with both hooves in the air may rise only a little (AIR_RISE), so nothing floats.
+  // Sets the body height and pitch; every hoof on the ground stays within reach.
+  vault(Q, fz, fy, give) {
+    const R = (L1 + L2) * 0.992, zF = LEGS[0][2], zB = LEGS[2][2];
+    for (let it = 0; it < 2; it++) {
+      for (let l = 0; l < 4; l++) {
+        const h = this.hipAt(Q, l, HIP);
+        const dx = LEGS[l][1] - h[0], dz = fz[l] - h[2];
+        SLACK[l] = fy[l] * AIR_RISE[l] + Math.sqrt(Math.max(0.09, R * R - dx * dx - dz * dz)) - give[l] - h[1];
+      }
+      const sF = smin(SLACK[0], SLACK[1], 0.03), sB = smin(SLACK[2], SLACK[3], 0.03);
+      const dsp = (sB - sF) / (zF - zB);
+      Q[PITCH] = Math.asin(clamp(Math.sin(Q[PITCH]) + dsp, -0.45, 0.45));
+      Q[BY] += sF + zF * dsp;
+    }
+  }
+
+  // Lower the body until the planted hooves of legs l0..l1 (at fz from their rest spot) reach it.
+  reach(Q, l0, l1, off) {
+    const R = (L1 + L2) * 0.992;
     let ex = 0;
-    for (let l = 0; l < 4; l++) {
-      if (fy[l] > 0.02) continue;
-      const h = this.hipAt(Q, l, HIP);
-      const dx = LEGS[l][1] - h[0], dz = fz[l] - h[2];
-      const need = Math.sqrt(Math.max(0, R * R - dx * dx - dz * dz));
-      ex = Math.max(ex, h[1] - fy[l] - need);
+    for (let l = l0; l <= l1; l++) {
+      const h = this.hipAt(Q, l, HIP), dx = LEGS[l][1] - h[0], dz = LEGS[l][2] + off - h[2];
+      ex = Math.max(ex, h[1] - Math.sqrt(Math.max(0.09, R * R - dx * dx - dz * dz)));
     }
     Q[BY] -= ex;
   }
@@ -834,56 +884,60 @@ export class CowView {
     const gw = this.gaitW;
     const gallop = gw[2];
 
-    // body: bounce twice a stride (once in the gallop), roll with the stepping legs,
-    // lurch side to side, lean into turns, nose down a touch when moving fast
-    const bob2 = Math.cos(c * TAU * 2);
-    Q[BY] = -(0.05 + 0.03 * gallop) * moving - st.bounce * moving * lerp(0.5 + 0.5 * bob2, 0.5 + 0.5 * Math.cos((c - 0.15) * TAU), gallop);
-    Q[ROLL] = Math.sin(c * TAU) * (0.035 + 0.04 * st.lurch) * moving * (1 - gallop) - this.yawRate * 0.05 * moving;
+    // body: rolls with the stepping legs, shifts its weight over the side that is carrying
+    // it, lurches, leans into turns. Its height and pitch come from the legs (see vault).
+    const walkW = gw[0];
+    Q[BY] = 0; Q[PITCH] = 0;
+    Q[ROLL] = Math.sin(c * TAU) * (0.03 + 0.04 * st.lurch) * moving * (1 - gallop) - this.yawRate * 0.05 * moving;
     Q[YAW] = Math.sin(c * TAU + 0.6) * 0.045 * st.lurch * moving;
-    Q[PITCH] = 0.03 * moving + gallop * Math.sin((c + 0.1) * TAU) * 0.075 * moving;
-    // idle: slow breathing and weight shifts
+    Q[BX] = -Math.cos((c - 0.2) * TAU) * (0.012 + 0.014 * st.lurch) * moving * walkW;
+    // idle: slow weight shifts (breathing is added to the height below)
     const idle = 1 - moving;
-    Q[BY] += idle * Math.sin(t * 1.6 + id) * 0.006;
     Q[ROLL] += idle * Math.sin(t * 0.35 + id) * 0.02;
 
     // footfalls: a short jolt each time a hoof lands (heavy on the bull)
     const g0 = GAITS[gw[0] > gw[1] ? (gw[0] > gw[2] ? 0 : 2) : (gw[1] > gw[2] ? 1 : 2)];
     for (let l = 0; l < 4; l++) {
       const u = frac(c + g0.off[l]);
-      if (u < this.prevU[l] && moving > 0.3) this.impact += st.stomp * (l === this.limpLeg ? 1 + this.limp : 1);
+      if (u < this.prevU[l] && moving > 0.3 && g0 === this.gait0) this.jolt.kick(st.stomp * 27 * (l === this.limpLeg ? 1 + this.limp * 0.6 : 1));
       this.prevU[l] = u;
     }
-    this.impact *= Math.exp(-(this._dt || 1 / 60) * 14);
-    Q[BY] -= this.impact;
+    this.gait0 = g0;
+    const jolt = this.jolt.step(this._dt || 1 / 60);
 
-    // the limp: the body drops and rolls toward the bad leg while it bears weight
+    // the limp: the body rolls toward the bad leg while it bears weight (and that leg buckles, below)
+    let bad = 0;
     if (this.limp > 0.05) {
-      let bad = 0;
       for (let i = 0; i < 3; i++) {
         const g = GAITS[i], u = frac(c + g.off[this.limpLeg]);
         bad += gw[i] * (u < g.duty ? Math.sin(Math.PI * u / g.duty) : 0);
       }
       bad *= this.limp * moving;
-      Q[BY] -= bad * 0.045;
-      Q[ROLL] += bad * 0.07 * (LEGS[this.limpLeg][1] < 0 ? -1 : 1);
-      Q[PITCH] += bad * 0.04 * (LEGS[this.limpLeg][3] ? 1 : -1);
+      Q[ROLL] += bad * 0.06 * (LEGS[this.limpLeg][1] < 0 ? -1 : 1);
     }
 
-    // legs: per-gait foot paths, blended, then IK
+    // legs: per-gait foot paths, blended; how much each loaded leg gives
     const strideOf = (g) => (av * g.duty) / f;
     for (let l = 0; l < 4; l++) {
-      let fz = 0, fy = 0;
+      let fz = 0, fy = 0, give = 0;
       for (let i = 0; i < 3; i++) {
         if (gw[i] < 0.002) continue;
-        const g = GAITS[i];
+        const g = GAITS[i], u = frac(c + g.off[l]);
         let lift = g.lift * smooth(0, 0.35, strideOf(g));
         if (l === this.limpLeg) lift *= 1 - 0.7 * this.limp; // the bad leg barely lifts: hoof drags
-        const [dz, ly] = this.foot(g, frac(c + g.off[l]), strideOf(g), lift);
+        const [dz, ly] = this.foot(g, u, strideOf(g), lift, LEGS[l][3] ? 1 : 1.35);
         fz += dz * gw[i] * Math.sign(v || 1); fy += ly * gw[i];
+        if (u < g.duty) give += gw[i] * g.give * Math.sin(Math.PI * u / g.duty);
       }
       FZ[l] = LEGS[l][2] + fz; FY[l] = fy;
+      GIVE[l] = give * st.give * moving + (l === this.limpLeg ? bad * 0.05 : 0) + (LEGS[l][3] ? 0.006 * moving : 0);
     }
-    this.settle(Q, FZ, FY);
+    this.vault(Q, FZ, FY, GIVE);
+    Q[BY] += idle * Math.sin(t * 1.6 + id) * 0.006 - 0.006 - jolt;
+    // the withers' rise and fall (for the head, which answers it a beat late)
+    const dtN = this._dt || 1 / 60, wy = Q[BY] - LEGS[0][2] * Math.sin(Q[PITCH]);
+    this.frontAvg += (wy - this.frontAvg) * Math.min(1, dtN * 2);
+    this.nod += (clamp((this.frontAvg - wy) * 2.6, -0.14, 0.18) - this.nod) * Math.min(1, dtN * 14);
     for (let l = 0; l < 4; l++) {
       this.ik(Q, l, FZ[l], FY[l]);
       // legs splay a touch; swinging legs flick outward on the frantic runner
@@ -891,8 +945,9 @@ export class CowView {
     }
 
     // head: low and lolling, bobbing with the front footfalls, an odd cocked angle
-    const nod = Math.sin((c + 0.1) * TAU * 2) * 0.07 * moving;
-    Q[NX] = st.headLow + 0.06 * moving + nod + gallop * Math.sin((c + 0.35) * TAU) * 0.12 + idle * (0.12 + Math.sin(t * 0.4 + id) * 0.1);
+    // (the head drops as the shoulders sink onto a landing front hoof, and lifts as they vault)
+    const nod = this.nod * moving;
+    Q[NX] = st.headLow + 0.06 * moving + nod - Q[PITCH] * 0.5 + idle * (0.12 + Math.sin(t * 0.4 + id) * 0.1);
     Q[NY] = Math.sin(t * 0.6 + id) * 0.18 * (0.4 + idle) + Math.sin(c * TAU) * 0.06 * st.lurch * moving + this.yawRate * 0.12;
     Q[NZ] = this.tilt * 0.6 + Math.sin(c * TAU + 1) * 0.08 * st.lurch * moving;
     Q[HX] = 0.05 - nod * 0.6;
@@ -979,7 +1034,8 @@ export class CowView {
     Q[HX] = 0.2 * grab - 0.25 * wrench;
     Q[HZ] = wside * 0.3 * wrench;
     Q[TX] = 0.35 + 0.2 * wrench; Q[TZ] = Math.sin(t * 5 + id) * 0.45;
-    // hind legs braced; front hooves hammer the boards in turn
+    // hind legs braced (and never off the ground); front hooves hammer the boards in turn
+    this.reach(Q, 2, 3, -0.06);
     for (let l = 2; l < 4; l++) this.ik(Q, l, LEGS[l][2] - 0.06, 0);
     for (let l = 0; l < 2; l++) {
       const s = Math.sin(pa + l * Math.PI);
