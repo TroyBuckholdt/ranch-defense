@@ -32,18 +32,57 @@ const smooth = (e0, e1, x) => { const t = Math.max(0, Math.min(1, (x - e0) / (e1
 export function shoreZ(x) { return 168 + Math.sin(x / 40) * 8 + Math.sin(x / 13 + 1) * 2; }
 export const SAND_WIDTH = 24;
 
-export function heightAt(x, z) {
-  const hills = vnoise(x / 55, z / 55) * 6 + vnoise(x / 17 + 9, z / 17) * 1.4;
+// the land is flat coastal pasture (the drone photos): only a gentle swell beyond the yard
+function landHeight(x, z) {
+  const hills = vnoise(x / 55, z / 55) * 2.2 + vnoise(x / 17 + 9, z / 17) * 0.5;
   const yard = smooth(68, 100, Math.hypot(x, z * 1.1));
   let h = hills * yard;
   const sz = shoreZ(x);
   const beachH = (sz - z) * 0.07;                  // gentle slope into the sea
   const t = smooth(sz - SAND_WIDTH - 22, sz - SAND_WIDTH + 2, z);
-  h = h * (1 - t) + beachH * t;
+  return h * (1 - t) + beachH * t;
+}
+export function heightAt(x, z) {
+  let h = landHeight(x, z);
+  const e = pondEdge(x, z);
+  if (e < 1.8) {
+    // the banks flatten to just above the water, then a shallow muddy bowl with a few
+    // mud banks poking out of it, like the sunrise video
+    const k = 1 - smooth(1.2, 1.8, e);
+    h = h * (1 - k) + (POND.y + 0.25) * k;
+    const dip = 1 - smooth(0.55, 1.05, e);
+    h -= dip * 1.3;
+    if (e < 1) h += smooth(0.64, 0.8, vnoise(x / 4.5 + 7, z / 4.5 - 3)) * dip * 1.42;
+  }
   // trails are worn a little into the ground
   return Math.max(-4, h - trailWear(x, z));
 }
 export const WATER_Y = 0;
+
+// ---- The pond -----------------------------------------------------------------
+// From the ranch's sunrise video: a marshy pond out in the pasture south-west of the house,
+// grass tussocks round its edge and mud banks in the water. Cows walk round it.
+export const POND = { x: -40, z: 70, r: 11, sx: 1.5 };   // r across z; sx stretches it along x
+POND.y = landHeight(POND.x, POND.z);                       // the water's surface
+// how far out from the middle, as a fraction of the way to the waterline (wobbly outline)
+export function pondEdge(x, z) {
+  const dx = (x - POND.x) / POND.sx, dz = z - POND.z;
+  if (Math.abs(dx) > 30 || Math.abs(dz) > 30) return 9;
+  const a = Math.atan2(dz, dx);
+  return Math.hypot(dx, dz) / (POND.r * (1 + 0.18 * Math.sin(3 * a + 1.3) + 0.1 * Math.sin(5 * a + 0.4)));
+}
+// the waterline sits where the bowl meets the water, a little inside pondEdge = 1
+export const inPond = (x, z) => pondEdge(x, z) < 0.93;
+
+// Jungle grows in patches across the pasture (the drone photo), and thick along the far
+// edges of the land. 0 = open pasture, 1 = jungle. Trees, ground and grass all use this.
+export function junglePatch(x, z) {
+  const n = vnoise(x / 34 + 41, z / 34 - 13) * 0.75 + vnoise(x / 11 - 5, z / 11 + 2) * 0.25;
+  const near = smooth(55, 72, Math.hypot(x, z * 1.1));          // open round the yard
+  const wet = smooth(1.5, 2.3, pondEdge(x, z));                  // and round the pond
+  const edge = smooth(150, 176, Math.max(Math.abs(x), -z));      // thick at the far edges
+  return Math.max(smooth(0.55, 0.63, n) * near * wet, edge);
+}
 
 // ---- Trails ----------------------------------------------------------------
 // Dirt trails from the yard gates through the jungle to the beach and the pens.
@@ -500,16 +539,22 @@ export const UNDERGROWTH = [];
       const td = trailDist(x, z), rd = roadDist(x, z);
       if (td < 4.5 || rd < ROAD_HALF + 3.2) continue;
       const beach = z > sz - SAND_WIDTH;
-      const pasture = Math.hypot(x, z * 1.1) < 85;
-      let p = beach ? 0.18 : pasture ? 0.05 : 0.62;
+      if (pondEdge(x, z) < 1.25) continue;            // the pond and its bank
+      const jungle = !beach && junglePatch(x, z) > 0.5;
+      const pasture = !beach && !jungle;
+      const far = Math.hypot(x, z * 1.1) > 60;
+      // open pasture: tall coconut palms dotted about (the drone photo), the odd shade tree
+      let p = beach ? 0.18 : jungle ? 0.62 : far ? 0.085 : 0.05;
       if (td < 9) p *= 0.6;
       if (roll < p) {
-        const kind = beach ? 'palm' : kindRoll < 0.38 ? 'palm' : kindRoll < 0.9 ? 'broad' : 'giant';
-        TREES.push({ x, z, s: kind === 'giant' ? sc * 1.5 : sc, kind });
+        const kind = beach ? 'palm' : pasture ? (kindRoll < 0.8 ? 'palm' : kindRoll < 0.96 ? 'broad' : 'giant')
+          : kindRoll < 0.38 ? 'palm' : kindRoll < 0.9 ? 'broad' : 'giant';
+        const s = kind === 'giant' ? sc * 1.5 : kind === 'palm' && pasture ? sc * 1.3 + 0.15 : sc;
+        TREES.push({ x, z, s, kind });
       }
       // undergrowth: dense in the jungle, lining the trails
-      if (!beach && !pasture && under < 0.75 && roadDist(x + 2.5, z - 2) > ROAD_HALF + 1) UNDERGROWTH.push({ x: x + 2.5, z: z - 2, s: 0.7 + r() * 0.8, kind: r() < 0.5 ? 'fern' : 'shrub', rot: r() * 6.28 });
-      if (!beach && !pasture && td < 7 && td > 2.6 && roadDist(x - 2, z + 2.5) > ROAD_HALF + 1) UNDERGROWTH.push({ x: x - 2, z: z + 2.5, s: 0.6 + r() * 0.6, kind: 'fern', rot: r() * 6.28 });
+      if (jungle && under < 0.75 && roadDist(x + 2.5, z - 2) > ROAD_HALF + 1) UNDERGROWTH.push({ x: x + 2.5, z: z - 2, s: 0.7 + r() * 0.8, kind: r() < 0.5 ? 'fern' : 'shrub', rot: r() * 6.28 });
+      if (jungle && td < 7 && td > 2.6 && roadDist(x - 2, z + 2.5) > ROAD_HALF + 1) UNDERGROWTH.push({ x: x - 2, z: z + 2.5, s: 0.6 + r() * 0.6, kind: 'fern', rot: r() * 6.28 });
     }
   }
   // palms in the front garden, like the photos

@@ -11,7 +11,7 @@ import {
   MAP_HALF, SOLIDS, ENTRIES, MAX_BOARDS, PLAYER_SPAWNS, COW_TYPES, WEAPONS, START_WEAPONS, START_POINTS, WALL_BUYS, BUY_RANGE,
   MELEE, GRENADE, POWERUP_TYPES, POWERUP_CHANCE, POWERUP_TIME, REPAIR_TIME, REPAIR_RANGE,
   resolveCircle, raySolids, raySphere, cowHitSpheres, insideHouse, heightAt, shoreZ, solidsNear, playerPassable, DOG_TYPES, DOG_LEASH, BLANKET, PORTALS, indoorWaypoint,
-  groundHeight, levelOf, UPPER, STAIRS, COW_TYPE_LIST, LOCALS_WAVE, BOSS_WAVE, BOTTLE,
+  groundHeight, levelOf, UPPER, STAIRS, inPond, COW_TYPE_LIST, LOCALS_WAVE, BOSS_WAVE, BOTTLE,
   VEHICLES, VEHICLE_SEATS, ENTER_RANGE, DRIVE, vehicleLocal, vehicleWorld, vehicleGap, pushOutOfVehicle,
   POWER, PERKS, PERK_MACHINES, MAX_PERKS, BOX, PAP, TRAP, USE_RANGE, stationSpot, weaponStats, maxHealth,
 } from '../shared/world.js';
@@ -69,7 +69,7 @@ const baseBlocked = new Uint8Array(NT);
   // the sea
   for (let gz = 0; gz < GRID; gz++) for (let gx = 0; gx < GRID; gx++) {
     const x = (gx + 0.5) * CELL - MAP_HALF, z = (gz + 0.5) * CELL - MAP_HALF;
-    if (z > shoreZ(x) - 1) baseBlocked[gz * GRID + gx] = 1;
+    if (z > shoreZ(x) - 1 || inPond(x, z)) baseBlocked[gz * GRID + gx] = 1;   // and the pond
   }
   // upper layer: open only where there's floor at the upper level, minus what stands on it
   const U = UPPER.y;

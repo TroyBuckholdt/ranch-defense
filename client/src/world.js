@@ -16,6 +16,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import {
   HOUSE, HB, UPPER, HOUSE_PROPS, HOUSE_FANS, HOUSE_LIGHTS, ENTRIES, STRUCTURES, HAY_BALES, TREES, UNDERGROWTH, FENCE_SEGMENTS,
   FENCE_HEIGHT, YARD, MAX_BOARDS, VERANDA, HEDGES, PENS, WALL_BUYS, WEAPONS, heightAt, shoreZ, SAND_WIDTH, trailDist, solidsNear, ROAD, ROAD_HALF, roadDist, VEHICLES as TRUCKS, STATIONS, stationBox,
+  POND, pondEdge, junglePatch,
 } from '../../shared/world.js';
 import * as T from './textures.js';
 
@@ -205,6 +206,8 @@ export async function buildWorld(renderer, Q = { shadows: 2048, grass: 26000 }, 
   const sea = buildSea();
   scene.add(sea.group);
   updaters.push(sea.update);
+  scene.add(buildPond(updaters));
+  scene.add(buildRigs());
   scene.add(flat(3.9, 9, M.terracotta, 0, 0.03, 14.2, 1.2));   // the wide front walk, hedged both sides
   scene.add(flat(6, 6, M.terracotta, 0, 0.025, 19, 1.2));
 
@@ -388,8 +391,10 @@ function buildTerrain() {
     const sz = shoreZ(x);
     const sand = smooth(sz - SAND_WIDTH - 2, sz - SAND_WIDTH + 5, z);
     const r = Math.hypot(x, z * 1.1);
-    const trail = r > 45 ? 1 - smooth(1.2, 3.4, trailDist(x, z)) : 0;
-    const jungle = smooth(72, 96, r);
+    const pe = pondEdge(x, z);
+    // the pond's bed and its muddy margin use the dirt layer, like the trails
+    const trail = Math.max(r > 45 ? 1 - smooth(1.2, 3.4, trailDist(x, z)) : 0, 1 - smooth(0.9, 1.2, pe));
+    const jungle = junglePatch(x, z);
     const rest = (1 - trail) * (1 - sand);
     splat[i * 4] = rest * (1 - jungle);      // grass
     splat[i * 4 + 1] = rest * jungle;        // jungle floor
@@ -463,6 +468,165 @@ function buildTerrain() {
   return m;
 }
 
+// The pond, after the ranch's sunrise video: dark still water that mirrors the sky, mud banks
+// (the terrain pokes through, see heightAt) and tussocks of tall grass round the edge and out
+// in the shallows.
+function buildPond(updaters) {
+  const group = new THREE.Group();
+  const N = 96, edge = (a) => POND.r * (1 + 0.18 * Math.sin(3 * a + 1.3) + 0.1 * Math.sin(5 * a + 0.4));
+  const pos = [POND.x, POND.y, POND.z], uv = [POND.x / 7, POND.z / 7], idx = [];
+  for (let i = 0; i <= N; i++) {
+    const a = i / N * Math.PI * 2, r = edge(a) * 1.06;   // just under the bank, so the shore hides it
+    const x = POND.x + Math.cos(a) * r * POND.sx, z = POND.z + Math.sin(a) * r;
+    pos.push(x, POND.y, z); uv.push(x / 7, z / 7);
+    if (i) idx.push(0, i + 1, i);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(pos.map((_, i) => (i % 3 === 1 ? 1 : 0)), 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setIndex(idx);
+  const nm = T.waterNormals().clone(); nm.wrapS = nm.wrapT = THREE.RepeatWrapping; nm.needsUpdate = true;
+  const water = new THREE.Mesh(g, new THREE.MeshStandardMaterial({
+    color: 0x2f2616, roughness: 0.03, metalness: 0, normalMap: nm, normalScale: new THREE.Vector2(0.07, 0.07),
+    envMapIntensity: 1.7, transparent: true, opacity: 0.93, side: THREE.DoubleSide,
+  }));
+  water.receiveShadow = true;
+  group.add(water);
+  updaters.push((dt) => { nm.offset.x += dt * 0.003; nm.offset.y += dt * 0.0017; });
+
+  // a tussock: a fountain of long thin blades, dark at the base and straw-pale at the tips
+  let seed = 7;
+  const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
+  const blades = [], base = new THREE.Color(0x3c4a22), tip = new THREE.Color(0xb7b072), c = new THREE.Color();
+  for (let i = 0; i < 30; i++) {
+    const a = i / 30 * Math.PI * 2 + rnd() * 0.4, h = 0.9 + rnd() * 0.9, w = 0.045 + rnd() * 0.03, lean = 0.25 + rnd() * 0.55;
+    const b = new THREE.PlaneGeometry(w, h, 1, 4); b.translate(0, h / 2, 0);
+    const p = b.attributes.position, col = [];
+    for (let k = 0; k < p.count; k++) {
+      const t = p.getY(k) / h;
+      p.setX(k, p.getX(k) * (1 - t * 0.85));
+      p.setZ(k, lean * t * t * h * 0.7);
+      p.setY(k, p.getY(k) - lean * t * t * t * h * 0.25);
+      c.copy(base).lerp(tip, Math.min(1, t * 1.2)); col.push(c.r, c.g, c.b);
+    }
+    b.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    b.rotateY(a); b.translate(Math.sin(a) * 0.1, 0, Math.cos(a) * 0.1);
+    blades.push(b);
+  }
+  const tg = mergeGeometries(blades); tg.computeVertexNormals();
+  const spots = [];
+  for (let tries = 0; tries < 2600 && spots.length < 120; tries++) {
+    const x = POND.x + (rnd() - 0.5) * POND.r * POND.sx * 2.8, z = POND.z + (rnd() - 0.5) * POND.r * 2.8;
+    const e = pondEdge(x, z), h = heightAt(x, z);
+    const ok = (e > 0.82 && e < 1.15 && rnd() < 0.32)       // round the edge
+      || (e < 0.9 && h > POND.y - 0.12 && rnd() < 0.8)      // on the mud banks
+      || (e > 0.55 && e < 0.8 && rnd() < 0.06);             // a few out in the shallows
+    if (ok) spots.push([x, Math.max(h, POND.y - 0.25), z, 0.7 + rnd() * 0.7, rnd() * 6.28]);
+  }
+  const tus = new THREE.InstancedMesh(tg, std({ vertexColors: true, side: THREE.DoubleSide, roughness: 0.9 }), spots.length);
+  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0), sc = new THREE.Vector3();
+  spots.forEach(([x, y, z, k, r], i) => { q.setFromAxisAngle(up, r); m4.compose(new THREE.Vector3(x, y, z), q, sc.set(k, k * (0.85 + (i % 5) * 0.08), k)); tus.setMatrixAt(i, m4); });
+  tus.castShadow = true; tus.receiveShadow = true;
+  group.add(tus);
+  return group;
+}
+
+// Oil rigs out on the horizon, like the drone photo (Troy: "those are oil drilling rigs, not
+// ships"): a production platform on its jacket legs with a drilling derrick, cranes, a
+// helideck and a burning flare, and a jack-up rig standing on three tall lattice legs.
+// Plain shapes, greyed by the sea haze.
+function buildRigs() {
+  const group = new THREE.Group();
+  const steel = std({ color: 0x5d6168, roughness: 0.6, metalness: 0.4 }), yellow = std({ color: 0xc9a227, roughness: 0.6 });
+  const red = std({ color: 0x9a3328, roughness: 0.7 }), white = std({ color: 0xd8d6cf, roughness: 0.6 }), heli = std({ color: 0x3f6b4a, roughness: 0.8 });
+  const flame = new THREE.MeshBasicMaterial({ color: 0xffa040 });
+  const strut = (g, a, b, w, m = steel) => {      // a thin beam from point a to point b
+    const A = new THREE.Vector3(...a), B = new THREE.Vector3(...b), L = A.distanceTo(B);
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, L, w), m);
+    mesh.position.copy(A).add(B).multiplyScalar(0.5);
+    mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), B.sub(A).normalize());
+    g.add(mesh);
+  };
+  const derrick = (g, x, y, z, h, base) => {     // tapered lattice tower
+    const top = base * 0.22;
+    for (const [sx, sz] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) strut(g, [x + sx * base, y, z + sz * base], [x + sx * top, y + h, z + sz * top], 0.5, white);
+    for (let k = 1; k < 6; k++) {
+      const t = k / 6, r = base + (top - base) * t, yy = y + h * t;
+      for (const [a, b] of [[[-1, -1], [1, -1]], [[1, -1], [1, 1]], [[1, 1], [-1, 1]], [[-1, 1], [-1, -1]]]) strut(g, [x + a[0] * r, yy, z + a[1] * r], [x + b[0] * r, yy, z + b[1] * r], 0.3, white);
+    }
+    box(top * 2.6, 2.5, top * 2.6, red, x, y + h + 1.2, z, g);
+  };
+  // the production platform
+  let g = new THREE.Group();
+  for (const x of [-16, 16]) for (const z of [-11, 11]) {
+    strut(g, [x * 1.25, -6, z * 1.25], [x, 22, z], 1.8);
+    for (const y of [2, 12]) { strut(g, [x, y, z], [-x, y, z], 0.7); strut(g, [x, y, z], [x, y, -z], 0.7); }
+  }
+  box(40, 2.2, 28, steel, 0, 23, 0, g); box(40, 1.6, 28, yellow, 0, 31, 0, g);
+  box(16, 7, 12, white, -10, 27.5, -5, g); box(12, 6, 10, red, 10, 27, 6, g); box(14, 5, 10, white, 8, 35, -6, g);
+  derrick(g, -6, 31.8, 5, 34, 5);
+  box(20, 0.6, 20, heli, 16, 40, -6, g); strut(g, [10, 32, -2], [16, 39.7, -6], 1.2);
+  strut(g, [-20, 31, 0], [-38, 42, 0], 1.0);                                   // crane jib
+  box(3, 4, 3, yellow, -19, 34, 0, g);
+  strut(g, [20, 30, 12], [46, 44, 22], 1.1);                                    // flare boom
+  const f = new THREE.Mesh(new THREE.ConeGeometry(1.6, 6, 8), flame); f.position.set(46.5, 47.5, 22.2); g.add(f);
+  g.position.set(-170, 0, 470); g.rotation.y = 0.3; group.add(g);
+  // the jack-up: a triangular hull up on three legs that rise far above it
+  g = new THREE.Group();
+  const legs = [[0, 22], [-19, -11], [19, -11]];
+  for (const [x, z] of legs) {
+    for (const [dx, dz] of [[-1.6, -1.6], [1.6, -1.6], [0, 1.8]]) strut(g, [x + dx, -6, z + dz], [x + dx, 92, z + dz], 0.6, yellow);
+    for (let y = 0; y < 92; y += 8) strut(g, [x - 1.6, y, z - 1.6], [x + 1.6, y + 4, z - 1.6], 0.3, yellow);
+  }
+  const hull = new THREE.Mesh(new THREE.CylinderGeometry(27, 27, 7, 3), steel); hull.position.y = 26; g.add(hull);
+  box(18, 8, 10, white, -2, 33.5, -6, g); box(10, 0.6, 10, heli, -14, 38, -4, g);
+  derrick(g, 6, 29.5, 6, 30, 4);
+  g.position.set(150, 0, 560); g.rotation.y = -0.4; group.add(g);
+  // a second platform, far out
+  g = new THREE.Group();
+  for (const x of [-9, 9]) for (const z of [-7, 7]) strut(g, [x * 1.2, -6, z * 1.2], [x, 20, z], 1.4);
+  box(24, 2, 18, steel, 0, 21, 0, g); box(12, 6, 10, white, -3, 25, 0, g);
+  derrick(g, 5, 22, 0, 26, 3.6);
+  g.position.set(30, 0, 700); group.add(g);
+  group.traverse((o) => { if (o.isMesh) o.castShadow = o.receiveShadow = false; });
+  return group;
+}
+
+// The water trough, after Troy's photo: a concrete trough under a red corrugated roof on four
+// concrete posts, the ground round it trodden to bare dirt.
+function trough(s) {
+  const g = new THREE.Group(); g.position.set(s.x, heightAt(s.x, s.z), s.z);
+  const conc = std({ color: 0xb9b3a7, roughness: 0.95 });
+  box(s.w, s.h, s.d, conc, 0, s.h / 2, 0, g);
+  g.add(flat(s.w - 0.24, s.d - 0.24, M.water, 0, s.h - 0.12, 0));
+  // trodden dirt: a soft-edged patch
+  const cv = document.createElement('canvas'); cv.width = cv.height = 128;
+  const cx = cv.getContext('2d'), gr = cx.createRadialGradient(64, 64, 20, 64, 64, 64);
+  gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.7, 'rgba(255,255,255,0.8)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+  cx.fillStyle = gr; cx.fillRect(0, 0, 128, 128);
+  for (let i = 0; i < 500; i++) { cx.fillStyle = `rgba(0,0,0,${Math.random() * 0.5})`; cx.fillRect(Math.random() * 128, Math.random() * 128, 2, 2); }
+  const dirt = new THREE.Mesh(new THREE.CircleGeometry(1, 40), std({ color: 0x8c6f52, roughness: 1, alphaMap: new THREE.CanvasTexture(cv), transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 }));
+  dirt.rotation.x = -Math.PI / 2; dirt.scale.set(4.2, 5.6, 1); dirt.position.y = 0.04; dirt.receiveShadow = true;
+  g.add(dirt);
+  // posts, a beam along each side, and the roof sloping down to the east
+  const W = 3.6, D = 6.8, hi = 2.5, lo = 2.15;
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) box(0.22, sx < 0 ? hi : lo, 0.22, conc, sx * W / 2, (sx < 0 ? hi : lo) / 2, sz * D / 2, g);
+  for (const sx of [-1, 1]) box(0.14, 0.16, D + 0.3, M.darkWood, sx * W / 2, (sx < 0 ? hi : lo) + 0.08, 0, g);
+  const RW = W + 0.9, RD = D + 0.8, waves = 46;
+  const rg = new THREE.PlaneGeometry(RW, RD, 1, waves * 4);
+  rg.rotateX(-Math.PI / 2);
+  const p = rg.attributes.position;
+  for (let i = 0; i < p.count; i++) p.setY(i, 0.035 * Math.sin(p.getZ(i) / RD * waves * Math.PI * 2));
+  rg.computeVertexNormals();
+  const roof = new THREE.Mesh(rg, std({ color: 0xa33a2c, roughness: 0.55, metalness: 0.3, side: THREE.DoubleSide }));
+  roof.rotation.z = -Math.atan((hi - lo) / W);
+  roof.position.y = (hi + lo) / 2 + 0.2;
+  roof.castShadow = roof.receiveShadow = true;
+  g.add(roof);
+  return g;
+}
+
 // The ocean: a grid that is fine at the shoreline and coarse out at sea, long swells in the
 // vertex shader (fading out in the shallows), three layers of scrolling normal detail sampled
 // in world space so the tiling never lines up, depth-based colour and opacity, and foam plus a
@@ -477,7 +641,7 @@ function buildSea() {
   for (let z = 138, dz = 0.8; z < 980; z += dz) { zs.push(z); if (z > 236) dz = Math.min(dz * 1.08, 30); }
   const nx = xs.length, nz = zs.length;
   const pos = new Float32Array(nx * nz * 3), col = new Float32Array(nx * nz * 3), dep = new Float32Array(nx * nz), seaK = new Float32Array(nx * nz);
-  const shallow = new THREE.Color(0x5cc4b4), mid = new THREE.Color(0x238a96), deep = new THREE.Color(0x123f63), c = new THREE.Color();
+  const shallow = new THREE.Color(0x7a6440), mid = new THREE.Color(0x5e5636), deep = new THREE.Color(0x3e4632), c = new THREE.Color();   // muddy Gulf water: brown in the surf, olive further out
   for (let j = 0; j < nz; j++) for (let i = 0; i < nx; i++) {
     const k = j * nx + i, x = xs[i], z = zs[j];
     const d = z > 300 ? 4 + (z - 300) * 0.05 : Math.max(-2, -heightAt(x, z));
@@ -505,7 +669,7 @@ function buildSea() {
   const nTex = loadTex('waternormals.jpg', false);
   nTex.wrapS = nTex.wrapT = THREE.RepeatWrapping;
   const uni = { uTime: { value: 0 }, uNormalTex: { value: nTex } };
-  const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.05, metalness: 0, transparent: true, envMapIntensity: 1.15 });
+  const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.1, metalness: 0, transparent: true, envMapIntensity: 0.45 });
   mat.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, uni);
     sh.vertexShader = `attribute float aDepth; attribute float aSea;
@@ -548,8 +712,8 @@ varying float vDepth; varying float vSea; varying vec3 vWPos; varying vec3 vWNor
   float foam = (1.0 - smoothstep(0.02, 0.55, edge)) * smoothstep(0.12, 0.38, foamTex);
   foam += (1.0 - smoothstep(0.0, 0.12, edge)) * 0.6;
   foam = clamp(foam, 0.0, 1.0) * vSea;
-  diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.93, 0.95, 0.94), foam);
-  diffuseColor.a = max(mix(0.28, 0.93, smoothstep(0.0, 2.8, vDepth)), foam * 0.95);`).replace('#include <roughnessmap_fragment>', `
+  diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.9, 0.88, 0.82), foam);
+  diffuseColor.a = max(mix(0.78, 0.99, smoothstep(0.0, 1.6, vDepth)), foam * 0.95);   // silty: you can't see far into it`).replace('#include <roughnessmap_fragment>', `
   #include <roughnessmap_fragment>
   roughnessFactor = mix(roughnessFactor, 0.85, foam);`);
   };
@@ -831,12 +995,7 @@ function buildStructure(s, updaters, models) {
       for (const [lx, lz] of [[-1.6, -1.6], [1.6, -1.6], [-1.6, 1.6], [1.6, 1.6]]) box(0.15, 2.9, 0.15, M.bluePipe, lx, 1.45, lz, g);
       break;
     }
-    case 'trough': {
-      g = new THREE.Group(); g.position.set(s.x, 0, s.z);
-      box(s.w, s.h, s.d, M.stucco, 0, s.h / 2, 0, g);
-      g.add(flat(s.w - 0.2, s.d - 0.2, M.water, 0, s.h - 0.1, 0));
-      break;
-    }
+    case 'trough': g = trough(s); break;
     case 'woodpile': {
       g = new THREE.Group(); g.position.set(s.x, 0, s.z);
       for (let row = 0; row < 3; row++) for (let i = 0; i < 6 - row; i++) {
@@ -1239,7 +1398,7 @@ function buildGrass(COUNT) {
   for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
     const x = X0 + i, z = Z0 + j, k = (j * N + i) * 4;
     const sz = shoreZ(x), r = Math.hypot(x, z * 1.1);
-    let d = (1 - smooth(sz - SAND_WIDTH - 2, sz - SAND_WIDTH + 5, z)) * (1 - smooth(72, 96, r) * 0.8);
+    let d = (1 - smooth(sz - SAND_WIDTH - 2, sz - SAND_WIDTH + 5, z)) * (1 - junglePatch(x, z) * 0.8) * smooth(1.05, 1.3, pondEdge(x, z));
     if (d > 0 && r > 45) d *= smooth(1.4, 3.2, trailDist(x, z));
     if (d > 0) d *= smooth(ROAD_HALF - 0.6, ROAD_HALF + 0.8, roadDist(x, z));
     if (x > HB.x0 - 0.6 && x < HB.x1 + 0.6 && z > HB.z0 - 0.6 && z < VERANDA.z + 0.8) d = 0;
@@ -1247,6 +1406,7 @@ function buildGrass(COUNT) {
     else if (Math.abs(x) < 2.4 && Math.abs(z - 19) < 2.4) d = 0;
     else if (PENS.some(p => Math.abs(x - p.x) < p.w / 2 + 0.6 && Math.abs(z - p.z) < p.d / 2 + 0.6)) d = 0;
     else if (STRUCTURES.some(st => st.kind !== 'veranda' && Math.abs(x - st.x) < st.w / 2 + 0.4 && Math.abs(z - st.z) < st.d / 2 + 0.4)) d = 0;
+    else if (STRUCTURES.some(st => st.kind === 'trough' && Math.hypot((x - st.x) / 4, (z - st.z) / 5.3) < 1)) d = 0;   // trodden dirt
     else if (Math.abs(x) < 1.8 && z > 12.8 && z < 16.4) d = 0;
     else if (STATIONS.some(m => { const b = stationBox(m); return Math.abs(x - b.x) < b.w / 2 + 0.3 && Math.abs(z - b.z) < b.d / 2 + 0.3; })) d = 0;
     else if (d > 0 && solidsNear(x, z, 1).some(b => b.h > 0.3 && Math.abs(x - b.x) < b.w / 2 + 0.15 && Math.abs(z - b.z) < b.d / 2 + 0.15)) d = 0;

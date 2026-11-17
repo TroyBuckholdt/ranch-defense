@@ -2,7 +2,7 @@
 // truck goes and tells the server, the same way players move themselves); `VehicleView`
 // draws a truck for everyone: sitting on the terrain, wheels spinning and steering.
 import * as THREE from 'three';
-import { DRIVE, ROAD_HALF, VEHICLE_SEATS, heightAt, shoreZ, roadDist, resolveCircle, vehicleWorld, YARD, SAND_WIDTH } from '../../shared/world.js';
+import { DRIVE, ROAD_HALF, VEHICLE_SEATS, heightAt, shoreZ, roadDist, resolveCircle, vehicleWorld, YARD, SAND_WIDTH, inPond, junglePatch } from '../../shared/world.js';
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const BODY = [1.85, 0, -1.85];   // collision circles along the truck
@@ -10,11 +10,11 @@ const BODY_R = 1.05;
 
 // how fast the ground under (x, z) lets a truck go
 export function surfaceSpeed(x, z) {
-  if (z > shoreZ(x) + 1) return DRIVE.maxWet;                                  // in the surf
+  if (z > shoreZ(x) + 1 || inPond(x, z)) return DRIVE.maxWet;                 // in the surf / the pond
   if (roadDist(x, z) < ROAD_HALF + 0.5) return DRIVE.max;                        // the road
   if (x > YARD.minX - 6 && x < YARD.maxX + 6 && z > YARD.minZ - 6 && z < YARD.maxZ + 6) return DRIVE.max * 0.8; // lawn
   if (z > shoreZ(x) - SAND_WIDTH) return DRIVE.max * 0.75;                       // beach sand
-  return Math.hypot(x, z * 1.1) < 88 ? DRIVE.max * 0.7 : DRIVE.maxOff;           // pasture / jungle floor
+  return junglePatch(x, z) < 0.5 ? DRIVE.max * 0.7 : DRIVE.maxOff;              // pasture / jungle floor
 }
 
 export class Driving {

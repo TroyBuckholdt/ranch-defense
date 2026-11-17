@@ -20,8 +20,13 @@ Update it when something here changes or a new standing preference comes up.
   coconuts and getting off his property. I kept the insults aimed at coconut thieves and
   trespassers, not at anyone's ethnicity (my choice; he had asked for trash talk about "the
   natives").
+  - On 2026-11-17 he asked outright for "classic Mexican racial slurs against natives" for
+    boss Rafael. Declined: no racial slurs. He then asked to "push it as far as you're able"
+    and make it "all uncensored and play out loud": the English subtitles now swear as hard
+    as the Spanish (fuck, motherfuckers...), there are 82 lines, and his voice (browser
+    speech, Spanish) plays near full volume anywhere on the map.
 
-## What exists (as of 2026-11-16)
+## What exists (as of 2026-11-17)
 - Waves of zombie Brahman cows (walker, runner, bull every 5th round); boards on doors and
   windows; wall-buy guns; grenades; power-ups; revive; four dogs (Pepper only hides).
 - **Round 10**: locals with machetes replace the herd. **Round 20**: boss fight with a giant
@@ -84,6 +89,16 @@ Update it when something here changes or a new standing preference comes up.
 - **Scenery**: trees and palms are Blender-built models instanced across the map
   (`tools/blender/make_trees.py` -> `models/trees/trees.glb`). The ground shader tints each
   layer separately (pasture, leaf litter, sand, road); keep the terrain material white.
+- **The land** (from Troy's drone and herd screenshots, Nov 17): flat coastal pasture with
+  tall coconut palms dotted about; jungle in patches (`junglePatch(x, z)` in
+  `shared/world.js`, used by the trees, the ground splat, the grass and the trucks' speed) and
+  thick along the far edges. The sea is muddy brown (Troy: "the water is more brown"), and the
+  things on the horizon are **oil rigs, not ships** (`buildRigs()`).
+- **The pond** (`POND`, `pondEdge`, `inPond`): a marsh south-west of the house after the ranch's
+  sunrise video: brown water, mud banks, grass tussocks. The server blocks it on the path
+  grid, so cows walk round; trucks crawl through it. Players can wade.
+- **Water trough** (x 40, z 18): red corrugated roof on concrete posts, dirt round it, after
+  Troy's photo. The photo also shows barbed-wire fences on crooked posts: not built yet.
 - **Front walk** (from Troy's Facebook screenshots): terracotta path, a white-pebble mosaic
   with the ranch's black brand (`T.pebbleBrand()`), a brass "Rancho La Esmeralda" plaque,
   white gate pillars with open black iron gates, stepped wall ends. The iron arch with the
