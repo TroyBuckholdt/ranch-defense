@@ -446,7 +446,7 @@ function fire(time) {
   me.pitch += kick * 0.25;
   me.yaw += (Math.random() - 0.5) * kick * 0.8;
   shake = Math.min(1, shake + 0.12 * heavy);
-  audio.gunshot(null, insideHouse(me.pos.x, me.pos.z), curId());
+  audio.gunshot(null, insideHouse(me.pos.x, me.pos.z, me.pos.y), curId());
   if (am.mag <= 0) startReload();
 }
 const r3 = (v) => Math.round(v * 1000) / 1000;
@@ -676,7 +676,7 @@ function onEvent(m) {
       fx.muzzleFlash(from);
       const dist = raySolids(m.o, m.d, WEAPON.range);
       if (!WEAPONS[m.w]?.projectile) fx.tracer(from, new THREE.Vector3(...m.o).addScaledVector(new THREE.Vector3(...m.d), dist));
-      audio.gunshot(m.o, insideHouse(m.o[0], m.o[2]), m.w);
+      audio.gunshot(m.o, insideHouse(m.o[0], m.o[2], m.o[1] - 1.5), m.w);
       break;
     }
     case 'board': {
@@ -823,7 +823,7 @@ function launchPlank(entryId, idx) {
   scene.add(clone);
   plank.getWorldPosition(clone.position);
   flyingPlanks.push({
-    m: clone, age: 0,
+    m: clone, age: 0, floor: e.y,
     v: new THREE.Vector3(e.nx * (3 + Math.random() * 2), 2 + Math.random() * 2, e.nz * (3 + Math.random() * 2)),
     spin: new THREE.Vector3(Math.random() * 8, Math.random() * 8, Math.random() * 8),
   });
@@ -960,6 +960,7 @@ function nearestRepairable() {
   for (const e of ENTRIES) {
     if (s.boards[e.id] >= MAX_BOARDS) continue;
     const d = Math.hypot(me.pos.x - (e.x - e.nx * 0.8), me.pos.z - (e.z - e.nz * 0.8));
+    if (Math.abs(me.pos.y - e.y) > 1.5) continue;
     if (d < bd) { bd = d; best = e; }
   }
   return best;
@@ -1003,7 +1004,7 @@ function frame() {
     p.age += dt;
     p.v.y -= 9.8 * dt;
     p.m.position.addScaledVector(p.v, dt);
-    if (p.m.position.y < 0.05) { p.m.position.y = 0.05; p.v.multiplyScalar(0.3); p.spin.multiplyScalar(0.2); }
+    if (p.m.position.y < p.floor + 0.05) { p.m.position.y = p.floor + 0.05; p.v.multiplyScalar(0.3); p.spin.multiplyScalar(0.2); }
     p.m.rotation.x += p.spin.x * dt; p.m.rotation.y += p.spin.y * dt; p.m.rotation.z += p.spin.z * dt;
     if (p.age > 6) { scene.remove(p.m); flyingPlanks.splice(i, 1); }
   }
@@ -1062,7 +1063,7 @@ function stepLocal(dt) {
     const stride = me.sprinting ? 1.45 : me.crouching ? 0.7 : 1.0;
     if (stepDist > stride) {
       stepDist = 0;
-      const tile = insideHouse(me.pos.x, me.pos.z) || (Math.abs(me.pos.x - HOUSE.x) < HOUSE.w / 2 + 1 && me.pos.z > HOUSE.z && me.pos.z < HOUSE.z + HOUSE.d / 2 + 4.8);
+      const tile = insideHouse(me.pos.x, me.pos.z, me.pos.y) || me.pos.y > 0.15 || (Math.abs(me.pos.x - HOUSE.x) < HOUSE.w / 2 + 1 && me.pos.z > HOUSE.z && me.pos.z < HOUSE.z + HOUSE.d / 2 + 4.8);
       if (!me.crouching) audio.step(tile);
     }
   } else stepDist = 0.6;
@@ -1112,7 +1113,7 @@ function stepLocal(dt) {
   // light the arms/gun like the world around them: dim indoors, under roofs and in the jungle
   {
     let lit = 1;
-    if (insideHouse(me.pos.x, me.pos.z)) lit = 0.3;
+    if (insideHouse(me.pos.x, me.pos.z, me.pos.y)) lit = 0.3;
     else {
       const eye = [me.pos.x, me.pos.y + me.eye, me.pos.z], L = world.lightDir;
       if (raySolids(eye, [L.x, L.y, L.z], 60) < 60) lit = 0.4;
@@ -1124,7 +1125,7 @@ function stepLocal(dt) {
   lookDX = lookDY = 0;
 
   audio.setListener(camera.position, tmpV.set(0, 0, -1).applyQuaternion(camera.quaternion));
-  audio.setEnv(insideHouse(me.pos.x, me.pos.z), shoreZ(me.pos.x) - me.pos.z);
+  audio.setEnv(insideHouse(me.pos.x, me.pos.z, me.pos.y), shoreZ(me.pos.x) - me.pos.z);
 
   // low health heartbeat
   heartbeatT -= dt;
@@ -1228,6 +1229,7 @@ function syncBoards() {
     if (n === boardsShown[i]) return;
     const list = world.boards[i];
     if (world.grilles?.[i]) world.grilles[i].visible = n > 0; // torn out with the last board
+    if (world.leaves?.[i]) world.leaves[i].open = n === 0;     // and the glass doors burst in
     list.forEach((b, k) => {
       const show = k < n;
       if (show && !b.visible) { b.scale.set(1, 1, 1); } // freshly nailed back on

@@ -87,83 +87,297 @@ function trailWear(x, z) {
 
 // ---- The house -------------------------------------------------------------
 
-export const HOUSE = { x: 0, z: 0, w: 22, d: 14, wallH: 3.4, t: 0.3, roofH: 7.6 };
+// Re-traced from the family's walk-through video of the real house (November 2026):
+//   - west wing: the kitchen (brick hood, brick-arched counters) and, across a passage with
+//     the side door at its end, the bar room (mahogany and black-marble bar, glass double doors)
+//   - along the back: the stair hall with its long tiled corridor, and Troy's office
+//   - across the front: one big room, the long dining table at the west end and the cane
+//     rocking chairs at the east end, with a stone column and arches between them, a row of
+//     stone columns and arches onto the hall, and French doors out to the veranda.
+// The Blender model (tools/blender/make_house.py) is built from these same numbers
+// (`node scripts/houselayout.js` dumps them), so walls and collision always line up.
+export const HOUSE = { x: -1, z: -1, w: 24, d: 16, wallH: 4.0, t: 0.3, iw: 0.2 };
 const HX = HOUSE.w / 2, HZ = HOUSE.d / 2;
+// outside faces of the walls' centre lines: x -13..11, z -9..7 (the front, with the veranda, is +z)
+export const HB = { x0: HOUSE.x - HX, x1: HOUSE.x + HX, z0: HOUSE.z - HZ, z1: HOUSE.z + HZ };
 
-// Doors and windows. `at` is the position along the wall (x for N/S walls, z for E/W).
+// Doors and windows in the outside walls that the cows come through. `at` is the position
+// along the wall (x for N/S walls, z for E/W). The 'window's are the house's tall French
+// doors (a low ledge keeps the cows' climb-in).
 const ENTRY_DEFS = [
-  { kind: 'door', wall: 'S', at: 0 },
-  { kind: 'window', wall: 'S', at: -7 },
-  { kind: 'window', wall: 'S', at: 7 },
-  { kind: 'door', wall: 'N', at: 6 },
-  { kind: 'window', wall: 'N', at: -6 },
-  { kind: 'window', wall: 'W', at: -3 },
-  { kind: 'window', wall: 'W', at: 3.5 },
-  { kind: 'window', wall: 'E', at: -3 },
-  { kind: 'window', wall: 'E', at: 3 },
+  { kind: 'door', wall: 'S', at: 0, room: 'great' },          // 0 front door
+  { kind: 'window', wall: 'S', at: -4.5, room: 'great' },     // 1 dining room
+  { kind: 'window', wall: 'S', at: 3, room: 'great' },        // 2 dining room
+  { kind: 'window', wall: 'S', at: 7.5, room: 'great' },      // 3 sitting room
+  { kind: 'window', wall: 'S', at: -10, room: 'bar' },        // 4 bar room
+  { kind: 'door', wall: 'W', at: -2.5, room: 'passage' },     // 5 side door at the end of the passage
+  { kind: 'window', wall: 'W', at: 3, room: 'bar' },          // 6 bar room
+  { kind: 'window', wall: 'E', at: 2, room: 'great' },        // 7 sitting room
+  { kind: 'window', wall: 'E', at: -5.5, room: 'office' },    // 8 office
+  // 9 upstairs: the door at the east end of the gallery, out onto the flat roof (the outside
+  // stair runs down from there to the yard). Players come and go; cows tear its boards off.
+  { kind: 'door', wall: 'E', at: -6.5, room: 'gallery', level: 1, line: 4 },
 ];
+// Glazed windows (with grilles) that nothing climbs through: over the kitchen counters, and
+// the office window with the yellow curtains. The wall stays solid behind the glass.
+export const WINDOWS = [
+  { wall: 'N', at: -9.2, sill: 1.05, top: 2.55, width: 1.5, room: 'kitchen' },   // over the sink
+  { wall: 'W', at: -6.6, sill: 1.05, top: 2.55, width: 1.5, room: 'kitchen' },   // beside the hood
+  { wall: 'N', at: 7.5, sill: 0.95, top: 2.55, width: 1.6, room: 'office' },
+];
+
+// The upper floor: its level, wall height, and the walls' centre lines (the loggia runs along
+// the front of it, out to z = loggiaZ).
+export const UPPER = { y: HOUSE.wallH + 0.3, h: 3.1, x0: -7, x1: 4, z0: -9, z1: -0.6, loggiaZ: 1.0 };
 
 export const ENTRIES = ENTRY_DEFS.map((e, id) => {
   const width = e.kind === 'door' ? 1.5 : 1.7;
   const n = { N: [0, -1], S: [0, 1], W: [-1, 0], E: [1, 0] }[e.wall]; // outward normal
   const along = e.wall === 'N' || e.wall === 'S';
-  const x = along ? e.at : n[0] * HX;
-  const z = along ? n[1] * HZ : e.at;
+  const x = along ? e.at : e.line ?? (n[0] > 0 ? HB.x1 : HB.x0);
+  const z = along ? e.line ?? (n[1] > 0 ? HB.z1 : HB.z0) : e.at;
+  const y = e.level ? UPPER.y : 0, wt = e.level ? 0.25 : HOUSE.t, top = e.level ? UPPER.h : HOUSE.wallH;
   return {
-    id, ...e, width, x, z, nx: n[0], nz: n[1],
-    // tall French windows and doors like the real house (a low ledge keeps the cows' climb-in)
-    sill: e.kind === 'door' ? 0 : 0.4,
-    top: 2.85,
+    id, ...e, level: e.level || 0, y, width, x, z, nx: n[0], nz: n[1],
+    sill: e.sill ?? (e.kind === 'door' ? 0 : 0.4),   // (sill and top are above the floor at y)
+    top: e.level ? 2.3 : 2.85,
     out: [x + n[0] * 2.1, z + n[1] * 2.1],   // where a cow stands to tear boards
     in: [x - n[0] * 2.1, z - n[1] * 2.1],    // where a cow lands after climbing in
     // solid box filling the opening (blocks walking, not bullets)
     box: along
-      ? { x, z, w: width, d: HOUSE.t, h: HOUSE.wallH }
-      : { x, z, w: HOUSE.t, d: width, h: HOUSE.wallH },
+      ? { x, z, w: width, d: wt, h: y + top, y0: y || undefined }
+      : { x, z, w: wt, d: width, h: y + top, y0: y || undefined },
   };
 });
 
-// Exterior wall pieces between the openings, plus interior partitions.
+// Rooms (inside the wall centre lines) and the doorways between them. Doorway centres sit on
+// half metres so the cows' 1 m path grid runs straight through the middle of each one.
+export const ROOMS = [
+  { id: 'kitchen', x0: -13, x1: -7, z0: -9, z1: -4 },
+  { id: 'passage', x0: -13, x1: -7, z0: -4, z1: -1 },
+  { id: 'bar', x0: -13, x1: -7, z0: -1, z1: 7 },
+  { id: 'hall', x0: -7, x1: 4, z0: -9, z1: -1 },
+  { id: 'office', x0: 4, x1: 11, z0: -9, z1: -1 },
+  { id: 'great', x0: -7, x1: 11, z0: -1, z1: 7 },
+  // upstairs: the gallery round the stairwell, two bedrooms off it
+  { id: 'gallery', level: 1, x0: -7, x1: 4, z0: -9, z1: -5.4 },
+  { id: 'bed1', level: 1, x0: -7, x1: -1, z0: -5.4, z1: -0.6 },
+  { id: 'bed2', level: 1, x0: -1, x1: 4, z0: -5.4, z1: -0.6 },
+];
+// Interior walls: a line along x (at z) or along z (at x), with doorways [centre, width, kind].
+// The passage opens into the hall full width (`open`).
+const IWALL_DEFS = [
+  { z: -4, x0: -13, x1: -7, doors: [[-10.5, 1.5, 'door']] },               // kitchen | passage (door with a transom)
+  { z: -1, x0: -13, x1: -7, doors: [[-10.5, 1.5, 'glass']] },              // passage | bar room (glass double doors, facing the kitchen door)
+  { x: -7, z0: -9, z1: -4, doors: [] },                                     // kitchen | hall
+  { x: -7, z0: -4, z1: -1, doors: [[-2.5, 2.8, 'open']] },                 // passage | hall
+  { x: -7, z0: -1, z1: 7, doors: [] },                                      // bar room | big room
+  { x: 4, z0: -9, z1: -1, doors: [[-5.5, 1.6, 'double']] },                // hall | office (double doors at the end of the hall)
+  { z: -1, x0: 4, x1: 11, doors: [[7.5, 1.5, 'glass']] },                  // office | sitting room (glass door)
+  { z: -5.4, x0: -7, x1: 4, doors: [[-4.5, 1.5, 'door'], [1.5, 1.5, 'door']], level: 1 },   // gallery | bedrooms
+  { x: -1, z0: -5.4, z1: -0.6, doors: [], level: 1 },                       // between the bedrooms
+];
+// The stone colonnade between the hall and the big room (open arches, square columns), and
+// the column holding the two arches between the dining and sitting ends.
+export const COLONNADE = { z: -1, x0: -7, x1: 4, cols: [-3.5, 0.5], size: 0.6, spring: 2.9 };
+export const ARCH_COL = { x: 4.5, z: 3.0, size: 0.6, spring: 2.9 };
+export const PORTALS = [];   // { a, b, x, z, nx, nz, w, kind }: crossing from room a to b along (nx, nz)
+const roomIdx = (id) => ROOMS.findIndex(r => r.id === id);
+// the floor a height is on: upstairs from a little below the upper floor
+export const levelOf = (y = 0) => (y > HOUSE.wallH - 0.8 ? 1 : 0);
+const roomOfPoint = (x, z, y = 0) => { const lv = levelOf(y); return ROOMS.findIndex(r => (r.level || 0) === lv && x > r.x0 && x < r.x1 && z > r.z0 && z < r.z1); };
+
+// Wall pieces between the openings: outside walls ('wall') and interior partitions ('iwall').
 export const HOUSE_WALLS = (() => {
   const walls = [];
   const t = HOUSE.t, h = HOUSE.wallH;
   for (const wall of ['N', 'S', 'W', 'E']) {
     const along = wall === 'N' || wall === 'S';
-    const len = along ? HOUSE.w + t : HOUSE.d + t;
-    const openings = ENTRIES.filter(e => e.wall === wall).map(e => [e.at - e.width / 2, e.at + e.width / 2]).sort((a, b) => a[0] - b[0]);
-    let cur = -len / 2;
+    const lo = (along ? HB.x0 : HB.z0) - t / 2, hi = (along ? HB.x1 : HB.z1) + t / 2;
+    const openings = ENTRIES.filter(e => e.wall === wall && !e.level).map(e => [e.at - e.width / 2, e.at + e.width / 2]).sort((a, b) => a[0] - b[0]);
+    let cur = lo;
     const pieces = [];
     for (const [a, b] of openings) { if (a > cur) pieces.push([cur, a]); cur = b; }
-    if (cur < len / 2) pieces.push([cur, len / 2]);
+    if (cur < hi) pieces.push([cur, hi]);
     for (const [a, b] of pieces) {
       const mid = (a + b) / 2, size = b - a;
-      if (wall === 'N') walls.push({ kind: 'wall', x: mid, z: -HZ, w: size, d: t, h });
-      if (wall === 'S') walls.push({ kind: 'wall', x: mid, z: HZ, w: size, d: t, h });
-      if (wall === 'W') walls.push({ kind: 'wall', x: -HX, z: mid, w: t, d: size, h });
-      if (wall === 'E') walls.push({ kind: 'wall', x: HX, z: mid, w: t, d: size, h });
+      if (wall === 'N') walls.push({ kind: 'wall', side: 'N', x: mid, z: HB.z0, w: size, d: t, h });
+      if (wall === 'S') walls.push({ kind: 'wall', side: 'S', x: mid, z: HB.z1, w: size, d: t, h });
+      if (wall === 'W') walls.push({ kind: 'wall', side: 'W', x: HB.x0, z: mid, w: t, d: size, h });
+      if (wall === 'E') walls.push({ kind: 'wall', side: 'E', x: HB.x1, z: mid, w: t, d: size, h });
     }
   }
-  // interior partition between living room (west) and kitchen (east), with a wide doorway
-  walls.push({ kind: 'iwall', x: -3, z: (-HZ + -2.1) / 2, w: 0.2, d: HZ - 2.1, h });
-  walls.push({ kind: 'iwall', x: -3, z: (HZ + 2.1) / 2, w: 0.2, d: HZ - 2.1, h });
+  const iw = HOUSE.iw;
+  for (const def of IWALL_DEFS) {
+    const lv = def.level || 0, y0 = lv ? UPPER.y : 0, wh = lv ? UPPER.y + UPPER.h : h, fy = lv ? UPPER.y : 0;
+    const alongX = def.z !== undefined;
+    // run interior walls into the outside walls' inner faces so there are no slits
+    const lo = alongX ? def.x0 : def.z0, hi = alongX ? def.x1 : def.z1;
+    let cur = lo;
+    const pieces = [];
+    for (const [c, w, kind] of [...def.doors].sort((a, b) => a[0] - b[0])) {
+      pieces.push([cur, c - w / 2]);
+      cur = c + w / 2;
+      const [x, z] = alongX ? [c, def.z] : [def.x, c];
+      const nx = alongX ? 0 : 1, nz = alongX ? 1 : 0;
+      const a = roomOfPoint(x - nx * 0.5, z - nz * 0.5, fy), b = roomOfPoint(x + nx * 0.5, z + nz * 0.5, fy);
+      PORTALS.push({ a, b, x, z, nx, nz, w, kind, level: lv, y: fy, wall: kind !== 'open', top: fy + (kind === 'open' ? HOUSE.wallH : kind === 'door' ? 2.2 : 2.45), ceil: wh });
+    }
+    pieces.push([cur, hi]);
+    for (const [a, b] of pieces) {
+      if (b - a < 0.01) continue;
+      const mid = (a + b) / 2, size = b - a;
+      walls.push(alongX ? { kind: 'iwall', x: mid, z: def.z, w: size, d: iw, h: wh, y0: lv ? y0 : undefined, level: lv } : { kind: 'iwall', x: def.x, z: mid, w: iw, d: size, h: wh, y0: lv ? y0 : undefined, level: lv });
+    }
+  }
+  // the colonnade's arches are open: one portal per arch for routing
+  const c = COLONNADE, edges = [c.x0 + iw / 2, ...c.cols.flatMap(x => [x - c.size / 2, x + c.size / 2]), c.x1 - iw / 2];
+  for (let i = 0; i < edges.length; i += 2) {
+    const x = Math.round((edges[i] + edges[i + 1]) / 2 - 0.5) + 0.5;
+    PORTALS.push({ a: roomIdx('hall'), b: roomIdx('great'), x, z: c.z, nx: 0, nz: 1, w: edges[i + 1] - edges[i], kind: 'arch', wall: false, level: 0, y: 0 });
+  }
   return walls;
 })();
 
-// Furniture: low cover inside. Low pieces can be jumped onto.
-// Furniture that blocks movement (copied from the real house photos). Small pieces such as
-// the cane rockers and iron side tables are decoration only, so they never trap cows.
+// The stair: one long flight up the back wall of the hall, rising east from the passage end
+// to a landing upstairs, white plaster with a solid balustrade, a round skylight over it.
+// You can walk up it (each step is a box you stand on); so can the cows.
+export const STAIR = { x0: -5.6, x1: 1.6, z0: HB.z0 + HOUSE.t / 2, z1: -7.45, landingX: 3.0, rise: UPPER.y, steps: 24 };
+// The outside stair: from the flat roof over the office, down the back wall to the yard
+// (solid masonry with a low wall up its open side), rising east like the inside one.
+export const EXT_STAIR = { x0: 2.6, x1: 9.6, z0: -10.75, z1: HB.z0 - HOUSE.t / 2, landingX: 11.15, rise: UPPER.y, steps: 23 };
+// For walking and the cows' routes: each flight, its foot and its head (level 0 and 1).
+export const STAIRS = [STAIR, EXT_STAIR].map((s) => {
+  const zm = (s.z0 + s.z1) / 2;
+  return { ...s, zm, run: (s.x1 - s.x0) / s.steps, riseStep: s.rise / (s.steps + 1), foot: [s.x0 - 0.7, zm], head: [s.x1 + 0.6, zm] };
+});
+
+// Furniture that blocks movement (traced from the video). Small pieces such as the cane
+// rockers, chairs and iron side tables are decoration only, so they never trap cows.
+// `nav: false` keeps a piece out of the cows' path grid (they just slide round it).
 export const FURNITURE = [
-  // living room (west): carved colonial bench and the bar cabinet against the partition
-  { kind: 'bench', x: -8.6, z: -6.3, w: 1.75, d: 0.7, h: 0.95 },
-  { kind: 'bar', x: -3.38, z: -4.7, w: 0.52, d: 1.6, h: 2.2 },
-  // dining room (east): long dark table with ten carved high-back chairs
-  { kind: 'dining', x: 4.2, z: 3.4, w: 3.7, d: 2.0, h: 0.78 },
-  // kitchen along the back wall
-  { kind: 'island', x: 4.5, z: -0.5, w: 3.2, d: 1.2, h: 0.95 },
-  { kind: 'counter', x: 0.6, z: -6.2, w: 3, d: 0.75, h: 0.95 },
-  { kind: 'stove', x: 2.6, z: -6.2, w: 1.0, d: 0.75, h: 0.95 },
-  { kind: 'fridge', x: 10.1, z: -5.9, w: 1.1, d: 0.9, h: 2.0 },
+  // kitchen: brick-arched counters with granite tops along the back and west walls
+  { kind: 'counter', x: -10.25, z: -8.5, w: 5.2, d: 0.7, h: 0.92 },
+  { kind: 'counter', x: -12.5, z: -6.95, w: 0.7, d: 2.4, h: 0.92 },
+  { kind: 'ktable', x: -10.0, z: -6.45, w: 1.3, d: 0.8, h: 0.78, nav: false },
+  // bar room: the bar along the passage wall (back cabinet with the mirror, counter in front)
+  { kind: 'barback', x: -8.35, z: -0.68, w: 2.4, d: 0.45, h: 2.75 },
+  { kind: 'barcounter', x: -8.35, z: 0.05, w: 2.4, d: 0.65, h: 1.1 },
+  // the long dining table (twenty carved chairs) and the strips of chairs down each side
+  { kind: 'dining', x: -1.75, z: 3.0, w: 6.0, d: 1.1, h: 0.78 },
+  { kind: 'chairs', x: -1.75, z: 2.15, w: 6.0, d: 0.6, h: 0.5 },
+  { kind: 'chairs', x: -1.75, z: 3.85, w: 6.0, d: 0.6, h: 0.5 },
+  // sitting room: the dark coffee table on its iron base and the long slatted pew
+  { kind: 'coffee', x: 7.7, z: 3.7, w: 1.3, d: 0.75, h: 0.46, nav: false },
+  { kind: 'pew', x: 5.85, z: 3.7, w: 0.6, d: 2.3, h: 0.9 },
+  // office: the desk and the glass-fronted cabinet
+  { kind: 'desk', x: 9.0, z: -7.2, w: 1.9, d: 0.9, h: 0.76, nav: false },
+  { kind: 'cabinet', x: 4.38, z: -7.9, w: 0.45, d: 1.5, h: 2.3 },
+  // outside the side door: the kettle grill and the cooler
+  { kind: 'grill', x: -15.2, z: -5.4, w: 0.7, d: 0.7, h: 1.1 },
+  { kind: 'cooler', x: -14.3, z: -5.47, w: 0.64, d: 0.41, h: 0.47 },
 ];
+// Upstairs furniture (heights above the upper floor).
+export const UPPER_FURNITURE = [
+  { kind: 'bed', x: -4.0, z: -1.95, w: 1.7, d: 2.1, h: 0.62 },          // the big carved bed
+  { kind: 'wardrobe', x: -6.55, z: -3.6, w: 0.6, d: 1.6, h: 2.1 },
+  { kind: 'dresser', x: -2.2, z: -5.05, w: 1.3, d: 0.5, h: 0.85 },
+  { kind: 'bed', x: 0.25, z: -1.95, w: 1.0, d: 2.0, h: 0.55 },          // two singles in the second room
+  { kind: 'bed', x: 2.75, z: -1.95, w: 1.0, d: 2.0, h: 0.55 },
+  { kind: 'wardrobe', x: 3.55, z: -4.5, w: 0.55, d: 1.4, h: 2.0 },
+  { kind: 'chest', x: -6.3, z: -6.6, w: 0.5, d: 1.0, h: 0.5 },          // a carved chest in the gallery
+];
+
+// Steps, floors and walls of the upper level. Boxes with a `y0` start above the ground: you
+// walk under them downstairs and on them (or into them) upstairs.
+export const UPPER_SOLIDS = (() => {
+  const out = [], U = UPPER.y, t = HOUSE.t, S = STAIR;
+  const B = { x0: HB.x0 - t / 2, x1: HB.x1 + t / 2, z0: HB.z0 - t / 2, z1: HB.z1 + t / 2 };
+  const rect = (kind, x0, z0, x1, z1, y0, h, extra = {}) => out.push({ kind, x: (x0 + x1) / 2, z: (z0 + z1) / 2, w: x1 - x0, d: z1 - z0, y0: y0 || undefined, h, ...extra });
+  // the flights: a box per step, a low wall up the open side; the landing at the top
+  for (const st of STAIRS) {
+    const side = st === STAIRS[0] ? [st.z1, st.z1 + 0.12] : [st.z0 - 0.12, st.z0];
+    for (let i = 0; i < st.steps; i++) {
+      const xa = st.x0 + i * st.run, xb = xa + st.run, top = (i + 1) * st.riseStep;
+      rect('step', xa, st.z0, xb, st.z1, 0, top);
+      rect('stairwall', xa, side[0], xb, side[1], 0, top + 0.95);
+    }
+    rect('step', st.x1, st.z0, st.landingX, st.z1, 0, U);
+  }
+  const E = STAIRS[1];
+  rect('stairwall', E.x1, E.z0 - 0.12, E.landingX + 0.12, E.z0, 0, U + 0.95);   // round the outside landing
+  rect('stairwall', E.landingX, E.z0 - 0.12, E.landingX + 0.12, E.z1, 0, U + 0.95);
+  // the roof over the ground floor is the floor upstairs, with the stairwell left open
+  const hole = { x0: S.x0 - 0.05, x1: S.x1, z0: S.z0, z1: -7.25 };
+  rect('slab', B.x0, B.z0, hole.x0, B.z1, HOUSE.wallH, U);
+  rect('slab', hole.x1, B.z0, B.x1, B.z1, HOUSE.wallH, U);
+  rect('slab', hole.x0, hole.z1, hole.x1, B.z1, HOUSE.wallH, U);
+  rect('slab', hole.x0, B.z0, hole.x1, hole.z0, HOUSE.wallH, U);
+  // up on the roof you can't walk on the tiled slopes (front and west wing), and a parapet
+  // runs round the flat part, open where the outside stair comes up
+  rect('roofslope', B.x0, B.z1 - 3.15, B.x1, B.z1 + 0.3, U, U + 1.3);
+  rect('roofslope', B.x0, B.z0, UPPER.x0 - 0.12, B.z1 - 3.15, U, U + 1.3);
+  rect('parapet', UPPER.x1 + 0.12, B.z0, E.x1, B.z0 + 0.22, U, U + 0.78);
+  rect('parapet', E.landingX - 0.3, B.z0, B.x1, B.z0 + 0.22, U, U + 0.78);
+  rect('parapet', B.x1 - 0.22, B.z0, B.x1, B.z1 - 3.15, U, U + 0.78);
+  // the upper storey's outside walls (the door onto the roof is entry 9), the wall between
+  // the bedrooms and the loggia, the loggia's balustrade and its corner piers
+  const W = UPPER.y + UPPER.h, uw = 0.25;
+  rect('uwall', UPPER.x0 - uw / 2, UPPER.z0 - uw / 2, UPPER.x1 + uw / 2, UPPER.z0 + uw / 2, U, W);
+  rect('uwall', UPPER.x0 - uw / 2, UPPER.z0, UPPER.x0 + uw / 2, UPPER.loggiaZ, U, W);
+  const door = ENTRIES.find(e => e.level === 1);
+  rect('uwall', UPPER.x1 - uw / 2, UPPER.z0, UPPER.x1 + uw / 2, door.z - door.width / 2, U, W);
+  rect('uwall', UPPER.x1 - uw / 2, door.z + door.width / 2, UPPER.x1 + uw / 2, UPPER.z1, U, W);
+  rect('uwall', UPPER.x0, UPPER.z1 - 0.1, UPPER.x1, UPPER.z1 + 0.1, U, W);
+  rect('balustrade', UPPER.x0, UPPER.loggiaZ - 0.4, UPPER.x1 + uw / 2, UPPER.loggiaZ, U, U + 0.95);
+  rect('uwall', UPPER.x1 - 0.2, UPPER.loggiaZ - 0.4, UPPER.x1 + uw / 2, UPPER.loggiaZ, U, W);
+  // the railing round the stairwell upstairs
+  rect('rail', hole.x0, hole.z1 - 0.03, hole.x1, hole.z1 + 0.03, U, U + 1.0);
+  rect('rail', hole.x0 - 0.06, hole.z0, hole.x0, hole.z1, U, U + 1.0);
+  // upstairs furniture: the beds, wardrobes, the bench on the loggia
+  for (const f of UPPER_FURNITURE) rect(f.kind, f.x - f.w / 2, f.z - f.d / 2, f.x + f.w / 2, f.z + f.d / 2, U, U + f.h, f.nav === false ? { nav: false } : {});
+  return out;
+})();
+
+// Which room a point is in (index into ROOMS), or -1 outside. Pass y for upstairs.
+export const roomAt = roomOfPoint;
+
+// Next point to head for when walking from (x, z) to (gx, gz), both inside the house and on
+// the same floor: straight there in the same room, otherwise through the doorways (shortest
+// chain of them).
+export function indoorWaypoint(x, z, gx, gz, y = 0) {
+  const ra = roomOfPoint(x, z, y), rb = roomOfPoint(gx, gz, y);
+  if (ra < 0 || rb < 0 || ra === rb) return [gx, gz];
+  // Dijkstra over doorways; the first doorway on the best route decides the next step
+  const n = PORTALS.length, dist = new Array(n).fill(Infinity), first = new Array(n).fill(-1), side = new Array(n).fill(-1), done = new Array(n).fill(false);
+  for (let i = 0; i < n; i++) {
+    const p = PORTALS[i];
+    if (p.a === ra || p.b === ra) { dist[i] = Math.hypot(p.x - x, p.z - z); first[i] = i; side[i] = p.a === ra ? p.b : p.a; }
+  }
+  let best = Infinity, bestFirst = -1;
+  for (;;) {
+    let u = -1;
+    for (let i = 0; i < n; i++) if (!done[i] && dist[i] < Infinity && (u < 0 || dist[i] < dist[u])) u = i;
+    if (u < 0) break;
+    done[u] = true;
+    const pu = PORTALS[u], room = side[u];
+    if (room === rb) { const t = dist[u] + Math.hypot(gx - pu.x, gz - pu.z); if (t < best) { best = t; bestFirst = first[u]; } continue; }
+    for (let v = 0; v < n; v++) {
+      const pv = PORTALS[v];
+      if (done[v] || v === u || (pv.a !== room && pv.b !== room)) continue;
+      const d = dist[u] + Math.hypot(pv.x - pu.x, pv.z - pu.z);
+      if (d < dist[v]) { dist[v] = d; first[v] = first[u]; side[v] = pv.a === room ? pv.b : pv.a; }
+    }
+  }
+  if (bestFirst < 0) return [gx, gz];
+  const p = PORTALS[bestFirst];
+  // line up square in front of the doorway, then go through it
+  const s = Math.sign((x - p.x) * p.nx + (z - p.z) * p.nz) || -1;
+  const near = [p.x + p.nx * s * 0.7, p.z + p.nz * s * 0.7], far = [p.x - p.nx * s * 1.0, p.z - p.nz * s * 1.0];
+  const lateral = Math.abs((x - p.x) * p.nz - (z - p.z) * p.nx);
+  const depth = Math.abs((x - p.x) * p.nx + (z - p.z) * p.nz);
+  return lateral < Math.max(0.25, p.w / 2 - 0.45) && depth < 1.0 ? far : near;
+}
 
 // ---- The rest of the property (seen through the windows) --------------------
 
@@ -190,7 +404,7 @@ export const YARD = { minX: FENCE.minX, maxX: FENCE.maxX, minZ: FENCE.minZ, maxZ
 
 export const STRUCTURES = [
   // long front veranda (terracotta floor, white columns, iron railing) like the real house
-  { id: 'veranda', kind: 'veranda', x: 0, z: HZ + 2.25, w: HOUSE.w + 0.6, d: 4.5, h: 0.25 },
+  { id: 'veranda', kind: 'veranda', x: HOUSE.x, z: HB.z1 + 2.25, w: HOUSE.w + 0.6, d: 4.5, h: 0.25 },
   { id: 'fountain', kind: 'fountain', x: 0, z: 19, w: 3.4, d: 3.4, h: 0.9 },
   { id: 'bunkhouse', kind: 'bunkhouse', x: 31, z: -14, w: 10, d: 20, h: 6.5 },
   { id: 'feedstore', kind: 'feedstore', x: -30, z: 22, w: 8, d: 6, h: 4.5 },
@@ -245,12 +459,12 @@ export function pushOutOfVehicle(v, def, x, z, r) {
 
 // Veranda railing (wrought iron balusters) with a gap at the front steps, plus columns.
 export const VERANDA = (() => {
-  const z = HZ + 4.5, h = 1.0, gap = 2.6;
+  const z = HB.z1 + 4.5, h = 1.0, gap = 2.6;
   const rails = [
-    { kind: 'railing', x: (-HX - gap) / 2, z, w: HX - gap, d: 0.2, h },
-    { kind: 'railing', x: (HX + gap) / 2, z, w: HX - gap, d: 0.2, h },
+    { kind: 'railing', x: (HB.x0 - gap) / 2, z, w: -gap - HB.x0, d: 0.2, h },
+    { kind: 'railing', x: (HB.x1 + gap) / 2, z, w: HB.x1 - gap, d: 0.2, h },
   ];
-  const columns = [-HX, -6.5, -gap, gap, 6.5, HX].map(x => ({ kind: 'column', x, z, w: 0.45, d: 0.45, h: HOUSE.wallH }));
+  const columns = [HB.x0, -8, -gap, gap, 7, HB.x1].map(x => ({ kind: 'column', x, z, w: 0.45, d: 0.45, h: HOUSE.wallH }));
   return { z, rails, columns };
 })();
 
@@ -299,7 +513,7 @@ export const UNDERGROWTH = [];
     }
   }
   // palms in the front garden, like the photos
-  for (const [x, z, s] of [[-7, 17, 1.2], [7.5, 15.5, 1.1], [-14, 10, 1.3], [13, 9, 1.15], [-4, 24, 1.0]]) TREES.push({ x, z, s, kind: 'palm' });
+  for (const [x, z, s] of [[-7, 17, 1.2], [7.5, 15.5, 1.1], [-15.6, 10, 1.3], [13, 9, 1.15], [-4, 24, 1.0]]) TREES.push({ x, z, s, kind: 'palm' });
   // big shade trees around the lawn and royal palms down the west side, after the drone photo
   for (const [x, z, kind, s] of [
     [-6, -20, 'giant', 1.3], [7, -25, 'broad', 1.3], [-21, -25, 'giant', 1.4], [22, -30, 'giant', 1.5],
@@ -326,8 +540,8 @@ export const PERKS = {
 export const PERK_LIST = Object.keys(PERKS);
 export const MAX_PERKS = 4;
 export const PERK_MACHINES = [
-  { perk: 'jugg',   x: -1.95, z: -6.45, nx: 0, nz: 1 },     // kitchen, against the back wall
-  { perk: 'revive', x: 10.4,  z: 0,     nx: -1, nz: 0 },    // dining room, east wall between the windows
+  { perk: 'jugg',   x: -7.5,  z: -5.0,  nx: -1, nz: 0 },    // kitchen, in the corner by the door
+  { perk: 'revive', x: 10.45, z: 0.4,   nx: -1, nz: 0 },    // sitting room, east wall by the French doors
   { perk: 'speed',  x: 25.45, z: -18,   nx: -1, nz: 0 },    // against the bunkhouse
   { perk: 'double', x: -31,   z: 25.45, nx: 0, nz: 1 },     // in front of the feed store
   { perk: 'stamin', x: -12,   z: -27.0, nx: 0, nz: 1 },     // under the water tank
@@ -390,7 +604,7 @@ export const maxHealth = (perks = []) => (perks.includes('jugg') ? 250 : 100);
 
 // All solid boxes. `shoot: true` means bullets pass through (open doors/windows).
 export const SOLIDS = (() => {
-  const out = [...HOUSE_WALLS, ...FURNITURE, ...STRUCTURES.filter(s => !s.open), ...HAY_BALES];
+  const out = [...HOUSE_WALLS, ...FURNITURE, ...UPPER_SOLIDS, ...STRUCTURES.filter(s => !s.open), ...HAY_BALES];
   // open structures (the carport) only block at their posts
   for (const s of STRUCTURES.filter(s => s.open)) for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
     out.push({ kind: 'post', x: s.x + sx * (s.w / 2 - 0.2), z: s.z + sz * (s.d / 2 - 0.2), w: 0.4, d: 0.4, h: s.h });
@@ -407,11 +621,24 @@ export const SOLIDS = (() => {
   return out;
 })();
 
-// Players start inside the living room / kitchen.
-export const PLAYER_SPAWNS = [[-6, 4.5], [0, 3.5], [-1, 0], [6, 2.5], [-8, -1], [2, 4.5], [8, 1], [-5, -5]];
+// Solid parts above head height that only bullets care about: [x0, y0, z0, x1, y1, z1].
+const RAY_BOXES = (() => {
+  const out = [], wh = HOUSE.wallH;
+  for (const p of PORTALS) {
+    const hw = p.w / 2 + 0.05, ht = (p.wall ? HOUSE.iw : COLONNADE.size) / 2;
+    const [wx, wz] = p.nx === 0 ? [hw, ht] : [ht, hw];
+    out.push([p.x - wx, p.wall ? p.top : COLONNADE.spring + 0.45, p.z - wz, p.x + wx, p.ceil ?? wh, p.z + wz]);
+  }
+  for (const [z0, z1] of [[HOUSE.z - HZ, ARCH_COL.z], [ARCH_COL.z, HOUSE.z + HZ]]) out.push([ARCH_COL.x - 0.3, ARCH_COL.spring + 0.45, z0, ARCH_COL.x + 0.3, wh, z1]);
+  return out;
+})();
 
-export function insideHouse(x, z) {
-  return Math.abs(x - HOUSE.x) < HX && Math.abs(z - HOUSE.z) < HZ;
+// Players start inside the big room and the hall.
+export const PLAYER_SPAWNS = [[-1.5, 5.6], [1.5, 5.5], [-4, 5.6], [-1, 0.6], [2.5, 0.6], [-3.5, -5], [8, 5.8], [-10, 3]];
+
+export function insideHouse(x, z, y = 0) {
+  if (levelOf(y)) return x > UPPER.x0 && x < UPPER.x1 && z > UPPER.z0 && z < UPPER.z1;
+  return x > HB.x0 && x < HB.x1 && z > HB.z0 && z < HB.z1;
 }
 
 // Players can walk through the doors (the boards only stop cows).
@@ -453,11 +680,14 @@ export function clampToMap(x, z, r = 0) {
 
 // Push a circle (x,z,r) out of every solid taller than `feetY + step`.
 // Box heights are measured from the flat yard (y = 0); everything solid sits there.
+// (a box starting above head height, like the ceiling or the upstairs walls when you're
+// downstairs, doesn't get in the way)
+export const HEADROOM = 1.0;
 export function resolveCircle(x, z, r, feetY = 0, step = 0.4, skip = null) {
   for (let iter = 0; iter < 3; iter++) {
     let moved = false;
     for (const b of solidsNear(x, z, r + 1)) {
-      if (b.h <= feetY + step || (skip && skip(b))) continue;
+      if (b.h <= feetY + step || (b.y0 !== undefined && b.y0 >= feetY + HEADROOM) || (skip && skip(b))) continue;
       const hx = b.w / 2, hz = b.d / 2;
       if (Math.abs(x - b.x) > hx + r || Math.abs(z - b.z) > hz + r) continue;
       const cx = Math.max(b.x - hx, Math.min(x, b.x + hx));
@@ -500,7 +730,7 @@ export function raySolids(o, d, maxDist = 300) {
     for (const b of solidsNear(px, pz, BUCKET)) {
       if (b.shoot || seen.has(b)) continue;
       seen.add(b);
-      const hit = rayBox(o, d, b.x - b.w / 2, 0, b.z - b.d / 2, b.x + b.w / 2, b.h, b.z + b.d / 2);
+      const hit = rayBox(o, d, b.x - b.w / 2, b.y0 || 0, b.z - b.d / 2, b.x + b.w / 2, b.h, b.z + b.d / 2);
       if (hit >= 0 && hit < best) best = hit;
     }
   }
@@ -508,14 +738,20 @@ export function raySolids(o, d, maxDist = 300) {
     const hw = e.width / 2, ht = HOUSE.t / 2;
     const [wx, wz] = e.nx === 0 ? [hw, ht] : [ht, hw];
     if (e.sill > 0) {
-      const t = rayBox(o, d, e.x - wx, 0, e.z - wz, e.x + wx, e.sill, e.z + wz);
+      const t = rayBox(o, d, e.x - wx, e.y, e.z - wz, e.x + wx, e.y + e.sill, e.z + wz);
       if (t >= 0 && t < best) best = t;
     }
-    const t = rayBox(o, d, e.x - wx, e.top, e.z - wz, e.x + wx, HOUSE.wallH, e.z + wz);
+    const t = rayBox(o, d, e.x - wx, e.y + e.top, e.z - wz, e.x + wx, e.level ? UPPER.y + UPPER.h : HOUSE.wallH, e.z + wz);
     if (t >= 0 && t < best) best = t;
   }
-  if (d[1] > 0 && insideHouse(o[0], o[2])) {
-    const t = (HOUSE.wallH - o[1]) / d[1];
+  if (Math.abs(o[0] - HOUSE.x) < HX + 30 && Math.abs(o[2] - HOUSE.z) < HZ + 30) {
+    for (const b of RAY_BOXES) { // walls over the inside doorways and arches, the stair flight
+      const t = rayBox(o, d, b[0], b[1], b[2], b[3], b[4], b[5]);
+      if (t >= 0 && t < best) best = t;
+    }
+  }
+  if (d[1] > 0 && insideHouse(o[0], o[2], o[1])) {   // the ceilings
+    const t = ((levelOf(o[1]) ? UPPER.y + UPPER.h : HOUSE.wallH) - o[1]) / d[1];
     if (t >= 0 && t < best) best = t;
   }
   // terrain: march, then refine
@@ -590,9 +826,34 @@ export const DOG_TYPES = [
   { kind: 'little', name: 'Taco', hp: 45, speed: 8.0, sight: 24, bite: 0.7, damage: 3, biteEvery: 0.6, radius: 0.28 },
   { kind: 'big', name: 'Pepper', hp: 90, speed: 7.8, sight: 30, bite: 1.0, damage: 7, biteEvery: 0.85, radius: 0.38, coat: [0.075, 0.11, 0.16], sleek: true, scale: 0.92, hider: true },
 ];
-// Pepper's blanket on the living-room floor, and the spot in the arched opening she runs
-// through to reach it from the rest of the house.
-export const BLANKET = { x: -6.3, z: 1.0, yaw: -Math.PI / 2 - 0.3, via: [-3.7, 0.3] };
+// Pepper's blanket: in the corner of Troy's office, behind the desk.
+export const BLANKET = { x: 10.35, z: -8.35, yaw: Math.PI * 0.75 };
+
+// Furniture the game draws from its own models (decoration: no collision beyond FURNITURE).
+// The Blender light bake loads them too, so their shadows land on the floor.
+// [model, x, z, yaw (0 faces +z), height, tint?]
+export const HOUSE_PROPS = (() => {
+  const out = [];
+  const dt = FURNITURE.find(f => f.kind === 'dining');
+  for (let i = 0; i < 9; i++) {      // twenty carved chairs round the long table
+    const x = dt.x - dt.w / 2 + 0.35 + i * (dt.w - 0.7) / 8;
+    out.push(['diningChair', x, dt.z - dt.d / 2 - 0.3, 0, 1.18], ['diningChair', x, dt.z + dt.d / 2 + 0.3, Math.PI, 1.18]);
+  }
+  out.push(['diningChair', dt.x - dt.w / 2 - 0.36, dt.z, Math.PI / 2, 1.22], ['diningChair', dt.x + dt.w / 2 + 0.36, dt.z, -Math.PI / 2, 1.22]);
+  const ct = FURNITURE.find(f => f.kind === 'coffee');   // six cane rockers round the coffee table
+  for (const [dx, dz, yaw] of [[-0.65, -1.35, 0.25], [0.65, -1.35, -0.25], [1.75, -0.45, -Math.PI / 2 + 0.25], [1.75, 0.7, -Math.PI / 2 - 0.2], [0.0, 1.55, Math.PI + 0.1], [1.2, 1.5, Math.PI + 0.35]]) out.push(['caneRocker', ct.x + dx, ct.z + dz, yaw, 1.05]);
+  const kt = FURNITURE.find(f => f.kind === 'ktable');   // kitchen chairs, green and natural, like the real ones
+  for (const [dx, dz, yaw, tint] of [[-0.35, -0.65, 0, [0.5, 0.68, 0.56]], [0.35, -0.65, 0, [1.05, 0.95, 0.8]], [-0.35, 0.65, Math.PI, [1.05, 0.95, 0.8]], [0.35, 0.65, Math.PI, [0.5, 0.68, 0.56]], [-0.95, 0.05, Math.PI / 2, [0.5, 0.68, 0.56]]]) out.push(['xchair', kt.x + dx, kt.z + dz, yaw, 0.92, tint]);
+  const dk = FURNITURE.find(f => f.kind === 'desk');     // bentwood chairs at Troy's desk
+  out.push(['xchair', dk.x - 0.4, dk.z + 0.75, Math.PI, 0.92, [0.95, 0.85, 0.7]], ['xchair', dk.x + 0.55, dk.z + 0.8, Math.PI + 0.35, 0.92, [0.95, 0.85, 0.7]]);
+  out.push(['pot', -12.3, 6.3, 0, 1.0], ['pot', 10.3, 6.35, 0, 1.0], ['pot', -7.6, 6.3, 0, 0.85], ['pot', 3.9, -1.6, 0, 0.9]);
+  return out;
+})();
+// Ceiling fans (they spin, with a warm light under each) and the hanging iron lanterns and
+// the stairwell chandelier (lights only: the fittings are in the house model).
+// ([x, z, ceiling height]; downstairs the ceiling is HOUSE.wallH)
+export const HOUSE_FANS = [[-3.6, 3.0], [0.1, 3.0], [7.7, 3.6], [-10, 3.2], [7.8, -5.0], [-10, -6.4], [-4.0, -2.6, 7.4], [1.5, -2.8, 7.4]];
+export const HOUSE_LIGHTS = [[-1.5, 2.3, -8.3], [-4.5, 2.95, -3.0], [1.5, 2.95, -3.0], [-10, 2.95, -2.5], [6.3, 2.95, 0.1]];
 
 export const DOG_LEASH = 32; // dogs only chase cows this close to a player
 
@@ -635,7 +896,7 @@ export const START_POINTS = 500;
 
 // Wall-buy stations: walk up, hold E. Buying a gun you already own refills its ammo for half.
 export const WALL_BUYS = [
-  { weapon: 'shotgun', cost: 500,  x: -3.35, z: 4.6,  nx: -1, nz: 0 },   // living room, on the partition wall
+  { weapon: 'shotgun', cost: 500,  x: -7.25, z: 4.0,  nx: -1, nz: 0 },   // bar room, on the wall to the big room
   { weapon: 'hunting', cost: 1000, x: 25.7,  z: -10,  nx: -1, nz: 0 },   // outside the bunkhouse
   { weapon: 'lmg',     cost: 2000, x: -25.7, z: 22,   nx: 1,  nz: 0 },   // outside the feed store
 ];

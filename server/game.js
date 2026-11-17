@@ -10,7 +10,8 @@
 import {
   MAP_HALF, SOLIDS, ENTRIES, MAX_BOARDS, PLAYER_SPAWNS, COW_TYPES, WEAPONS, START_WEAPONS, START_POINTS, WALL_BUYS, BUY_RANGE,
   MELEE, GRENADE, POWERUP_TYPES, POWERUP_CHANCE, POWERUP_TIME, REPAIR_TIME, REPAIR_RANGE,
-  resolveCircle, raySolids, raySphere, cowHitSpheres, insideHouse, heightAt, shoreZ, solidsNear, playerPassable, DOG_TYPES, DOG_LEASH, BLANKET, COW_TYPE_LIST, LOCALS_WAVE, BOSS_WAVE, BOTTLE,
+  resolveCircle, raySolids, raySphere, cowHitSpheres, insideHouse, heightAt, shoreZ, solidsNear, playerPassable, DOG_TYPES, DOG_LEASH, BLANKET, PORTALS, indoorWaypoint,
+  groundHeight, levelOf, UPPER, STAIRS, COW_TYPE_LIST, LOCALS_WAVE, BOSS_WAVE, BOTTLE,
   VEHICLES, VEHICLE_SEATS, ENTER_RANGE, DRIVE, vehicleLocal, vehicleWorld, vehicleGap, pushOutOfVehicle,
   POWER, PERKS, PERK_MACHINES, MAX_PERKS, BOX, PAP, TRAP, USE_RANGE, stationSpot, weaponStats, maxHealth,
 } from '../shared/world.js';
@@ -28,18 +29,39 @@ const START_SCORE = +process.env.RD_START_POINTS || START_POINTS; // (for testin
 const START_WAVE = Math.max(1, parseInt(process.env.RD_START_WAVE || '1', 10) || 1); // for testing later rounds
 
 // ---- Path grid ------------------------------------------------------------
+// Two layers: the whole map at ground level on a 1 m grid, and the upper floor and the flat
+// roof on a finer 0.5 m grid (indoors is tight). The two stairs join them.
 const CELL = 1;
 const GRID = Math.ceil((MAP_HALF * 2) / CELL);
 const N = GRID * GRID;
 const toCell = (v) => Math.max(0, Math.min(GRID - 1, Math.floor((v + MAP_HALF) / CELL)));
 const cellOf = (x, z) => toCell(z) * GRID + toCell(x);
 const NEIGH = [[1, 0, 1], [-1, 0, 1], [0, 1, 1], [0, -1, 1], [1, 1, 1.414], [1, -1, 1.414], [-1, 1, 1.414], [-1, -1, 1.414]];
+const L1 = { x0: -16, z0: -13, cs: 0.5, w: 60, d: 44 };   // x -16..14, z -13..9
+const N1 = L1.w * L1.d, NT = N + N1;
+const cell1 = (x, z) => {
+  const cx = Math.floor((x - L1.x0) / L1.cs), cz = Math.floor((z - L1.z0) / L1.cs);
+  return cx < 0 || cz < 0 || cx >= L1.w || cz >= L1.d ? -1 : N + cz * L1.w + cx;
+};
+const nodeOf = (x, z, y = 0) => { if (levelOf(y)) { const c = cell1(x, z); if (c >= 0) return c; } return cellOf(x, z); };
+const nodeCentre = (i) => i < N
+  ? [((i % GRID) + 0.5) * CELL - MAP_HALF, (((i / GRID) | 0) + 0.5) * CELL - MAP_HALF]
+  : [L1.x0 + (((i - N) % L1.w) + 0.5) * L1.cs, L1.z0 + ((((i - N) / L1.w) | 0) + 0.5) * L1.cs];
+// the stairs: walking a flight joins its foot (ground layer) to its head (upper layer)
+const stairAt = (x, z) => STAIRS.find(st => x > st.x0 - 0.05 && x < st.x1 + 0.05 && z > st.z0 && z < st.z1) || null;
+const LINKS = new Map();   // node -> [[node, cost]]
+for (const st of STAIRS) {
+  st.footNode = cellOf(...st.foot); st.headNode = cell1(...st.head);
+  const cost = Math.round((st.x1 - st.x0 + 1.3) * 12);
+  for (const [a, b] of [[st.footNode, st.headNode], [st.headNode, st.footNode]]) { if (!LINKS.has(a)) LINKS.set(a, []); LINKS.get(a).push([b, cost]); }
+}
 
-const baseBlocked = new Uint8Array(N);
+const baseBlocked = new Uint8Array(NT);
 (() => {
+  // ground layer: everything standing on the ground (not the floors and walls upstairs)
   const inflate = 0.6; // roughly a cow's collision radius
   for (const b of SOLIDS) {
-    if (b.h <= 0.4) continue;
+    if (b.h <= 0.4 || b.nav === false || (b.y0 || 0) >= 1.6) continue;
     const x0 = toCell(b.x - b.w / 2 - inflate), x1 = toCell(b.x + b.w / 2 + inflate);
     const z0 = toCell(b.z - b.d / 2 - inflate), z1 = toCell(b.z + b.d / 2 + inflate);
     for (let gz = z0; gz <= z1; gz++) for (let gx = x0; gx <= x1; gx++) baseBlocked[gz * GRID + gx] = 1;
@@ -49,32 +71,70 @@ const baseBlocked = new Uint8Array(N);
     const x = (gx + 0.5) * CELL - MAP_HALF, z = (gz + 0.5) * CELL - MAP_HALF;
     if (z > shoreZ(x) - 1) baseBlocked[gz * GRID + gx] = 1;
   }
+  // upper layer: open only where there's floor at the upper level, minus what stands on it
+  const U = UPPER.y;
+  for (let i = N; i < NT; i++) {
+    const [x, z] = nodeCentre(i);
+    baseBlocked[i] = solidsNear(x, z, 0.5).some(b => Math.abs(b.h - U) < 0.06 && Math.abs(x - b.x) < b.w / 2 && Math.abs(z - b.z) < b.d / 2) ? 0 : 1;
+  }
+  const inf1 = 0.3;
+  for (const b of SOLIDS) {
+    if ((b.y0 || 0) >= U + 1.6 || b.h <= U + 0.4 || b.nav === false) continue;
+    if (b.x + b.w / 2 < L1.x0 || b.x - b.w / 2 > L1.x0 + L1.w * L1.cs || b.z + b.d / 2 < L1.z0 || b.z - b.d / 2 > L1.z0 + L1.d * L1.cs) continue;
+    for (let x = b.x - b.w / 2 - inf1; x < b.x + b.w / 2 + inf1 + L1.cs; x += L1.cs) for (let z = b.z - b.d / 2 - inf1; z < b.z + b.d / 2 + inf1 + L1.cs; z += L1.cs) {
+      const c = cell1(Math.min(x, b.x + b.w / 2 + inf1), Math.min(z, b.z + b.d / 2 + inf1));
+      if (c >= 0) baseBlocked[c] = 1;
+    }
+  }
+  // the doorways and arches between rooms: a corridor straight through each one
+  for (const p of PORTALS) for (let t = -1.4; t <= 1.4; t += 0.2) {
+    if (p.level) for (const l of [-0.2, 0.2]) { const c = cell1(p.x + p.nx * t + p.nz * l, p.z + p.nz * t + p.nx * l); if (c >= 0) baseBlocked[c] = 0; }
+    else baseBlocked[cellOf(p.x + p.nx * t, p.z + p.nz * t)] = 0;
+  }
+  // and the ends of the stairs (the foot of the inside one is tucked in a corner)
+  for (const st of STAIRS) {
+    for (let t = 0; t <= 2.6; t += 0.25) baseBlocked[cellOf(st.foot[0] - t * 0.3, st.foot[1] + (st === STAIRS[0] ? t : -t))] = 0;
+    baseBlocked[st.footNode] = 0;
+    for (let t = 0; t <= 0.6; t += 0.2) { const c = cell1(st.head[0] + t, st.head[1]); if (c >= 0) baseBlocked[c] = 0; }
+  }
 })();
 
-// a 1-cell corridor through each door/window, open only when it has no boards
+// a corridor through each door/window, open only when it has no boards
 const entryCells = ENTRIES.map(e => {
   const cells = new Set();
-  for (let t = -1.0; t <= 1.0; t += 0.25) cells.add(cellOf(e.x + e.nx * t, e.z + e.nz * t));
+  for (let t = -1.0; t <= 1.0; t += 0.2) {
+    if (e.level) for (const l of [-0.2, 0.2]) { const c = cell1(e.x + e.nx * t + e.nz * l, e.z + e.nz * t + e.nx * l); if (c >= 0) cells.add(c); }
+    else cells.add(cellOf(e.x + e.nx * t, e.z + e.nz * t));
+  }
   return [...cells];
 });
 
-// Dial's algorithm (bucketed Dijkstra) with integer costs: 10 straight, 14 diagonal.
+// Dial's algorithm (bucketed Dijkstra) with integer costs in tenths of a metre.
 // Searches out to `maxDist` metres only; cows always spawn well inside that.
-const blockedBuf = new Uint8Array(N);
-const DX = [1, -1, 0, 0, 1, 1, -1, -1], DZ = [0, 0, 1, -1, 1, -1, 1, -1], DC = [10, 10, 10, 10, 14, 14, 14, 14];
-const NB = 16; // bucket ring size > max edge cost
+const blockedBuf = new Uint8Array(NT);
+const DX = [1, -1, 0, 0, 1, 1, -1, -1], DZ = [0, 0, 1, -1, 1, -1, 1, -1], DC = [10, 10, 10, 10, 14, 14, 14, 14], DC1 = [5, 5, 5, 5, 7, 7, 7, 7];
+const NB = 256; // bucket ring size > the dearest edge (a whole flight of stairs)
 const bucketQ = Array.from({ length: NB }, () => []);
+
+// a source at a point; on a stair, both its ends (each by how far along the flight it is)
+function sourceNodes(x, z, y, c0 = 0) {
+  const st = stairAt(x, z);
+  if (st) { const k = (x - st.x0) / (st.x1 - st.x0); return [[st.footNode, c0 + k * 8], [st.headNode, c0 + (1 - k) * 8]]; }
+  return [[nodeOf(x, z, y), c0]];
+}
 
 function buildField(sources, boards, maxDist = 130) {
   blockedBuf.set(baseBlocked);
   ENTRIES.forEach((e, i) => { const open = boards[i] === 0; for (const c of entryCells[i]) blockedBuf[c] = open ? 0 : 1; });
-  const dist = new Float32Array(N).fill(Infinity);
-  const di = new Int32Array(N).fill(0x7fffffff);
+  const dist = new Float32Array(NT).fill(Infinity);
+  const di = new Int32Array(NT).fill(0x7fffffff);
   const limit = maxDist * 10;
   let pending = 0;
-  for (const [x, z, c0 = 0] of sources) {
-    const i = cellOf(x, z), d = Math.round(c0 * 10);
-    if (d < di[i]) { di[i] = d; bucketQ[d % NB].push(i); pending++; }
+  for (const [x, z, c0 = 0, y = 0] of sources) {
+    for (const [i, c] of sourceNodes(x, z, y, c0)) {
+      const d = Math.round(c * 10);
+      if (d < di[i]) { di[i] = d; bucketQ[d % NB].push(i); pending++; }
+    }
   }
   for (let cur = 0; pending > 0 && cur <= limit; cur++) {
     const bucket = bucketQ[cur % NB];
@@ -82,50 +142,80 @@ function buildField(sources, boards, maxDist = 130) {
       const i = bucket.pop(); pending--;
       if (di[i] !== cur) continue; // stale entry
       dist[i] = cur / 10;
-      const cx = i % GRID, cz = (i / GRID) | 0;
-      for (let k = 0; k < 8; k++) {
-        const nx = cx + DX[k], nz = cz + DZ[k];
-        if (nx < 0 || nz < 0 || nx >= GRID || nz >= GRID) continue;
-        const n = nz * GRID + nx;
-        if (blockedBuf[n]) continue;
-        if (k >= 4 && (blockedBuf[cz * GRID + nx] || blockedBuf[nz * GRID + cx])) continue;
-        const nd = cur + DC[k];
-        if (nd < di[n]) { di[n] = nd; bucketQ[nd % NB].push(n); pending++; }
+      const relax = (n, cost) => { const nd = cur + cost; if (nd < di[n]) { di[n] = nd; bucketQ[nd % NB].push(n); pending++; } };
+      if (i < N) {
+        const cx = i % GRID, cz = (i / GRID) | 0;
+        for (let k = 0; k < 8; k++) {
+          const nx = cx + DX[k], nz = cz + DZ[k];
+          if (nx < 0 || nz < 0 || nx >= GRID || nz >= GRID) continue;
+          const n = nz * GRID + nx;
+          if (blockedBuf[n]) continue;
+          if (k >= 4 && (blockedBuf[cz * GRID + nx] || blockedBuf[nz * GRID + cx])) continue;
+          relax(n, DC[k]);
+        }
+      } else {
+        const j = i - N, cx = j % L1.w, cz = (j / L1.w) | 0;
+        for (let k = 0; k < 8; k++) {
+          const nx = cx + DX[k], nz = cz + DZ[k];
+          if (nx < 0 || nz < 0 || nx >= L1.w || nz >= L1.d) continue;
+          const n = N + nz * L1.w + nx;
+          if (blockedBuf[n]) continue;
+          if (k >= 4 && (blockedBuf[N + cz * L1.w + nx] || blockedBuf[N + nz * L1.w + cx])) continue;
+          relax(n, DC1[k]);
+        }
       }
+      const links = LINKS.get(i);
+      if (links) for (const [n, cost] of links) relax(n, cost);
     }
   }
   for (const b of bucketQ) b.length = 0;
   return dist;
 }
 
-function fieldDir(dist, x, z) {
-  const cx = toCell(x), cz = toCell(z);
-  let best = dist[cz * GRID + cx], bx = 0, bz = 0;
+const toward = (x, z, tx, tz) => { const vx = tx - x, vz = tz - z, l = Math.hypot(vx, vz) || 1; return [vx / l, vz / l]; };
+
+// Which way to walk to go downhill in a field, from a point at height y. On a stair: up or
+// down it, whichever end is nearer the goal; at the foot or head of one: onto it if that's
+// the way.
+function fieldDir(dist, x, z, y = 0) {
+  const st = stairAt(x, z);
+  if (st) {
+    const up = dist[st.headNode] < dist[st.footNode];
+    return toward(x, z, up ? st.head[0] : st.foot[0] - 0.4, st.zm);
+  }
+  const i = nodeOf(x, z, y);
+  let best = dist[i], bn = -1;
+  const upper = i >= N;
+  const [cx, cz] = upper ? [(i - N) % L1.w, ((i - N) / L1.w) | 0] : [i % GRID, (i / GRID) | 0];
   for (const [dx, dz] of NEIGH) {
     const nx = cx + dx, nz = cz + dz;
-    if (nx < 0 || nz < 0 || nx >= GRID || nz >= GRID) continue;
-    const d = dist[nz * GRID + nx];
-    if (d < best) { best = d; bx = dx; bz = dz; }
+    if (upper ? (nx < 0 || nz < 0 || nx >= L1.w || nz >= L1.d) : (nx < 0 || nz < 0 || nx >= GRID || nz >= GRID)) continue;
+    const n = upper ? N + nz * L1.w + nx : nz * GRID + nx;
+    if (dist[n] < best) { best = dist[n]; bn = n; }
   }
-  if (bx === 0 && bz === 0) return null;
-  const tx = (cx + bx + 0.5) * CELL - MAP_HALF, tz = (cz + bz + 0.5) * CELL - MAP_HALF;
-  const vx = tx - x, vz = tz - z, l = Math.hypot(vx, vz) || 1;
-  return [vx / l, vz / l];
+  for (const st2 of STAIRS) {   // the stair from here beats the floor around it
+    const end = upper ? st2.headNode : st2.footNode, other = upper ? st2.footNode : st2.headNode;
+    if (Math.hypot(...nodeCentre(end).map((v, k) => v - [x, z][k])) < 1.2 && dist[other] + 4 < best) {
+      return toward(x, z, upper ? st2.x1 - 0.3 : st2.x0 + 0.3, st2.zm);
+    }
+  }
+  if (bn < 0) return null;
+  return toward(x, z, ...nodeCentre(bn));
 }
 
 // true if nothing solid (taller than a step) sits on the straight line between two points
-function clearLine(x0, z0, x1, z1, pad = 0.5) {
+function clearLine(x0, z0, x1, z1, pad = 0.5, y = 0) {
   const len = Math.hypot(x1 - x0, z1 - z0), n = Math.ceil(len / 0.5);
   for (let i = 1; i < n; i++) {
     const x = x0 + (x1 - x0) * i / n, z = z0 + (z1 - z0) * i / n;
     for (const b of solidsNear(x, z, 1)) {
-      if (b.h > 0.4 && Math.abs(x - b.x) < b.w / 2 + pad && Math.abs(z - b.z) < b.d / 2 + pad) return false;
+      if (b.h > y + 0.4 && (b.y0 || 0) < y + 1.0 && Math.abs(x - b.x) < b.w / 2 + pad && Math.abs(z - b.z) < b.d / 2 + pad) return false;
     }
   }
   return true;
 }
 
-const isOpenLand = (x, z) => !baseBlocked[cellOf(x, z)] && z < shoreZ(x) - 6;
+const isOpenLand = (x, z) => !baseBlocked[cellOf(x, z)] && z < shoreZ(x) - 6 && !(insideHouse(x, z) || stairAt(x, z));
 
 // ---- Room ----
 
@@ -285,8 +375,8 @@ export class Room {
           this.sendTo(driver, { t: 'ram', k: def.boss ? 0 : def.heavy ? 0.35 : c.state === 'dead' ? 0.9 : 0.8 });
           if (!def.heavy) { out[0] += fs * 1.2; out[1] += fc * 1.2; }
         }
-        const [nx, nz] = resolveCircle(out[0], out[1], r);
-        if (insideHouse(nx, nz) === insideHouse(c.x, c.z)) { c.x = nx; c.z = nz; }
+        const [nx, nz] = resolveCircle(out[0], out[1], r, c.y, 0.45);
+        if (insideHouse(nx, nz, c.y) === insideHouse(c.x, c.z, c.y)) { c.x = nx; c.z = nz; }
       }
     }
   }
@@ -825,7 +915,7 @@ export class Room {
     for (const e of ENTRIES) {
       if (this.boards[e.id] >= MAX_BOARDS || this.vaulting[e.id]) continue;
       const d = Math.hypot(p.x - (e.x - e.nx * 0.8), p.z - (e.z - e.nz * 0.8));
-      if (d < bd) { bd = d; best = e; }
+      if (d < bd && Math.abs((p.y || 0) - e.y) < 1.5) { bd = d; best = e; }
     }
     return best;
   }
@@ -834,11 +924,11 @@ export class Room {
     this.playerAge += dt;
     this.entryAge += dt;
     if (alive.length && (this.playerAge > 0.6 || !this.playerField)) {
-      this.playerField = buildField(alive.map(p => [p.x, p.z, 0]), this.boards);
+      this.playerField = buildField(alive.map(p => [p.x, p.z, 0, p.y || 0]), this.boards);
       this.playerAge = 0;
     }
     else if (this.entryAge > 1.2 || !this.entryField) {
-      this.entryField = buildField(ENTRIES.map(e => [e.out[0], e.out[1], this.boards[e.id] * 2.5]), this.boards, 110);
+      this.entryField = buildField(ENTRIES.map(e => [e.out[0], e.out[1], this.boards[e.id] * 2.5, e.y]), this.boards, 110);
       this.entryAge = 0;
     }
 
@@ -853,17 +943,18 @@ export class Room {
       if (c.state === 'vault') { this.updateVault(c, dt); continue; }
       if (c.stagger > 0) { c.stagger -= dt; continue; }
 
-      let target = null, td = Infinity;
-      for (const p of alive) {
-        const d = Math.hypot(p.x - c.x, p.z - c.z);
-        if (d < td) { td = d; target = p; }
+      let target = null, td = Infinity, best = Infinity;
+      for (const p of alive) {   // nearest player, counting a floor between as a long way round
+        const d = Math.hypot(p.x - c.x, p.z - c.z), k = d + Math.abs((p.y || 0) - c.y) * 2;
+        if (k < best) { best = k; td = d; target = p; }
       }
       if (!target) { c.state = 'walk'; continue; }
       if (def.boss) { this.bossThrow(c, target, td, dt); this.bossTaunt(c, dt); }
-      const cIn = insideHouse(c.x, c.z), tIn = insideHouse(target.x, target.z);
+      const ty = target.y || 0, sameFloor = levelOf(c.y) === levelOf(ty);
+      const cIn = insideHouse(c.x, c.z, c.y), tIn = insideHouse(target.x, target.z, ty);
 
       // a dog snapping at its legs gets the horns first
-      const pest = this.dogs.find(d => d.state !== 3 && !DOG_TYPES[d.id - 1].hider && Math.hypot(d.x - c.x, d.z - c.z) < def.reach * 0.8 && insideHouse(d.x, d.z) === insideHouse(c.x, c.z));
+      const pest = levelOf(c.y) === 0 && this.dogs.find(d => d.state !== 3 && !DOG_TYPES[d.id - 1].hider && Math.hypot(d.x - c.x, d.z - c.z) < def.reach * 0.8 && insideHouse(d.x, d.z) === insideHouse(c.x, c.z));
       if (pest && Math.random() < 0.5) {
         c.state = 'attack';
         c.yaw = turnToward(c.yaw, Math.atan2(pest.x - c.x, pest.z - c.z), dt * 8);
@@ -872,8 +963,8 @@ export class Room {
       }
 
       // attack: same side of the walls, or reaching through the opening it's at
-      const throughOpening = c.entry != null && Math.hypot(target.x - ENTRIES[c.entry].x, target.z - ENTRIES[c.entry].z) < 1.6;
-      const standingHigh = target.y - heightAt(target.x, target.z) > 1.9 * def.scale;
+      const throughOpening = c.entry != null && Math.hypot(target.x - ENTRIES[c.entry].x, target.z - ENTRIES[c.entry].z) < 1.6 && Math.abs(ty - ENTRIES[c.entry].y) < 1.5;
+      const standingHigh = ty - c.y > 1.9 * def.scale || c.y - ty > 1.2;
       if (td < def.reach && !standingHigh && (cIn === tIn || throughOpening)) {
         c.state = 'attack';
         c.yaw = turnToward(c.yaw, Math.atan2(target.x - c.x, target.z - c.z), dt * 8);
@@ -890,16 +981,17 @@ export class Room {
         if (c.entry == null) {
           for (const e of ENTRIES) {
             const spot = cIn ? e.in : e.out;
-            if (Math.hypot(spot[0] - c.x, spot[1] - c.z) < 1.6) { c.entry = e.id; c.tearT = def.tear; break; }
+            if (Math.hypot(spot[0] - c.x, spot[1] - c.z) < 1.6 && Math.abs(c.y - e.y) < 1.2) { c.entry = e.id; c.tearT = def.tear; break; }
           }
         }
         if (c.entry != null) { this.workEntry(c, cIn, cows, dt); continue; }
-        const routed = this.playerField[cellOf(c.x, c.z)] < Infinity;
-        const field = routed ? this.playerField : cIn ? null : this.entryField;
-        let dir = field && fieldDir(field, c.x, c.z);
-        if (!dir) { // inside with no open route: head for the nearest door/window from the inside
-          const e = ENTRIES.reduce((a, b) => (Math.hypot(b.in[0] - c.x, b.in[1] - c.z) < Math.hypot(a.in[0] - c.x, a.in[1] - c.z) ? b : a));
-          const spot = cIn ? e.in : e.out, l = Math.hypot(spot[0] - c.x, spot[1] - c.z) || 1;
+        const routed = this.playerField[nodeOf(c.x, c.z, c.y)] < Infinity || !!stairAt(c.x, c.z);
+        const field = routed ? this.playerField : cIn ? this.entryField : this.entryField;
+        let dir = field && fieldDir(field, c.x, c.z, c.y);
+        if (!dir) { // inside with no open route: head for the nearest door/window on this floor
+          const mine = ENTRIES.filter(e => e.level === levelOf(c.y));
+          const e = (mine.length ? mine : ENTRIES).reduce((a, b) => (Math.hypot(b.in[0] - c.x, b.in[1] - c.z) < Math.hypot(a.in[0] - c.x, a.in[1] - c.z) ? b : a));
+          const spot = cIn ? indoorWaypoint(c.x, c.z, e.in[0], e.in[1], c.y) : e.out, l = Math.hypot(spot[0] - c.x, spot[1] - c.z) || 1;
           dir = [(spot[0] - c.x) / l, (spot[1] - c.z) / l];
         }
         c.state = 'walk';
@@ -910,8 +1002,8 @@ export class Room {
       // same side: chase
       c.entry = null;
       c.state = 'walk';
-      const direct = td < 5 && clearLine(c.x, c.z, target.x, target.z);
-      let dir = direct ? [(target.x - c.x) / td, (target.z - c.z) / td] : fieldDir(this.playerField, c.x, c.z);
+      const direct = td < 5 && sameFloor && !stairAt(c.x, c.z) && clearLine(c.x, c.z, target.x, target.z, 0.5, c.y);
+      let dir = direct ? [(target.x - c.x) / td, (target.z - c.z) / td] : fieldDir(this.playerField, c.x, c.z, c.y);
       if (!dir) dir = [(target.x - c.x) / td, (target.z - c.z) / td];
       this.moveCow(c, dir, cows, dt);
     }
@@ -953,10 +1045,10 @@ export class Room {
     const k = Math.min(1, c.vaultT);
     c.x = c.vaultFrom[0] + (c.vaultTo[0] - c.vaultFrom[0]) * k;
     c.z = c.vaultFrom[1] + (c.vaultTo[1] - c.vaultFrom[1]) * k;
-    c.y = Math.sin(k * Math.PI) * (e.sill + 0.35);
+    c.y = e.y + Math.sin(k * Math.PI) * (e.sill + 0.35);
     c.yaw = Math.atan2(c.vaultTo[0] - c.vaultFrom[0], c.vaultTo[1] - c.vaultFrom[1]);
     if (k >= 1) {
-      c.y = 0;
+      c.y = e.y;
       c.state = 'walk';
       this.vaulting[e.id] = 0;
       c.entry = null;
@@ -965,10 +1057,10 @@ export class Room {
 
   moveCow(c, dir, cows, dt, speedMul = 1) {
     const def = COW_TYPES[c.type];
-    const cIn = insideHouse(c.x, c.z);
+    const cIn = insideHouse(c.x, c.z, c.y);
     let sx = 0, sz = 0;
     for (const o of cows) {
-      if (o === c || o.state === 'dead' || o.state === 'vault') continue;
+      if (o === c || o.state === 'dead' || o.state === 'vault' || Math.abs(o.y - c.y) > 1.5) continue;
       const dx = c.x - o.x, dz = c.z - o.z;
       if (Math.abs(dx) > 3 || Math.abs(dz) > 3) continue;
       const d2 = dx * dx + dz * dz;
@@ -982,11 +1074,22 @@ export class Room {
       dir = [dir[0] * cs - dir[1] * sn, dir[0] * sn + dir[1] * cs];
       speed *= 0.75 + 0.45 * Math.sin(this.time * 1.7 + c.id * 2);
     }
-    let nx = c.x + dir[0] * speed * dt + sx * 0.4;
-    let nz = c.z + dir[1] * speed * dt + sz * 0.4;
-    [nx, nz] = resolveCircle(nx, nz, Math.min(0.85, def.radius * 0.7));
-    if (insideHouse(nx, nz) !== cIn) return; // walls only get crossed by vaulting
-    c.x = nx; c.z = nz;
+    const r = Math.min(cIn ? 0.6 : 0.85, def.radius * 0.7);
+    const stepTo = (dx, dz) => resolveCircle(c.x + dx * speed * dt + sx * 0.4, c.z + dz * speed * dt + sz * 0.4, r, c.y, 0.45);
+    const turn = (a) => { const cs = Math.cos(a), sn = Math.sin(a); return [dir[0] * cs - dir[1] * sn, dir[0] * sn + dir[1] * cs]; };
+    // walked head-on into a table or a chair: walk round it for a moment, keeping to one side
+    c.sideT = Math.max(0, (c.sideT || 0) - dt);
+    let [nx, nz] = c.sideT > 0 ? stepTo(...turn(c.side * 1.15)) : stepTo(dir[0], dir[1]);
+    if (Math.hypot(nx - c.x, nz - c.z) < speed * dt * 0.3) {
+      c.side = c.side || (c.id % 2 ? 1 : -1);
+      round: for (const s of [c.side, -c.side]) for (const a of [1.15, 1.6]) {
+        const [tx, tz] = stepTo(...turn(s * a));
+        if (Math.hypot(tx - c.x, tz - c.z) > speed * dt * 0.5) { nx = tx; nz = tz; c.side = s; c.sideT = 0.7; break round; }
+      }
+    }
+    const ny = groundHeight(nx, nz, r * 0.5, c.y, 0.5);
+    if (insideHouse(nx, nz, ny) !== cIn && !stairAt(nx, nz) && !stairAt(c.x, c.z)) return; // walls only get crossed by vaulting
+    c.x = nx; c.z = nz; c.y = ny;
     c.yaw = turnToward(c.yaw, Math.atan2(dir[0], dir[1]), dt * (c.type === 'runner' || c.type === 'local' ? 9 : def.boss ? 2.5 : 5));
   }
 
@@ -1006,7 +1109,7 @@ export class Room {
       // closest living cow near the players; ones on this side of the walls come first
       let prey = null, best = Infinity, pd = Infinity;
       for (const c of this.cows.values()) {
-        if (c.state === 'dead' || c.state === 'vault') continue;
+        if (c.state === 'dead' || c.state === 'vault' || levelOf(c.y) || stairAt(c.x, c.z)) continue;   // dogs stay downstairs
         const dd = Math.hypot(c.x - d.x, c.z - d.z);
         if (dd > def.sight) continue;
         if (owner && Math.hypot(c.x - owner.x, c.z - owner.z) > DOG_LEASH) continue;
@@ -1031,11 +1134,14 @@ export class Room {
         goal = this.dogRoute(d, prey.x, prey.z);
         if (Math.random() < dt * 0.6) this.broadcastEvent({ t: 'bark', dog: d.id });
       } else if (owner) {
-        const od = Math.hypot(owner.x - d.x, owner.z - d.z);
-        if (od > 5) { goal = this.dogRoute(d, owner.x, owner.z); speed = od > 12 ? def.speed : def.speed * 0.55; }
+        // with the owner upstairs, wait at the foot of the stair they went up
+        const [ox, oz] = levelOf(owner.y || 0) || stairAt(owner.x, owner.z)
+          ? (insideHouse(owner.x, owner.z, owner.y || 0) || stairAt(owner.x, owner.z) === STAIRS[0] ? STAIRS[0].foot : STAIRS[1].foot) : [owner.x, owner.z];
+        const od = Math.hypot(ox - d.x, oz - d.z);
+        if (od > 5) { goal = this.dogRoute(d, ox, oz); speed = od > 12 ? def.speed : def.speed * 0.55; }
         else { // mill about near the owner
           d.wander += dt * 0.4;
-          goal = this.dogRoute(d, owner.x + Math.cos(d.wander + d.id * 2) * 3, owner.z + Math.sin(d.wander + d.id * 2) * 3);
+          goal = this.dogRoute(d, ox + Math.cos(d.wander + d.id * 2) * 3, oz + Math.sin(d.wander + d.id * 2) * 3);
           speed = def.speed * 0.25;
         }
       }
@@ -1050,14 +1156,11 @@ export class Room {
     }
   }
 
-  // Pepper doesn't fight: she bolts into the house, through the arch to the living room,
-  // and crawls under her blanket (state 4), where she stays.
+  // Pepper doesn't fight: she bolts into the house, through to Troy's office, and crawls
+  // under her blanket behind the desk (state 4), where she stays.
   hideDog(d, def, dt) {
     if (d.hidden) { d.state = 4; d.x = BLANKET.x; d.z = BLANKET.z; d.yaw = BLANKET.yaw; return; }
-    const dIn = insideHouse(d.x, d.z);
-    const [vx, vz] = BLANKET.via;
-    const target = !dIn || d.x > vx + 0.6 ? [vx, vz] : [BLANKET.x, BLANKET.z];
-    const goal = this.dogRoute(d, target[0], target[1]);
+    const goal = this.dogRoute(d, BLANKET.x, BLANKET.z);
     const gx = goal[0] - d.x, gz = goal[1] - d.z, gl = Math.hypot(gx, gz);
     if (Math.hypot(BLANKET.x - d.x, BLANKET.z - d.z) < 0.35) { d.hidden = true; d.state = 4; return; }
     d.state = 1;
@@ -1079,12 +1182,12 @@ export class Room {
       if (Math.hypot(d.x - far[0], d.z - far[1]) > 0.8) return far;
       d.via = null;
     }
-    if (dIn === insideHouse(gx, gz)) { d.via = null; return [gx, gz]; }
+    if (dIn === insideHouse(gx, gz)) { d.via = null; return dIn ? indoorWaypoint(d.x, d.z, gx, gz) : [gx, gz]; }
     let door = d.via != null ? ENTRIES[d.via] : null;
     if (!door) {
       let best = Infinity;
       for (const e of ENTRIES) {
-        if (e.kind !== 'door') continue;
+        if (e.kind !== 'door' || e.level) continue;   // (the upstairs door is up on the roof)
         const k = Math.hypot(e.x - d.x, e.z - d.z) + Math.hypot(e.x - gx, e.z - gz);
         if (k < best) { best = k; door = e; }
       }
@@ -1092,6 +1195,7 @@ export class Room {
     }
     const near = dIn ? door.in : door.out, far = dIn ? door.out : door.in;
     if (d.viaStage === 0 && Math.hypot(d.x - near[0], d.z - near[1]) < 0.8) { d.viaStage = 1; d.viaOut = dIn; }
+    if (d.viaStage === 0 && dIn) return indoorWaypoint(d.x, d.z, near[0], near[1]); // find the way to the door first
     return d.viaStage === 0 ? near : far;
   }
 
@@ -1181,3 +1285,6 @@ function turnToward(a, b, maxStep) {
   if (d < -Math.PI) d += Math.PI * 2;
   return a + Math.max(-maxStep, Math.min(maxStep, d));
 }
+
+// for the headless tests
+export const _nav = { buildField, fieldDir, nodeOf, cellOf, cell1, baseBlocked, N, LINKS, stairAt };
