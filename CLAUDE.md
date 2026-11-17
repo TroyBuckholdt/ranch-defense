@@ -49,6 +49,11 @@ Update it when something here changes or a new standing preference comes up.
     players within ~3.4 m and blowing up the cows beside it (chain reactions).
   - 16, 26, 36: **marsh fog**: the fog thickens for the round (client only; `FOG_DENSITY`).
   - The twist rides on the `wave` event and in the snapshot (`tw`). Test: `scripts/twisttest.js`.
+- **Secret boss summon** (Troy, Nov 17: "a command secret so i spawn the final boss whenever"):
+  type `boss` while playing, or on a phone tap the wave number five times within two seconds.
+  Any player can; Rafael walks out of the jungle into whatever round is running (between
+  rounds he becomes the round). 3 s cooldown, so several can be stacked. `onSummon` in
+  `server/game.js`; test: `scripts/summontest.js`.
 - **Trucks**: the F-150 and Chevy are drivable (E to get in; driver, front passenger, two in
   the bed). Driving faster than a jog kills cows and locals; bulls and Rafael stop the truck.
 - **Road**: white caliche road from the driveway out of the south gate to the beach.

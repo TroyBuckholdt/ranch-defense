@@ -1,0 +1,21 @@
+// The secret summon: Rafael on demand, mid-round and between rounds.
+import { Room } from '../server/game.js';
+const room = new Room('t', () => {}); clearInterval(room.interval);
+const events = [];
+const p = room.addPlayer(1, 'Troy', s => events.push(JSON.parse(s)));
+const bosses = () => [...room.cows.values()].filter(c => c.type === 'rafael' && c.state !== 'dead').length;
+const fail = (m) => { console.error('FAIL', m); process.exit(1); };
+if (room.phase !== 'intermission') fail('expected intermission at start');
+room.onSummon(p);
+if (bosses() !== 1) fail('no Rafael between rounds');
+if (room.phase !== 'wave') fail('summon between rounds should start a fight');
+room.onSummon(p);
+if (bosses() !== 1) fail('cooldown ignored');
+for (let i = 0; i < 20 * 4; i++) room.step();
+room.onSummon(p);
+if (bosses() !== 2) fail('second Rafael after cooldown');
+for (const c of room.cows.values()) room.damageCow(null, c, 1e9, false, [c.x, 3, c.z], [0, 1, 0]);
+for (let i = 0; i < 20 * 3; i++) room.step();
+if (room.phase !== 'intermission') fail('round should clear once he is dead, phase=' + room.phase);
+console.log('summon test passed');
+process.exit(0);

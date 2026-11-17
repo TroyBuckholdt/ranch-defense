@@ -376,6 +376,19 @@ addEventListener('keydown', (e) => {
   if (e.code === 'KeyG') throwGrenade();
   if (e.code === 'KeyE') useKey();
   if (e.code === 'KeyF') { flashlightOn = !flashlightOn; audio.click(); }
+  // secret: type "boss" to call Rafael out
+  secretKeys = (secretKeys + e.key.toLowerCase()).slice(-4);
+  if (secretKeys === 'boss') { secretKeys = ''; net.send({ t: 'summon' }); }
+});
+let secretKeys = '';
+// same secret on a phone: tap the wave number five times within two seconds
+let secretTaps = [];
+$('wave-label').style.pointerEvents = 'auto';
+$('wave-label').addEventListener('pointerdown', () => {
+  const now = performance.now();
+  secretTaps = secretTaps.filter(t => now - t < 2000);
+  secretTaps.push(now);
+  if (secretTaps.length >= 5 && playing) { secretTaps = []; net.send({ t: 'summon' }); }
 });
 addEventListener('keyup', (e) => {
   keys[e.code] = false;
@@ -819,6 +832,10 @@ function onEvent(m) {
       fx.clearPools();
       ride = null; driving = null;
       loadout.weapons = [...START_WEAPONS]; loadout.cur = 0; loadout.ammo = {}; weapon.setGun('rifle');
+      break;
+    case 'summon':
+      banner(tr('RAFAEL'), tr('{0} called him out. He\'s huge, he\'s drunk, and he\'s throwing bottles.', escapeHtml(m.by)), 6000);
+      preloadHumans();
       break;
     case 'chat':
       feed(m.k ? tr(m.k, ...(m.a || [])) : m.msg);

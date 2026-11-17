@@ -101,6 +101,7 @@ wss.on('connection', (ws) => {
     else if (m.t === 'box') room.onBox(player, m);
     else if (m.t === 'pap') room.onPap(player, m);
     else if (m.t === 'trap') room.onTrap(player, m);
+    else if (m.t === 'summon') room.onSummon(player);
     else if (m.t === 'switch') { if (player.weapons[m.slot | 0]) player.cur = m.slot | 0; }
     else if (m.t === 'ping') send(JSON.stringify({ t: 'pong', c: m.c }));
   });
