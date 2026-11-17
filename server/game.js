@@ -11,7 +11,7 @@ import {
   MAP_HALF, SOLIDS, ENTRIES, MAX_BOARDS, PLAYER_SPAWNS, COW_TYPES, WEAPONS, START_WEAPONS, START_POINTS, WALL_BUYS, BUY_RANGE,
   MELEE, GRENADE, POWERUP_TYPES, POWERUP_CHANCE, POWERUP_TIME, REPAIR_TIME, REPAIR_RANGE,
   resolveCircle, raySolids, raySphere, cowHitSpheres, insideHouse, heightAt, shoreZ, solidsNear, playerPassable, DOG_TYPES, DOG_LEASH, BLANKET, PORTALS, indoorWaypoint,
-  groundHeight, levelOf, UPPER, STAIRS, inPond, COW_TYPE_LIST, LOCALS_WAVE, BOSS_WAVE, BOTTLE,
+  groundHeight, levelOf, UPPER, STAIRS, inPond, roundTwist, GOLD, BLOAT, STAMPEDE, COW_TYPE_LIST, LOCALS_WAVE, BOSS_WAVE, BOTTLE,
   VEHICLES, VEHICLE_SEATS, ENTER_RANGE, DRIVE, vehicleLocal, vehicleWorld, vehicleGap, pushOutOfVehicle,
   POWER, PERKS, PERK_MACHINES, MAX_PERKS, BOX, PAP, TRAP, USE_RANGE, stationSpot, weaponStats, maxHealth,
 } from '../shared/world.js';
@@ -236,6 +236,7 @@ export class Room {
     this.phase = 'intermission';
     this.timer = FIRST_WAVE_DELAY;
     this.toSpawn = [];
+    this.twist = ''; this.blasts = []; this.stampedeDir = 0;
     this.spawnTimer = 0;
     this.cows.clear();
     this.nades = []; this.powerups = []; this.bottles = []; this.instakill = 0; this.doublePts = 0;
@@ -596,6 +597,7 @@ export class Room {
 
   damageCow(p, c, dmg, head, hit, d) {
     if (c.state === 'dead') return;
+    if (p) c.lastHitBy = p.id;
     c.hp -= this.instakill > 0 ? (COW_TYPES[c.type].boss ? dmg * 3 : c.hp) : dmg;
     if (p) this.award(p, 10);
     let kill = false;
@@ -604,7 +606,13 @@ export class Room {
       this.killCow(c);
       if (COW_TYPES[c.type].boss) this.taunt(c, 'death');
       if (p) { p.kills += 1; this.award(p, COW_TYPES[c.type].score + (head ? 50 : 0)); }
-      if (Math.random() < POWERUP_CHANCE) this.dropPowerup(c.x, c.z);
+      if (COW_TYPES[c.type].flee) {
+        // the golden cow: everyone gets paid, the one who got her gets more, and a power-up drops
+        for (const q of this.players.values()) this.award(q, GOLD.reward);
+        if (p) this.award(p, GOLD.killerBonus);
+        this.dropPowerup(c.x, c.z, ['firesale', 'maxammo', 'double', 'instakill'][Math.floor(Math.random() * 4)]);
+        this.broadcastEvent({ t: 'gold', k: 'caught', by: p ? p.name : '' });
+      } else if (Math.random() < POWERUP_CHANCE) this.dropPowerup(c.x, c.z);
     } else if (!COW_TYPES[c.type].heavy && c.state !== 'vault') {
       c.stagger = 0.22;
     } else if (COW_TYPES[c.type].boss && c.tauntCd < 3 && (head || dmg > 150) && Math.random() < 0.5) {
@@ -648,8 +656,7 @@ export class Room {
     this.sendTo(p, { t: 'bought', w: st.weapon, weapons: p.weapons, ammo: owned });
   }
 
-  dropPowerup(x, z) {
-    const type = POWERUP_TYPES[Math.floor(Math.random() * POWERUP_TYPES.length)];
+  dropPowerup(x, z, type = POWERUP_TYPES[Math.floor(Math.random() * POWERUP_TYPES.length)]) {
     this.powerups.push({ id: this.nextPowerId++, type, x, z, t: 25 });
   }
 
@@ -744,10 +751,11 @@ export class Room {
     }
   }
 
-  killCow(c) {
+  killCow(c, by = null) {
     c.hp = 0;
     c.state = 'dead';
     c.deadAt = this.time;
+    if (c.bomb) { c.bomb = false; this.blasts.push({ x: c.x, y: c.y, z: c.z, t: BLOAT.delay, by: by || c.lastHitBy || null }); }
     if (c.entry != null && this.vaulting[c.entry] === c.id) this.vaulting[c.entry] = 0;
   }
 
@@ -793,6 +801,7 @@ export class Room {
     this.updateExtras(dt, alive);
     this.updateBox(dt); this.updatePap(dt); this.updateTrap(dt); this.updateShells(dt);
     this.updateBottles(dt);
+    this.updateBlasts(dt);
     this.broadcastSnapshot();
   }
 
@@ -821,16 +830,28 @@ export class Room {
       herd(count, 0);
       if (n % 5 === 0) for (let i = 0; i < 1 + Math.floor(n / 10); i++) list.splice(Math.floor(list.length / 2), 0, 'bull');
     }
+    const twist = kind ? '' : roundTwist(n);
+    this.twist = twist;
+    this.blasts = [];
+    if (twist === 'stampede') {
+      // the whole herd at once, from one side, all runners
+      list = list.map(() => 'runner');
+      for (let i = 0; i < Math.round(list.length * 0.25); i++) list.push('runner');
+      this.stampedeDir = Math.random() * Math.PI * 2;
+    }
+    if (twist === 'gold') list.splice(Math.min(3, list.length), 0, 'gold');
     this.toSpawn = list;
     this.spawnTimer = 2;
-    this.broadcastEvent({ t: 'wave', wave: n, count: list.length, kind });
+    this.broadcastEvent({ t: 'wave', wave: n, count: list.length, kind, twist });
   }
 
   // Cows stagger out of the jungle 45-75 m from a random player, never right on top of anyone.
   findSpawn(alive) {
     for (let tries = 0; tries < 40; tries++) {
       const anchor = alive[Math.floor(Math.random() * alive.length)];
-      const a = Math.random() * Math.PI * 2, r = 45 + Math.random() * 30;
+      // a stampede comes from one side; if that side is the sea, it swings round as it retries
+      const a = this.twist === 'stampede' ? this.stampedeDir + (Math.random() - 0.5) * STAMPEDE.spread + tries * 0.15 : Math.random() * Math.PI * 2;
+      const r = 45 + Math.random() * 30;
       const x = anchor.x + Math.cos(a) * r, z = anchor.z + Math.sin(a) * r;
       if (Math.abs(x) > MAP_HALF - 3 || Math.abs(z) > MAP_HALF - 3) continue;
       if (!isOpenLand(x, z) || insideHouse(x, z)) continue;
@@ -848,19 +869,23 @@ export class Room {
     if (COW_TYPES[this.toSpawn[0]].human && [...this.cows.values()].filter(c => c.state !== 'dead' && COW_TYPES[c.type].human).length >= MAX_ALIVE_PEOPLE) return;
     const spot = this.findSpawn(alive);
     if (!spot) return;
-    this.spawnTimer = Math.max(0.35, 1.6 - this.wave * 0.1);
+    this.spawnTimer = this.twist === 'stampede' ? STAMPEDE.every : Math.max(0.35, 1.6 - this.wave * 0.1);
     const type = this.toSpawn.shift();
     const [x, z] = spot;
     const def = COW_TYPES[type];
     // the boss doesn't scale with the round number, only with how many are fighting him
-    const hp = def.boss ? Math.round(def.hp * (1 + 0.4 * (this.players.size - 1)))
+    let hp = def.boss ? Math.round(def.hp * (1 + 0.4 * (this.players.size - 1)))
+      : def.flee ? Math.round(def.hp * (1 + 0.25 * (this.players.size - 1)))
       : Math.round(def.hp * (1 + (this.wave - 1) * 0.09));
+    if (this.twist === 'stampede') hp = Math.round(hp * STAMPEDE.hp);
     const id = this.nextCowId++;
     this.cows.set(id, {
       id, type, x, y: 0, z, yaw: Math.random() * 6.28, hp, maxHp: hp, state: 'walk',
       entry: null, tearT: def.tear, vaultT: 0,
-      attackCd: 0, stagger: 0, speedMul: 0.85 + Math.random() * 0.3, deadAt: 0, throwCd: 5, tauntCd: 1.5, tauntKind: 'spawn',
+      attackCd: 0, stagger: 0, speedMul: (0.85 + Math.random() * 0.3) * (this.twist === 'stampede' ? STAMPEDE.speed : 1), deadAt: 0, throwCd: 5, tauntCd: 1.5, tauntKind: 'spawn',
+      bomb: this.twist === 'bomb' && !def.heavy && !def.human && !def.flee, born: this.time,
     });
+    if (def.flee) this.broadcastEvent({ t: 'gold', k: 'loose' });
   }
 
   updatePlayers(dt, players, alive) {
@@ -949,6 +974,7 @@ export class Room {
         if (k < best) { best = k; td = d; target = p; }
       }
       if (!target) { c.state = 'walk'; continue; }
+      if (def.flee) { this.fleeCow(c, target, td, cows, dt); continue; }
       if (def.boss) { this.bossThrow(c, target, td, dt); this.bossTaunt(c, dt); }
       const ty = target.y || 0, sameFloor = levelOf(c.y) === levelOf(ty);
       const cIn = insideHouse(c.x, c.z, c.y), tIn = insideHouse(target.x, target.z, ty);
@@ -1052,6 +1078,58 @@ export class Room {
       c.state = 'walk';
       this.vaulting[e.id] = 0;
       c.entry = null;
+    }
+  }
+
+  // The golden cow: away from the nearest player, steering off the walls, the sea and the map
+  // edge, ambling when nobody's close. After GOLD.escape seconds she's gone.
+  fleeCow(c, target, td, cows, dt) {
+    if (this.time - c.born > GOLD.escape) {
+      this.killCow(c);
+      c.deadAt = this.time - 7.5;   // vanish, no carcass
+      this.broadcastEvent({ t: 'gold', k: 'gone' });
+      return;
+    }
+    if (td > 40) { // grazing: wander slowly
+      c.state = 'walk';
+      c.wander = (c.wander ?? c.yaw) + (Math.random() - 0.5) * dt * 1.5;
+      this.moveCow(c, [Math.sin(c.wander), Math.cos(c.wander)], cows, dt, 0.25);
+      return;
+    }
+    let best = null, bestK = -Infinity;
+    const away = Math.atan2(c.x - target.x, c.z - target.z);
+    for (let i = -7; i <= 7; i++) {   // try headings either side of straight away (wide enough to run along a wall)
+      const a = away + i * 0.35, fx = Math.sin(a), fz = Math.cos(a);
+      const lx = c.x + fx * 6, lz = c.z + fz * 6;
+      let k = -Math.abs(i) * 0.4;
+      if (Math.abs(lx) > MAP_HALF - 12 || Math.abs(lz) > MAP_HALF - 12 || lz > shoreZ(lx) - 8) k -= 10;
+      if (inPond(lx, lz) || insideHouse(lx, lz) || !clearLine(c.x, c.z, lx, lz, 0.7, 0)) k -= 6;
+      for (const p of this.players.values()) if (!p.dead && Math.hypot(p.x - lx, p.z - lz) < 8) k -= 4;
+      if (k > bestK) { bestK = k; best = [fx, fz]; }
+    }
+    c.state = 'walk';
+    this.moveCow(c, best, cows, dt, td < 15 ? 1 : 0.7);
+  }
+
+  // bloated cows burst a moment after they die: players nearby get hurt, cows nearby take a
+  // big hit (and may burst in turn)
+  updateBlasts(dt) {
+    for (let i = this.blasts.length - 1; i >= 0; i--) {
+      const b = this.blasts[i];
+      b.t -= dt;
+      if (b.t > 0) continue;
+      this.blasts.splice(i, 1);
+      const by = b.by != null ? this.players.get(b.by) || null : null;
+      for (const c of this.cows.values()) {
+        if (c.state === 'dead') continue;
+        const d = Math.hypot(c.x - b.x, c.z - b.z);
+        if (d < BLOAT.radius && Math.abs(c.y - b.y) < 2) this.damageCow(by, c, BLOAT.cowDamage * (1 - d / BLOAT.radius * 0.5), false, [c.x, 1, c.z], [c.x - b.x, 0.3, c.z - b.z]);
+      }
+      for (const p of this.players.values()) {
+        const d = Math.hypot(p.x - b.x, p.z - b.z);
+        if (d < BLOAT.playerRadius && Math.abs((p.y || 0) - b.y) < 2) this.hurtPlayer(p, BLOAT.playerDamage * (1 - d / BLOAT.playerRadius * 0.6), b);
+      }
+      this.broadcastEvent({ t: 'boom', p: [b.x, b.y + 0.8, b.z], gas: true });
     }
   }
 
@@ -1251,6 +1329,7 @@ export class Room {
       ts: Math.round(this.time * 1000),
       phase: this.phase,
       wave: this.wave,
+      tw: this.phase === 'wave' ? this.twist : '',
       timer: Math.max(0, Math.ceil(this.timer)),
       left: this.toSpawn.length + [...this.cows.values()].filter(c => c.state !== 'dead').length,
       boards: this.boards,

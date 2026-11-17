@@ -2126,7 +2126,7 @@ def build_lights():
 
 
 # ---------------------------------------------------------------- light bake and export
-LM_SIZE = 1024 if LO else 2048
+LM_SIZE = 1024 if LO else int(os.environ.get('RD_LM_SIZE', 2048))
 
 
 def join_static(objs):

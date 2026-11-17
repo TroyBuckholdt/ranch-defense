@@ -7,11 +7,11 @@ import { GTAOPass } from 'three/examples/jsm/postprocessing/GTAOPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { SunPass, ViewmodelPass } from './post.js';
 import {
-  ENTRIES, HOUSE, MAX_BOARDS, COW_TYPE_LIST, COW_TYPES, LOCALS_WAVE, BOSS_WAVE, BOTTLE, VEHICLES, VEHICLE_SEATS, ENTER_RANGE, vehicleGap, pushOutOfVehicle, vehicleWorld,
+  ENTRIES, HOUSE, MAX_BOARDS, COW_TYPE_LIST, COW_TYPES, LOCALS_WAVE, BOSS_WAVE, FOG_DENSITY, GOLD, BOTTLE, VEHICLES, VEHICLE_SEATS, ENTER_RANGE, vehicleGap, pushOutOfVehicle, vehicleWorld,
   STATIONS, stationSpot, USE_RANGE, PERKS, PERK_MACHINES, MAX_PERKS, BOX, PAP, TRAP, weaponStats, WEAPON, WEAPONS, START_WEAPONS, WALL_BUYS, BUY_RANGE, MELEE, REPAIR_RANGE, raySolids, raySphere, cowHitSpheres, insideHouse, heightAt, shoreZ, SAND_WIDTH,
 } from '../../shared/world.js';
 import { buildWorld } from './world.js';
-import { CowView, loadCowAsset } from './cow.js';
+import { CowView, loadCowAsset, COW_LOOK } from './cow.js';
 import { HumanView, preloadHumans, bottleMesh } from './humanoid.js';
 import { tauntLine } from './taunts.js';
 import { tr, lang, translateDom } from './i18n.js';
@@ -657,6 +657,10 @@ function onEvent(m) {
       const p = new THREE.Vector3(...m.p);
       fx.explosion(p);
       if (m.coco) fx.spawn(30, p, { spread: 2, up: 1.4, speed: 7, life: 1.2, size: 0.07, color: 0x5a3a1e, grav: 12, bounce: 0.3 }); // shell pieces
+      if (m.gas) { // a bloated cow bursting: green-brown muck and a sickly cloud
+        fx.spawn(40, p, { spread: 1.5, up: 2.2, speed: 8, life: 1.3, size: 0.08, color: 0x5d6b26, grav: 13, bounce: 0.2 });
+        for (let i = 0; i < 5; i++) fx.puff(p.clone().add(new THREE.Vector3((Math.random() - 0.5) * 2.5, Math.random() * 1.2, (Math.random() - 0.5) * 2.5)), 0x8fa04a, 3.5, 2.2);
+      }
       audio.explosion(m.p);
       const d = p.distanceTo(me.pos);
       if (d < 25) shake = Math.min(1.5, shake + (25 - d) / 15);
@@ -782,14 +786,25 @@ function onEvent(m) {
     case 'wave':
       if (m.kind === 'boss') { banner(tr('WAVE {0}: RAFAEL', m.wave), tr("He's huge, he's drunk, and he's throwing bottles. Keep moving."), 6000); preloadHumans(); }
       else if (m.kind === 'locals') { banner(tr('WAVE {0}: THE LOCALS', m.wave), tr('{0} locals with machetes are coming instead of the herd', m.count), 5000); preloadHumans(['local']); }
+      else if (m.twist === 'gold') banner(tr('WAVE {0}: THE GOLDEN COW', m.wave), tr("Rafael's prize cow is loose in the herd. Catch her before she gets away: points for everyone."), 6000);
+      else if (m.twist === 'stampede') { banner(tr('WAVE {0}: STAMPEDE!', m.wave), tr('{0} cows charging at once, all from one side. Get behind something.', m.count), 5500); audio.rumble(); }
+      else if (m.twist === 'bomb') banner(tr('WAVE {0}: BLOATED COWS', m.wave), tr('They burst a moment after they die. Kill them away from you, and from each other... or not.'), 6000);
+      else if (m.twist === 'fog') banner(tr('WAVE {0}: MARSH FOG', m.wave), tr("Fog is rolling in off the pond. Listen for them."), 5500);
       else banner(tr('WAVE {0}', m.wave), tr('{0} zombie cows are coming for the house', m.count));
+      setTwist(m.twist);
       // have the people-enemies downloaded before the rounds that need them
       if (m.wave >= LOCALS_WAVE - 2 && m.wave < BOSS_WAVE) preloadHumans(['local']);
       if (m.wave >= BOSS_WAVE - 2 && m.wave < BOSS_WAVE) preloadHumans();
       audio.stinger(false);
       audio.music(true);
       break;
+    case 'gold':
+      if (m.k === 'loose') audio.powerup('double');
+      else if (m.k === 'caught') { banner(tr('THE GOLDEN COW IS DOWN'), m.by ? tr('{0} got her. {1} points each, and a prize.', escapeHtml(m.by), GOLD.reward) : tr('{0} points each, and a prize.', GOLD.reward), 4000); audio.cash(); }
+      else if (m.k === 'gone') banner(tr('THE GOLDEN COW GOT AWAY'), tr('Rafael will never forgive you.'), 3500);
+      break;
     case 'waveclear':
+      setTwist('');
       banner(tr('WAVE {0} SURVIVED', m.wave), tr('Fix the barricades. Hold {0} at a window.', touchMode ? tr('USE') : 'E'));
       audio.stinger(true);
       audio.music(false);
@@ -876,6 +891,7 @@ function leftWord(wave, n) {
 function updateHud(dt) {
   const s = net.latest;
   if (!s || !mySnap) return;
+  if ((s.tw || '') !== twist) setTwist(s.tw);
   $('wave-num').textContent = s.wave;
   if ((s.phase === 'wave') !== !!audio.musicOn) audio.music(s.phase === 'wave'); // e.g. joined mid-wave
   $('wave-sub').textContent = s.phase === 'intermission' ? tr('Next wave in {0}s', s.timer)
@@ -970,6 +986,21 @@ function nearestRepairable() {
 const clock = new THREE.Timer();
 let elapsed = 0;
 
+// The round's twist (see roundTwist in shared/world.js): fog, bloated cows. Set by the wave
+// event, and from the snapshot for anyone who joins mid-round.
+let twist = '';
+const BASE_FOG = world.scene.fog ? world.scene.fog.density : 0.0034;
+function setTwist(t) {
+  twist = t || '';
+  COW_LOOK.bloat = twist === 'bomb';
+}
+function stepTwist(dt) {
+  const f = world.scene.fog;
+  if (!f) return;
+  const want = twist === 'fog' ? FOG_DENSITY : BASE_FOG;
+  f.density += (want - f.density) * Math.min(1, dt * 0.35);   // rolls in over a few seconds
+}
+
 function frame() {
   requestAnimationFrame(frame);
   clock.update();
@@ -984,6 +1015,7 @@ function frame() {
     syncTrucks(dt);
     stepLocal(dt);
     syncCows(dt);
+    stepTwist(dt);
     syncAvatars(dt);
     syncDogs(dt);
     syncPickups(dt);
@@ -1273,4 +1305,4 @@ function ambientSounds(dt) {
 frame();
 
 // expose a little for automated testing / debugging
-window.__rd = { machines, net, me, scene, camera, cowViews, renderer, CowView, HumanView, DogView, Avatar, weapon, world, vmScene, audio, fx, keys, truckViews, get driving() { return driving; }, get ride() { return ride; } };
+window.__rd = { machines, net, me, scene, camera, cowViews, renderer, CowView, COW_LOOK, HumanView, DogView, Avatar, weapon, world, vmScene, audio, fx, keys, truckViews, get driving() { return driving; }, get ride() { return ride; } };

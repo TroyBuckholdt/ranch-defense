@@ -17,6 +17,7 @@ import {
   HOUSE, HB, UPPER, HOUSE_PROPS, HOUSE_FANS, HOUSE_LIGHTS, ENTRIES, STRUCTURES, HAY_BALES, TREES, UNDERGROWTH, FENCE_SEGMENTS,
   FENCE_HEIGHT, YARD, MAX_BOARDS, VERANDA, HEDGES, PENS, WALL_BUYS, WEAPONS, heightAt, shoreZ, SAND_WIDTH, trailDist, solidsNear, ROAD, ROAD_HALF, roadDist, VEHICLES as TRUCKS, STATIONS, stationBox,
   POND, pondEdge, junglePatch,
+  WIRE_FENCES, ROAD_FENCE_OFFSET, YARD as YARD_BOX,
 } from '../../shared/world.js';
 import * as T from './textures.js';
 
@@ -221,6 +222,7 @@ export async function buildWorld(renderer, Q = { shadows: 2048, grass: 26000 }, 
   for (const b of HAY_BALES) scene.add(hayBale(b));
   scene.add(buildGardenWall());
   scene.add(buildRanchSigns());
+  scene.add(buildWireFences());
   scene.add(buildHedges(models));
   for (const p of PENS) scene.add(buildPen(p));
   for (const b of WALL_BUYS) scene.add(buildBuySign(b));
@@ -1059,6 +1061,66 @@ function buildRanchSigns() {
     const st = worldBox(w, h, 0.3, M.stucco, 2.4); st.position.set(gx + s * (half + dx), h / 2, gz); g.add(st);
   }
   return g;
+}
+
+// Barbed-wire fences: crooked wooden posts every three metres or so, four strands sagging a
+// little between them (Troy's trough photo).
+function buildWireFences() {
+  const group = new THREE.Group();
+  let seed = 4242;
+  const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
+  const nearTree = (x, z, r) => TREES.some(t => Math.abs(t.x - x) < r + 0.6 && Math.abs(t.z - z) < r + 0.6 && Math.hypot(t.x - x, t.z - z) < r + 0.35 * t.s);
+  const lines = WIRE_FENCES.map(l => l.map(p => p.slice()));
+  // both sides of the road, from outside the gate to the sand
+  for (const side of [-1, 1]) {
+    const pts = [];
+    for (let i = 0; i < ROAD.length - 1; i++) {
+      const [ax, az] = ROAD[i], [bx, bz] = ROAD[i + 1];
+      if (bz < 46 || az > 140) continue;
+      const L = Math.hypot(bx - ax, bz - az), nx = -(bz - az) / L, nz = (bx - ax) / L;
+      pts.push([ax + nx * side * ROAD_FENCE_OFFSET, az + nz * side * ROAD_FENCE_OFFSET], [bx + nx * side * ROAD_FENCE_OFFSET, bz + nz * side * ROAD_FENCE_OFFSET]);
+    }
+    lines.push(pts);
+  }
+  const posts = [], wire = [];
+  const HTS = [0.32, 0.62, 0.92, 1.2];
+  for (const line of lines) {
+    let prev = null;
+    for (let k = 0; k < line.length - 1; k++) {
+      const [ax, az] = line[k], [bx, bz] = line[k + 1], L = Math.hypot(bx - ax, bz - az);
+      for (let d = 0; d < L; d += 2.6 + rnd() * 0.8) {
+        const x = ax + (bx - ax) * d / L, z = az + (bz - az) * d / L;
+        const ok = z < shoreZ(x) - SAND_WIDTH + 4 && trailDist(x, z) > 2.6 && roadDist(x, z) > ROAD_HALF + 1.2
+          && !(x > YARD_BOX.minX - 2 && x < YARD_BOX.maxX + 2 && z > YARD_BOX.minZ - 2 && z < YARD_BOX.maxZ + 2)
+          && !PENS.some(p => Math.abs(x - p.x) < p.w / 2 + 3 && Math.abs(z - p.z) < p.d / 2 + 3) && pondEdge(x, z) > 1.3 && !nearTree(x, z, 0.8);
+        if (!ok) { prev = null; continue; }
+        const y = heightAt(x, z), h = 1.3 + rnd() * 0.3, tx = (rnd() - 0.5) * 0.22, tz = (rnd() - 0.5) * 0.22;
+        posts.push([x, y, z, h, tx, tz, rnd() * 6.28, 0.8 + rnd() * 0.45]);
+        const cur = { x, y, z, tx, tz };
+        if (prev && Math.hypot(prev.x - x, prev.z - z) < 4.5 && !nearTree((prev.x + x) / 2, (prev.z + z) / 2, 0.5)) {
+          for (const hy of HTS) {
+            const p0 = [prev.x + prev.tx * hy, prev.y + hy, prev.z + prev.tz * hy], p1 = [x + tx * hy, y + hy, z + tz * hy];
+            const m = [(p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2 - 0.035, (p0[2] + p1[2]) / 2];
+            wire.push(...p0, ...m, ...m, ...p1);
+          }
+        }
+        prev = cur;
+      }
+    }
+  }
+  // posts: rough tapered poles, each leaning its own way
+  const pg = new THREE.CylinderGeometry(0.05, 0.075, 1, 6, 2); pg.translate(0, 0.5, 0);
+  const pm = new THREE.InstancedMesh(pg, M.bark, posts.length);
+  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), v = new THREE.Vector3(), sc = new THREE.Vector3();
+  posts.forEach(([x, y, z, h, tx, tz, r, w], i) => {
+    e.set(tz, r, -tx); q.setFromEuler(e);
+    m4.compose(v.set(x, y - 0.05, z), q, sc.set(w, h + 0.05, w)); pm.setMatrixAt(i, m4);
+  });
+  pm.castShadow = pm.receiveShadow = true;
+  group.add(pm);
+  const wg = new THREE.BufferGeometry(); wg.setAttribute('position', new THREE.Float32BufferAttribute(wire, 3));
+  group.add(new THREE.LineSegments(wg, new THREE.LineBasicMaterial({ color: 0x3b3a36 })));
+  return group;
 }
 
 function buildGardenWall() {
