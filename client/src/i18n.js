@@ -78,6 +78,7 @@ const ES = {
   'Rafael will never forgive you.': 'Rafael nunca se los va a perdonar.',
   '{0} locals with machetes are coming instead of the herd': 'En vez del ganado vienen {0} lugareños con machetes',
   'WAVE {0}: RAFAEL': 'OLEADA {0}: RAFAEL',
+  "{0} called him out. He's huge, he's drunk, and he's throwing bottles.": '{0} lo llamó. Es enorme, está borracho y avienta botellas.',
   "He's huge, he's drunk, and he's throwing bottles. Keep moving.": 'Es enorme, está borracho y avienta botellas. No dejes de moverte.',
   'WAVE {0} SURVIVED': 'OLEADA {0} SUPERADA',
   'Fix the barricades. Hold {0} at a window.': 'Repara las barricadas. Mantén {0} en una ventana.',

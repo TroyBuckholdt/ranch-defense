@@ -870,8 +870,10 @@ export class Room {
     const spot = this.findSpawn(alive);
     if (!spot) return;
     this.spawnTimer = this.twist === 'stampede' ? STAMPEDE.every : Math.max(0.35, 1.6 - this.wave * 0.1);
-    const type = this.toSpawn.shift();
-    const [x, z] = spot;
+    this.spawnOne(this.toSpawn.shift(), spot[0], spot[1]);
+  }
+
+  spawnOne(type, x, z) {
     const def = COW_TYPES[type];
     // the boss doesn't scale with the round number, only with how many are fighting him
     let hp = def.boss ? Math.round(def.hp * (1 + 0.4 * (this.players.size - 1)))
@@ -886,6 +888,19 @@ export class Room {
       bomb: this.twist === 'bomb' && !def.heavy && !def.human && !def.flee, born: this.time,
     });
     if (def.flee) this.broadcastEvent({ t: 'gold', k: 'loose' });
+  }
+
+  // Secret: any player can call Rafael out whenever they like (type "boss", or tap the wave
+  // number five times). He joins whatever round is running; between rounds he is the round.
+  onSummon(p) {
+    if (this.phase === 'gameover' || this.time < (this.summonAt || 0)) return;
+    const alive = [...this.players.values()].filter(o => !o.downed && !o.dead);
+    const spot = alive.length && this.findSpawn(alive);
+    if (!spot) return;
+    this.summonAt = this.time + 3;
+    if (this.phase === 'intermission') { this.phase = 'wave'; this.toSpawn = []; this.twist = ''; }
+    this.spawnOne('rafael', spot[0], spot[1]);
+    this.broadcastEvent({ t: 'summon', by: p.name });
   }
 
   updatePlayers(dt, players, alive) {
